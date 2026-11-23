@@ -64,6 +64,3 @@ reason = "reached on Windows only, by a build program under msvc@system with a c
 [[ledger.surface.waiver]]
 item   = "reason msvc-redist-unavailable"
 reason = "reached on Windows only, by an MSVC toolset whose layout has no redistributable; no Windows case states it"
-[[ledger.surface.waiver]]
-item   = "key target.<sel>.carrier"
-reason = "a project's carrier of a loader-dependent image (SPEC-013 §11) needs a carrier package of its own; no case builds one"
