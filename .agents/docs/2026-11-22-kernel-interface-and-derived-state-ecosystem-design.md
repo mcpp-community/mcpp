@@ -420,6 +420,9 @@ xlings 的规则"派生的状态可以由任何流程重建"与"读不到不等�
   解析映像名，或 32 位上的长度与缓冲），修复它；复制出的进程启动失败时，把原因写到标准错误，再以 127 结束，与宿主程序
   启动失败的约定相同。`examples/starts` 加入 i686 的运行行，作为该行 `openkal.process` 的回归测试。修复随 openkal-image
   的补丁发布与平台版本组的修订进入本轮（K5）。
+- **riscv64 的 Linux 实现。** openkal-musl 已带 riscv64 的架构目录与生成的头文件，而 openkal-linux 只实现 x86_64、aarch64
+  与 i386，`riscv64-linux-musl` 因此只能由 musl 交叉载荷服务，openkal 平台不服务它。openkal-linux 按规范补上 riscv64 的
+  系统调用层，平台把该行加入宿主安排（§10 第 15 条）。
 - 它们随家族的一次发布与版本组的修订进入索引；mcpp 内置的缺省平台版本随之更新。
 
 ### 3.21 平台定义的行的打包（mcpp，mcpp#1007）
@@ -662,7 +665,7 @@ graph LR
    自己的请求（版本组参与解析，§7.5）。K1 因此不改动 openkal-platform，K4 不依赖它。
 9. **索引中的行（§3.19）。** `riscv64-linux-musl`：x86_64 上的 musl 交叉载荷构建、静态链接，并在 qemu-user 下运行；该载荷的
    sysroot 不带内核头文件（`aarch64-linux-musl-gcc` 带 4.19.88），由其描述文件声明 `linux-headers` 6.18.64，修订 1 带
-   riscv64 的头文件。行升为 `preview`，运行器为 `xim:qemu-user-riscv64`。支持矩阵的测定：载荷模式下 linux-x86_64 × gcc 为 `ok`，其余宿主与编译器各以其拒绝理由给出；图模式（openkal-musl 0.3.5 与 openkal-llvm-runtime 0.1.3）不服务该行，openkal-linux 0.5.4 只实现 x86_64 与 aarch64（0.27.0 加 i386），构建在其 `sys.h` 的架构断言处失败，矩阵的图模式因此略过 `riscv64-linux-*`，理由写在 `tests/matrix/scan.sh`。`i686-linux-gnu` 与 `wasm32-wasi` 在索引中没有
+   riscv64 的头文件。行升为 `preview`，运行器为 `xim:qemu-user-riscv64`。支持矩阵的测定：载荷模式下 linux-x86_64 × gcc 为 `ok`，其余宿主与编译器各以其拒绝理由给出；图模式钉的 openkal-musl 0.3.5 在 Linux 上依赖 openkal-linux 0.5.x，它只实现 x86_64 与 aarch64，构建在其 `sys.h` 的架构断言处失败；openkal 家族的 riscv64 Linux 实现见第 15 条。`i686-linux-gnu` 与 `wasm32-wasi` 在索引中没有
    基座载荷与编译器运行时，保持 `planned` 与未登记。iOS 模拟器的两行以 `simctl-run` 为运行器，`enabled = false`。
    `x86_64-macos` 在 Apple silicon 的运行器上经 Rosetta 测定（探针工作流）：链接原先不带 `--target`，按 arm64 链接 x86_64
    的目标文件而找不到 `main`；链接改为凡编译指名目标即指名之后，C 程序链接为 x86_64 并在 Rosetta 下运行。C++ 程序仍不能
@@ -685,4 +688,26 @@ graph LR
 14. **路径依赖替代版本依赖时的 std CRC 不符（测定，未在本轮修复）。** 以 `{ path }` 指名 mcpplibs.os 构建 mcpp 自身时，
     两个单元以不同的 `std` BMI 编译（`import 'std' has CRC mismatch`）；精确的 BMI 截止、关闭构建缓存、删除该 BMI 都不改变
     结果，以版本依赖与本地 `[indices]` 路径则构建成功。它不属于本方案的任何条款，记为 mcpp#1008。
+15. **openkal-linux 的 riscv64（§3.20）。** 矩阵测得 `riscv64-linux-musl` 的 LLVM 一路在 openkal 平台上为
+    `platform-target-unserved`，图模式在 openkal-linux 的架构断言处失败；缺的是 openkal-linux 的 riscv64 系统调用层，openkal-musl
+    已具备 riscv64。openkal-linux 0.27.1 按规范补上：
+    - **门与编号。** `ecall`，编号在 `a7`，参数在 `a0` 至 `a5`；编号取内核与体系结构无关的表，与 aarch64 共用一份。riscv64
+      没有 `renameat`，替换式的改名经 `okl::renameat` 以不带标志的 `renameat2` 完成，与其他体系结构经同一函数到达。
+    - **内核的记录。** `O_DIRECTORY` 与 `O_NOFOLLOW` 取体系结构无关头文件的值（x86_64 与 i386 相同，aarch64 另有其值）；
+      处理函数的记录没有 restorer 字段（内核经 vDSO 的 `__vdso_rt_sigreturn` 返回），凡安装处理函数之处都经
+      `okl::handler_action` 构造记录；时钟取 vDSO 的 `__vdso_clock_gettime`。
+    - **线程指针与入口。** `tp` 指向线程存储的首字节（variant I，无间隙）；`_start` 先以不松弛的 `lla` 设置全局指针；`clone`
+      为通用的参数顺序。
+    - **上下文与帧链。** 采样与故障报告从上下文读 `pc`、`sp` 与 `s0`；帧记录位于帧指针之下两个字。
+    - **指令缓存。** 实现在环境以自身调用提供维护时执行它（openkal-linux 的既有规则），riscv64 的内核提供
+      `riscv_flush_icache`，发布指令后调用之。
+    - **没有 `process_vm_readv` 时的帧链。** 未启用 CROSS_MEMORY_ATTACH 的内核与 qemu 的用户态翻译器（8.2.2 测得）对它
+      回答 ENOSYS，采样与故障报告此前停在第一帧；此时帧的字经该次读取自有的管道读出，管道的写入对不可读的地址回答 EFAULT。
 
+    `tools/arch-check.sh`（原 `word32-check.sh`）以同一程序 `tests/arch/runs.cpp` 在 x86_64 上运行 i386、在 qemu-user 下运行
+    riscv64：越过 4 GiB 的文件、节点的种类与大小、目录的建立、打开与列举、改名、带线程存储的任务、时钟、处理器时间、
+    含上层帧的采样、发布的指令，两种体系结构全部成立。平台的 CI 在 qemu-user 下测得规范的一致性测试套件链接失败（`undefined symbol: __riscv_flush_icache`）：riscv64 Linux 上编译器把 `__builtin___clear_cache` 降为对它的调用，由 C 库定义，而 openkal-musl 因 vDSO 的依赖排除了 musl 自己的定义。openkal-musl 0.30.2 补上它：openkal 之上指令只从 openkal.exec 发布的内存执行，维护在发布时由实现执行，该调用回答成功。openkal-platform 0.32.1 以 openkal-linux 0.27.1 与 openkal-musl 0.30.2 修订版本组，把
+    `riscv64-linux-musl` 加入宿主安排，并以提供者条目陈述 Linux x86_64 上的运行器 `qemu-riscv64-static`
+    （`xim:qemu-user-riscv64`，与内置的交叉载荷行相同，无需开启）；平台的 CI 在 qemu-user 下运行宿主程序与规范的一致性测试
+    套件。mcpp 的缺省平台随之为 0.32.1，矩阵按测得的单元更新。图模式钉的旧依赖（openkal-linux 0.5.x）不含 riscv64，
+    矩阵的图模式仍略过 `riscv64-linux-*`，理由写在 `tests/matrix/scan.sh`。

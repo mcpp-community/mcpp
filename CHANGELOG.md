@@ -48,9 +48,11 @@
 
 ### Changed
 
-- openkal-platform 0.32.0 is the default platform of the openkal rows: a program of the firmware
+- openkal-platform 0.32.1 is the default platform of the openkal rows: a program of the firmware
   and of DOS starts programs (`openkal.process`), an image on i686 starts an image
-  (mcpplibs/openkal-image#46), and `riscv64-none-musl` runs over openkal-opensbi.
+  (mcpplibs/openkal-image#46), `riscv64-none-musl` runs over openkal-opensbi, and
+  `riscv64-linux-musl` is served by the platform's hosted arrangement over openkal-linux 0.27.1's
+  riscv64 layer, run under qemu-user.
 - xlings 2026.11.23.1 is the pinned provider, and the handshake requires its `store_roots`
   feature (protocol 1.19): its collection keeps what a root holds, and its configuration of a
   package that states `host_facts` runs again when those host files change (openxlings/xlings#712,
@@ -107,6 +109,15 @@
   prepared transaction, which every later build refused ("compiler unit without prepared
   transaction") until `mcpp clean`. The state is now renamed out of use before it is removed, and
   such a remainder from an earlier version is removed by the next build.
+- A compiler's registration with its build no longer fails while the build is busy. The answer
+  was awaited for two seconds and the request then sent again, ten seconds in all, so under load
+  every retry queued a duplicate and the build failed with "compiler registration channel closed
+  or timed out" (measured on Windows and macOS CI). The answer is now awaited on the one
+  connection for as long as the build holds it.
+- `mcpp test` over several legs names a leg whose build failed, in the leg's section and in the
+  summary (`1 leg did not build`; `unbuilt` in the JSON summary). A build error reported as it
+  happened left the leg's section empty, and the summary counted no failure, although the run
+  ended with status 1.
 
 ## [2026.11.22.1] - 2026-11-22
 
