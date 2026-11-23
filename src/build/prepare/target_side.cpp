@@ -1194,16 +1194,21 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
         if (auto conflict = cabi_identity(state); !conflict) return std::unexpected(conflict.error());
         if (auto why = tsd::check_request(state.resolvedTargetSide))
             mcpp::diag::warning("target", *why);
+    return {};
+}
 
-        // The refusal held since toolchain resolution, released now that the
-        // other half of its question has an answer. A payload on this machine
-        // does not produce this target; if the graph does not supply the
-        // target's system either, then nothing does and the diagnosis stands.
-        if (!state.unservedTargetDiagnosis.empty()
-            && !state.resolvedTargetSide.system_from_graph()) {
-            refusal::record(refusal::Code::HostCannotServe);
-            return std::unexpected(state.unservedTargetDiagnosis);
-        }
+// The refusal held since toolchain resolution, released as soon as the other
+// half of its question has an answer: the target side. A payload on this
+// machine does not produce this target; if the graph does not supply the
+// target's system either, then nothing does and the diagnosis stands. It comes
+// before every decision that presumes a system to build for -- the kernel
+// headers above all, which would otherwise refuse first and name a remedy that
+// cannot help (e2e 890 on a macOS host).
+static std::expected<void, std::string> step9_host_cannot_serve(PrepareState& state) {
+    if (!state.unservedTargetDiagnosis.empty() && !state.resolvedTargetSide.system_from_graph()) {
+        refusal::record(refusal::Code::HostCannotServe);
+        return std::unexpected(state.unservedTargetDiagnosis);
+    }
     return {};
 }
 
@@ -2142,6 +2147,7 @@ std::expected<void, std::string> phase9_target_side(PrepareState& state) {
     if (!gather) return std::unexpected(gather.error());
     if (auto r = step9_resolve_and_realise_cabi(state, *gather); !r)
         return std::unexpected(r.error());
+    if (auto r = step9_host_cannot_serve(state); !r) return std::unexpected(r.error());
     if (auto r = step9_kernel_headers(state); !r) return std::unexpected(r.error());
     step9_kernel_abi_interfaces(state);
     if (auto r = step9_target_side_include_broadcast(state, *gather); !r)
