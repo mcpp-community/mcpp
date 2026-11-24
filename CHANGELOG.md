@@ -4,6 +4,16 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.24.1] - 2026-11-24
+
+### Fixed
+
+- `mcpp pack --pkg-format <provided format> -o <directory>/` writes the distributable together
+  with the outputs it consumed that lie below its own directory, at their places relative to it.
+  Before, it wrote the distributable alone, so a web page (`--pkg-format web`) arrived without its
+  `.js`, its `.wasm` and its deployed files and loaded nothing. Each destination is replaced, and
+  nothing else in the directory is touched (SPEC-014 §6, v2.8).
+
 ## [2026.11.23.1] - 2026-11-23
 
 ### Added

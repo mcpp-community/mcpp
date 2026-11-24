@@ -2,7 +2,7 @@
 // pack, stripping what the graph built, the JSON report and the profile shorthands, a summary
 // of many outputs, the build a pack states and its job count, the three axes of a package,
 // the compression a provided format is told (formerly tests/e2e/638, 689, 722, 723, 841, 871,
-// 954, 1008).
+// 954, 1008), and what `-o <directory>/` writes of a provided format's distributable.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -925,6 +925,56 @@ int main() {
         r = app.mcpp({"pack", "--pkg-format", "dir", "--compress", "gzip"});
         expect(fatal(failed(r))) << "D: a directory was compressed\n" << s::text(r);
         expect(e2e::contains(s::text(r), "writes none")) << "D: the refusal\n" << s::text(r);
+    };
+
+    "1160 a provided format's distributable is written to -o with what it reads beside it"_test[s::pack] = [] {
+        // A provider's distributable is the output no other action consumes; a page is one, and
+        // it reads the files it consumed from beside it. `-o <directory>/` writes the page with
+        // those files at their places relative to it, and leaves the directory's other contents
+        // (2026.11.23.1 wrote the page alone: dist-web's index.html without its .js and .wasm).
+        const auto tmp = s::case_dir();
+        s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
+name     = "app"
+version  = "0.1.0"
+standard = "c++20"
+
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+)cpp"}, {"src/main.cpp", "int main() { return 0; }\n"}, {"build.mcpp", R"cpp(import mcpp;
+#include <string>
+#include <string_view>
+int main() {
+    mcpp::provides_pack_format("site");
+    if (std::string_view(mcpp::pack_format()) != "site") return 0;
+    const std::string dir = std::string(mcpp::out_dir()) + "/site";
+    const std::string data = dir + "/assets/data.txt", page = dir + "/page.txt";
+    mcpp::action d;
+    d.id = "data";
+    d.role = "artifact";
+    d.description = "data";
+    d.arg("/bin/sh").arg("-c").arg(("mkdir -p " + dir + "/assets && printf data > " + data).c_str())
+     .input("${mcpp.target_file:app}")
+     .output(data.c_str())
+     .submit();
+    mcpp::action p;
+    p.id = "page";
+    p.role = "artifact";
+    p.description = "page";
+    p.arg("/bin/sh").arg("-c").arg(("printf page > " + page).c_str())
+     .input(data.c_str())
+     .output(page.c_str())
+     .submit();
+    return 0;
+}
+)cpp"}}};
+        app.write("dist/other/keep.txt", "keep");
+        auto r = app.mcpp({"pack", "--pkg-format", "site", "-o", "dist/site/"});
+        expect(fatal(e2e::succeeded(r))) << "pack failed\n" << s::text(r);
+        expect(fatal(s::read_file(app.at("dist/site/page.txt")) == "page")) << "the page\n" << s::text(r);
+        expect(fatal(s::read_file(app.at("dist/site/assets/data.txt")) == "data"))
+            << "the file the page reads beside it was not written\n" << s::text(r);
+        expect(fatal(s::read_file(app.at("dist/other/keep.txt")) == "keep")) << "another directory's file was touched";
     };
 }};
 

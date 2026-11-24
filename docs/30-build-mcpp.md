@@ -1142,6 +1142,14 @@ second pass, the refusal lists the warnings it stated there (`mcpp::warning`,
 `mcpp::report`) as its reasons, so a provider explains a decline with either and
 not with its standard error, which mcpp shows only for a program that fails.
 
+**`-o <directory>/` writes what the distributable reads beside it.** The
+distributable is the output no other action consumes. With `-o <directory>/`, it
+is written into that directory under its own name. The outputs it consumed that
+lie below its own directory are written with it, at their places relative to it
+(2026.11.24.1). For `web`, the page arrives with its `.js`, its `.wasm` and the
+deployed files. Each destination is replaced, and nothing else in the directory
+is touched.
+
 **`mcpp pack --pkg-format <name>` prepares twice.** An `artifact` action is a ninja
 edge and the staged tree is produced by mcpp *after* the link, so the tree
 cannot be an input of the pass that built it. The first pass collects the

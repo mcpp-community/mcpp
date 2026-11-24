@@ -1378,6 +1378,32 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
 // One pass serves every member of the group: each member has its own stage,
 // the programs act for the member they belong to (`BuildOverrides::
 // pack_stages`), and one ninja drive builds every member's edges.
+
+// Copy a provider's distributable `product` into `dir` under its own name, with
+// those of `beside` (outputs the product consumed) below the product's own
+// directory, at their places relative to it. Each destination is replaced, and
+// nothing else in `dir` is touched. Returns why it failed, or nothing.
+std::string copy_distributable(const std::filesystem::path& product,
+                               const std::vector<std::filesystem::path>& beside,
+                               const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    const auto base = product.parent_path().lexically_normal();
+    std::vector<std::pair<fs::path, fs::path>> copies{{product, dir / product.filename()}};
+    for (auto const& b : beside) {
+        const auto rel = b.lexically_normal().lexically_relative(base);
+        if (rel.empty() || *rel.begin() == "..") continue;
+        copies.emplace_back(b, dir / rel);
+    }
+    std::error_code ec;
+    for (auto const& [from, to] : copies) {
+        fs::remove_all(to, ec);
+        if (to.has_parent_path()) fs::create_directories(to.parent_path(), ec);
+        fs::copy(from, to, fs::copy_options::recursive, ec);
+        if (ec) return std::format("cannot write {}: {}", to.string(), ec.message());
+    }
+    return {};
+}
+
 std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Backend& be) {
     // WHICH ARTIFACT ACTIONS THIS BUILD ALREADY HAD, before a format was
     // requested. The dispatch below reports what the REQUEST introduced,
@@ -1637,7 +1663,11 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
             reported.push_back(std::move(abs));
         }
         if (!produced) continue;
-        // `-o <directory>/`: the distributable below it, under its own name.
+        // `-o <directory>/`: the distributable below it, under its own name,
+        // with the outputs it consumed that lie in its own directory, at their
+        // places relative to it. A page reads its script and module from beside
+        // it (dist-web's index.html, web-consumer.js, web-consumer.wasm); copied
+        // alone it loads nothing (2026.11.23.1 wrote dist/pack/index.html only).
         if (!run.opts.outputDir.empty())
             for (auto& r : reported) {
                 const auto into = std::filesystem::absolute(run.opts.outputDir / r.filename(), ec).lexically_normal();
@@ -1645,10 +1675,8 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
                 // written beside the staged tree, in target/dist/): removing
                 // the destination would remove the product.
                 if (into == r.lexically_normal()) continue;
-                std::filesystem::remove_all(into, ec);
-                std::filesystem::copy(r, into, std::filesystem::copy_options::recursive, ec);
-                if (ec) {
-                    mcpp::ui::error(about(run, m, std::format("cannot write {}: {}", into.string(), ec.message())));
+                if (auto why = copy_distributable(r, intermediate, into.parent_path()); !why.empty()) {
+                    mcpp::ui::error(about(run, m, why));
                     m.result.rc = 1;
                     break;
                 }
