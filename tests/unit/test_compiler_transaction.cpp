@@ -7,6 +7,7 @@ import mcpp.invocation;
 import mcpp.runtime.elf;
 import mcpplibs.os.platform;
 import mcpplibs.os.fs;
+import mcpplibs.os.ipc;
 
 using namespace mcpplibs::mtest;
 
@@ -129,6 +130,15 @@ UTest unobservable_admitted_unit_retains_its_reservation_and_every_output{"Compi
     auto state=tx::recover(a);expect(fatal(bool(state)));expect(!(*state));
     auto available=tx::reservation_available(t.reservation);expect(fatal(bool(available)));expect(!(*available));
     expect(eq(Transaction::contents(t.object), "still writable"));expect(fs::exists(t.reservation));
+}};
+UTest a_unit_without_preparation_is_the_remainder_of_a_retired_generation{"CompilerTransaction/AUnitWithoutPreparationIsTheRemainderOfARetiredGeneration", [] {
+    // A removal cut short after recovery left `unit` without `prepared`: the
+    // next recovery removes it rather than refusing every later build.
+    Transaction t;auto a=t.prepare();t.admitted(a);
+    fs::remove(a.directory/"prepared");
+    auto recovered=tx::recover_generation(t.generation);
+    expect(fatal(bool(recovered))) << (recovered ? std::string() : recovered.error());
+    expect(!fs::exists(a.directory));
 }};
 UTest malformed_certificate_never_releases_capacity{"CompilerTransaction/MalformedCertificateNeverReleasesCapacity", [] {
     Transaction t;auto a=t.prepare();t.admitted(a);
@@ -429,4 +439,62 @@ UTest an_unobservable_unit_is_settled_when_the_caller_holds_the_locks{"CompilerT
     auto settled=tx::recover(a,nullptr,&met,true);
     expect(fatal(bool(settled)));expect(*settled);expect(eq(met.unobservable, 1u));
     expect(eq(Transaction::contents(t.bmi), "verified old BMI"));
+}};
+
+// A REGISTRATION IS ANSWERED ON THE CONNECTION THAT CARRIES IT. The owner answers
+// one registration at a time, so an answer can take longer than any fixed wait;
+// the controller awaits it there for as long as the owner holds the connection,
+// and sends nothing again (Windows CI: a controller that resent its request after
+// two seconds of silence queued duplicates and failed while its owner lived). The
+// owner answers only once the controller has entered its wait, and then reads the
+// connection to its end: one request, and nothing after the answer.
+UTest a_late_answer_is_received_on_the_one_connection{"CompilerTransaction/ALateAnswerIsReceivedOnTheOneConnection", [] {
+    Transaction t;
+    auto listener=mcpplibs::os::ipc::listener::listen(t.root,"late");
+    expect(fatal(bool(listener)));
+    std::atomic<bool> waiting{false};
+    std::atomic<int> requests{0};
+    std::atomic<bool> ended{false};
+    std::jthread owner([&] {
+        auto c=listener->accept();
+        if(!c)return;
+        auto request=tx::receive(*c,std::nullopt);
+        if(request&&*request=="register")++requests;
+        waiting.wait(false);
+        tx::send(*c,"ACK");
+        auto after=tx::receive(*c,std::nullopt);
+        if(after)++requests;
+        else ended=true;
+    });
+    {
+        auto c=mcpplibs::os::ipc::connection::connect(t.root,"late");
+        expect(fatal(bool(c)));
+        expect(fatal(tx::send(*c,"register")));
+        waiting=true;
+        waiting.notify_one();
+        auto answer=tx::receive(*c,std::nullopt);
+        if (auto&& failed = expect(fatal(bool(answer))); !failed) failed <<answer.error();
+        expect(eq(*answer, "ACK"));
+    }   // the controller's connection closes here
+    owner.join();
+    expect(eq(requests.load(), 1));
+    expect(ended.load());
+}};
+// An owner that closes the connection unanswered is told apart from one that has
+// not answered yet: the wait ends, and the controller decides whether to send again.
+UTest a_closed_channel_ends_the_wait{"CompilerTransaction/AClosedChannelEndsTheWait", [] {
+    Transaction t;
+    auto listener=mcpplibs::os::ipc::listener::listen(t.root,"closed");
+    expect(fatal(bool(listener)));
+    std::jthread owner([&] {
+        auto c=listener->accept();
+        if(!c)return;
+        (void)tx::receive(*c,std::nullopt);
+    });   // the connection closes as the owner's handle goes
+    auto c=mcpplibs::os::ipc::connection::connect(t.root,"closed");
+    expect(fatal(bool(c)));
+    expect(fatal(tx::send(*c,"register")));
+    auto answer=tx::receive(*c,std::nullopt);
+    expect(!answer);
+    owner.join();
 }};

@@ -27,7 +27,7 @@ std::string trimmed(std::string t) {
     return t;
 }
 
-constexpr std::string_view handshake = R"HS([[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; })HS";
+constexpr std::string_view handshake = R"HS([[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries","store_roots"]}'; exit 0; })HS";
 
 // A stub xlings that answers the handshake and records every other command in STUB_LOG.
 void stub_logging_xlings(const fs::path& file) {

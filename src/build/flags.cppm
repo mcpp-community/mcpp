@@ -2425,11 +2425,13 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // graph-supplied-target replacement below, which assembles its own
         // `--target=` and `--no-default-config`, and appending them twice
         // would make the outcome depend on the driver's flag ordering.
-        std::string apple_cross_ld;
-        if (appleCross) {
-            apple_cross_ld = crossTarget;
-            if (isClangWithCfg) apple_cross_ld += " --no-default-config";
-        }
+        //
+        // The target is named whenever the compile named it, not only for an
+        // Apple cross SDK: `x86_64-macos` on an Apple-silicon host compiles
+        // x86_64 objects, and a link told nothing ran for arm64 and found no
+        // `main` among them (measured on macos-15-arm64).
+        std::string apple_cross_ld = crossTarget;
+        if (appleCross && isClangWithCfg) apple_cross_ld += " --no-default-config";
         platformAnchor = macos_sdk + version_min;
         f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
                            b_flag, apple_cross_ld, macos_sdk, version_min,
@@ -2723,8 +2725,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             // (mcpp#911 G4): the compiler driver then links, adding the start
             // files and libraries it knows for the target, where the row alone
             // would call ld.lld with its emulation.
-            const bool platformCompilerDriver = plan.platform.active
-                && plan.platform.fields.link.driver.set
+            const bool platformCompilerDriver = plan.platform.fields.link.driver.set
                 && plan.platform.fields.link.driver.value == "compiler";
             if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
@@ -2790,7 +2791,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // freestanding block gives: the artifact has no loader path, no crt files
     // and no system library of the toolchain's, and what it holds is the
     // graph's, reached through the graph's own `-L`/`-l`.
-    if (auto const& p = plan.platform; p.active) {
+    {
+        auto const& p = plan.platform;
         // Each element one word, quoted for the shell and `$` doubled for
         // ninja, as every other word of a command is.
         auto words = [](const std::vector<std::string>& v) {

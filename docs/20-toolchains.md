@@ -237,8 +237,10 @@ The build installs the package, says `Companion binutils 2.47 (<dir>)`, and
 passes its directory to the driver. A binutils older than the one the GCC
 payload declares is refused (`companion-too-old`): GCC chose its assembler
 features by that binutils when it was built. `companions` names binutils only;
-the kernel headers follow the toolchain payload's declaration, since the
-default base is the home's sysroot, which every project shares.
+the kernel headers are the target's `kernel-abi` layer, stated with
+`[target.<selector>.layers] kernel-abi` ([22 — The Target
+Side](22-target-side.md)); without a statement, over a base that carries none,
+they follow the toolchain payload's declaration (mcpp 2026.11.23.1+).
 
 ## Switching the Default Toolchain
 
@@ -344,7 +346,7 @@ Targets:
   *  x86_64-linux-musl       static                gcc 16.1.0        installed
      x86_64-windows-gnu      PE, static, cross     gcc 16.1.0        installed
      aarch64-linux-musl      static, cross         gcc 16.1.0        available
-     riscv64-linux-musl      static, cross         —                 planned
+     riscv64-linux-musl      static, cross         gcc 16.1.0        available
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0

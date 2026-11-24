@@ -1371,6 +1371,7 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 // an environment-configured generator most often wants.
                 for (auto& x : a.env) x = sub(x);
                 if (!a.cwd.empty()) a.cwd = sub(a.cwd);
+                if (!a.origin.empty()) a.origin = sub(a.origin);
                 // THE DEPENDENCY IS IMPLIED BY THE USE, so a member author
                 // cannot forget it. Without this the edge is dirty only when a
                 // link output changes, and a staged set that grew a dependency's

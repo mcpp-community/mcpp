@@ -766,6 +766,12 @@ UTest a_repository_reference_has_a_string_form{"PlatformManifest/ARepositoryRefe
     expect(deflt->spec.gitRev.empty());
     expect(!mp::parse_ref_text("git+https://example.org/x.git#sha=1").has_value());
     expect(!mp::parse_ref_text("git+").has_value());
+    // The directory form a provider of a path platform names its package by.
+    auto dir = mp::parse_ref_text("path:/srv/raw-platform");
+    expect(fatal(dir.has_value()));
+    expect(eq(dir->spec.path, "/srv/raw-platform"));
+    expect(dir->payload.empty());
+    expect(!mp::parse_ref_text("path:").has_value());
 }};
 
 // A PLATFORM'S STATEMENT IS CHECKED AGAINST THE ROWS AS IT IS READ (SPEC-016 §5):

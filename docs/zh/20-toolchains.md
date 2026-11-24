@@ -191,8 +191,9 @@ default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47
 ```
 
 构建安装该包，输出 `Companion binutils 2.47 (<dir>)`，并把它的目录交给编译器驱动。低于 GCC 载荷所声明版本的 binutils 被拒绝
-（`companion-too-old`）：GCC 在构建时按所用的 binutils 选定汇编器的能力。`companions` 只有 binutils 一项；内核头文件随工具链载荷的声明，
-因为缺省的基础层是 home 中各工程共用的 sysroot。
+（`companion-too-old`）：GCC 在构建时按所用的 binutils 选定汇编器的能力。`companions` 只有 binutils 一项；内核头文件是目标的 `kernel-abi` 层，以
+`[target.<selector>.layers] kernel-abi` 陈述（[22 —— 目标侧](22-target-side.md)）；没有陈述、基座又不带内核头文件时，
+它们随工具链载荷的声明（mcpp 2026.11.23.1+）。
 
 ## 切换默认工具链
 
@@ -292,7 +293,7 @@ Targets:
   *  x86_64-linux-musl       static                gcc 16.1.0        installed
      x86_64-windows-gnu      PE, static, cross     gcc 16.1.0        installed
      aarch64-linux-musl      static, cross         gcc 16.1.0        available
-     riscv64-linux-musl      static, cross         —                 planned
+     riscv64-linux-musl      static, cross         gcc 16.1.0        available
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0

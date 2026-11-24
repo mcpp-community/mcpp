@@ -449,6 +449,9 @@ std::uintmax_t remove_entry(const Entry& e) {
 
 } // namespace
 
+// How long ago `stampSeconds` was, as the commands here word it ("3d ago").
+export std::string age_text(std::int64_t stampSeconds) { return format_age(stampSeconds); }
+
 // `mcpp cache dir` — where IS the cache? Before this, `cache *`, `doctor` and
 // `clean --bmi-cache` each resolved the root themselves while config.cppm's
 // reset path used GlobalConfig::bmiCacheDir, and the copies could disagree.
@@ -655,7 +658,7 @@ void reclaim_runner_cache() {
 
 // `mcpp cache gc [--max-size N] [--older-than N]` — real LRU, driven by
 // entry.json's `accessed` stamp.
-export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanArg) {
+export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanArg, bool dryRun = false) {
     if (maxSizeArg.empty() && olderThanArg.empty()) {
         mcpp::ui::error("`mcpp cache gc` requires --max-size <N>{MiB,GiB} "
                         "and/or --older-than <N>{s,m,h,d}");
@@ -706,11 +709,11 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
                                 && (now - e.accessed) > *olderThan;
         bool overBudget = maxSize && live > *maxSize && e.kind != "std";
         if (!tooOld && !overBudget) continue;
-        remove_entry(e);
+        if (!dryRun) remove_entry(e);
         ++removed;
         freed += e.size;
         if (e.kind != "std") live -= e.size;
-        mcpp::ui::status("Collected",
+        mcpp::ui::status(dryRun ? "Would collect" : "Collected",
             std::format("{} ({}, last used {})",
                         e.label, human_bytes(e.size), format_age(e.accessed)));
     }
@@ -719,9 +722,10 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     // because std entries are deliberately out of scope here. Reporting it as
     // the cache size would read as "the cache is now empty" while tens of MB of
     // std BMIs sit right next to it.
-    std::println("Collected {} entries, freed {} (package and tool entries now {})",
-                 removed, human_bytes(freed), human_bytes(live));
-    reclaim_runner_cache();
+    std::println("{} {} entries, {} {} (package and tool entries {} {})",
+                 dryRun ? "Would collect" : "Collected", removed, dryRun ? "would free" : "freed",
+                 human_bytes(freed), dryRun ? "would be" : "now", human_bytes(live));
+    if (!dryRun) reclaim_runner_cache();
     if (maxSize && live > *maxSize) {
         // Say it rather than silently under-delivering: a size target that
         // cannot be met without evicting std BMIs is a real outcome, and a

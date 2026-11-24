@@ -27,6 +27,7 @@ import nlohmann.json;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.provider.roots;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpplibs.os.env;
@@ -442,6 +443,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
 
 // Pretty-print resolved config for `mcpp env` command.
 void print_env(const GlobalConfig& cfg);
+
+// The provider's collection of the registry's store (`mcpp cache gc`): what
+// nothing references is removed, or with `dryRun` listed. Its exit status.
+int collect_store(const GlobalConfig& cfg, bool dryRun);
 
 // `[xlings.overrides]` of a parsed config.toml, keyed by package identity
 // (`<ns>:<name>`, the namespace defaulted to `xim`): where a declared xlings
@@ -1344,6 +1349,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             if (!r.dir.empty()) owned.push_back({ r.name, r.url, {}, {}, {}, r.dir, r.store });
         if (!cfg.registryBorrowed) mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
     }
+    // A home from before the store's roots: one root for each payload it holds,
+    // before its first collection (design 2026-11-22 §3.11). A borrowed
+    // registry is its owner's to seed.
+    if (!cfg.registryBorrowed) (void)mcpp::provider::roots::seed();
 
     // The upstreams are the registry's too: a borrowing home's `[xlings]
     // upstream` would replace its owner's.
@@ -1445,6 +1454,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    bootstrap is incomplete. Commands call check_base_init() themselves.
 
     return cfg;
+}
+
+int collect_store(const GlobalConfig& cfg, bool dryRun) {
+    auto provider = mcpp::provider::open(make_xlings_env(cfg));
+    if (!provider->initialized()) return 0;   // no store yet: nothing to collect
+    return provider->collect_store(dryRun);
 }
 
 void print_env(const GlobalConfig& cfg) {

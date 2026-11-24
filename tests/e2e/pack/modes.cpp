@@ -1,7 +1,8 @@
 // Programs packed: the three modes and their closures, build-machine paths, host
 // capabilities a self-contained bundle refuses, runtime files, `kind = "app"`, files staged
 // before the closure, the closure an ELF host pack states, several programs and a dotted
-// name, an artifact for another system (formerly tests/e2e/30, 215, 216, 649, 652, 662, 669,
+// name, an artifact for another system, a static platform's programs in a format the pack does
+// not read, a deployed plugin's libraries (formerly tests/e2e/30, 215, 216, 649, 652, 662, 669,
 // 1043, 1061).
 import std;
 import mcpplibs.mtest;
@@ -724,6 +725,158 @@ void _start(void) { (void)away_value(); for (;;) {} }
         s::tar_extract(static_tar, tmp, {static_exe});
         const auto h = s::read_header(tmp / static_exe);
         expect(h.needed.empty() && !h.elf_interpreter) << "--mode static packed a dynamic program";
+    };
+    "1156 a static platform's programs pack in a format the pack does not read"_test[s::elf] = [] {
+        // mcpp#1007: a row a platform package defines, whose provider states `linkage = "static"`,
+        // links its programs statically, and the pack ships every program of a format it does not
+        // read (a raw image here, as DJGPP's COFF) without a runtime closure. With the provider's
+        // linkage unstated the same program is dynamic, and the pack refuses and names the format.
+        const auto tmp = s::case_dir();
+        const auto LLVM_VERSION = s::llvm_version();
+        const auto platform = [&](std::string_view linkage) {
+            return std::format(R"cpp([package]
+name    = "raw-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{0}"
+
+[[platform.define]]
+triple        = "x86_64-rawos"
+clang-triple  = "x86_64-unknown-linux-gnu"
+object-format = "elf"
+family        = "unix"
+execution     = "rawos"
+
+[[platform.provider]]
+serves = ["x86_64-rawos"]
+{1}
+[platform.build]
+cflags  = ["-ffreestanding", "-fno-stack-protector"]
+ldflags = ["-nostdlib", "-fuse-ld=lld", "-Wl,--oformat=binary"]
+
+[platform.link]
+driver = "compiler"
+
+[platform.layers]
+"kernel-abi"       = false
+"c-abi"            = false
+"c++-abi"          = false
+"compiler-runtime" = false
+)cpp", LLVM_VERSION, linkage);
+        };
+        s::project plat{tmp / "plat", {{"mcpp.toml", platform("linkage = \"static\"\n")}}};
+        s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
+name    = "raw"
+version = "0.1.0"
+
+[targets.one]
+kind = "bin"
+main = "src/main.c"
+
+[targets.two]
+kind = "bin"
+main = "src/main.c"
+
+[target.x86_64-rawos]
+platform = { path = "../plat" }
+)cpp"}, {"src/main.c", "void _start(void) { for (;;) {} }\n"}}};
+        auto r = app.mcpp({"pack", "--target", "x86_64-rawos", "--all-programs"});
+        expect(fatal(e2e::succeeded(r))) << "the static platform's programs did not pack\n" << s::text(r);
+        const auto listing = s::tar_list(app.at("target/dist/raw-0.1.0-x86_64-rawos.tar.gz"));
+        auto listed = [&](std::string_view tail) { return std::ranges::any_of(listing, [&](const std::string& l) { return l.ends_with(tail); }); };
+        expect(fatal(listed("/bin/one") && listed("/bin/two"))) << "--all-programs did not ship both programs";
+        std::optional<fs::path> exe;
+        for (const auto& f : s::find_files(app.at("target/x86_64-rawos"), "one"))
+            if (!exe && f.generic_string().ends_with("/bin/one")) exe = f;
+        expect(fatal(exe && s::read_file(*exe).substr(0, 4) != "\x7f" "ELF")) << "the program is ELF, so this test tests nothing";
+        plat.write("mcpp.toml", platform(""));
+        app.remove("target");
+        r = app.mcpp({"pack", "--target", "x86_64-rawos", "--all-programs"});
+        expect(fatal(!r)) << "a dynamic program of an unread format was packed without its closure\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "neither ELF, PE nor Mach-O"))) << "the refusal does not name the format\n" << s::text(r);
+    };
+    "1159 a deployed plugin's libraries are packed with it"_test[s::pack][s::patchelf][s::elf][s::gcc] = [] {
+        // mcpp#1011: a shared object the build deploys beside the program and the program only
+        // loads at run time is a root of the closure as the program is. Its library, which the
+        // program does not link, is bundled under lib/; the plugin's search path in the tree is
+        // the bundle's lib/ relative to where it is staged, not the build machine's directory;
+        // and the packed program loads the plugin with that directory gone. A deployed library the
+        // program also links stays the program's member of lib/.
+        const auto tmp = s::case_dir();
+        const auto cc = s::host_cc();
+        expect(fatal(cc.has_value())) << "no host C compiler links a shared object";
+        s::project ext{tmp / "ext", {{"dep.c", "int dep_value(void) { return 7; }\n"},
+                                     {"plug.c", "int dep_value(void);\nint plug(void) { return dep_value(); }\n"}}};
+        fs::create_directories(ext.at("lib"));
+        auto built = e2e::run({.argv = {cc->string(), "-shared", "-fPIC", "-Wl,-soname,libdep.so", "-o",
+                                        ext.at("lib/libdep.so").string(), ext.at("dep.c").string()}});
+        expect(fatal(e2e::succeeded(built))) << "the host C compiler failed\n" << s::text(built);
+        s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
+name    = "app"
+version = "0.1.0"
+
+[targets.app]
+kind = "bin"
+main = "src/main.c"
+
+[toolchain]
+linux = "gcc@16.1.0"
+
+[build]
+ldflags = ["-L@VENDOR@", "-lown", "-Wl,-rpath,$ORIGIN"]
+
+[runtime]
+deploy_files = ["vendor/libown.so"]
+deploy = [ { from = "vendor/libplug.so", to = "plugins" } ]
+)cpp"}, {"src/main.c", R"cpp(#define _DEFAULT_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+int own_value(void);
+int main(void) {
+    if (own_value() != 5) return 3;
+    char self[4096];
+    ssize_t n = readlink("/proc/self/exe", self, sizeof self - 32);
+    if (n <= 0) return 2;
+    self[n] = 0;
+    strcpy(strrchr(self, '/') + 1, "plugins/libplug.so");
+    void* h = dlopen(self, RTLD_NOW);
+    if (!h) { printf("dlopen: %s\n", dlerror()); return 1; }
+    int (*plug)(void) = (int (*)(void))dlsym(h, "plug");
+    printf("plug=%d\n", plug());
+    return plug() == 7 ? 0 : 1;
+}
+)cpp"}}};
+        fs::create_directories(app.at("vendor"));
+        built = e2e::run({.argv = {cc->string(), "-shared", "-fPIC", "-o", app.at("vendor/libplug.so").string(),
+                                   ext.at("plug.c").string(), "-L" + ext.at("lib").string(), "-ldep",
+                                   "-Wl,--enable-new-dtags,-rpath," + ext.at("lib").string()}});
+        expect(fatal(e2e::succeeded(built))) << "the host C compiler failed\n" << s::text(built);
+        app.write("vendor/own.c", "int own_value(void) { return 5; }\n");
+        auto toml = app.read("mcpp.toml");
+        toml.replace(toml.find("@VENDOR@"), 8, app.at("vendor").generic_string());
+        app.write("mcpp.toml", toml);
+        built = e2e::run({.argv = {cc->string(), "-shared", "-fPIC", "-Wl,-soname,libown.so", "-o",
+                                   app.at("vendor/libown.so").string(), app.at("vendor/own.c").string()}});
+        expect(fatal(e2e::succeeded(built))) << "the host C compiler failed\n" << s::text(built);
+        auto r = app.mcpp({"pack", "--pkg-format", "dir"});
+        expect(fatal(e2e::succeeded(r))) << "mcpp pack failed\n" << s::text(r);
+        const auto tree = dist_dir(app, "app-0.1.0-");
+        expect(fatal(tree.has_value())) << "no staged tree\n" << s::text(r);
+        const fs::path manifest = tree->string() + ".stage-manifest";
+        expect(fatal(fs::is_regular_file(*tree / "bin/plugins/libplug.so"))) << "the plugin is not deployed in the tree";
+        expect(fatal(fs::is_regular_file(*tree / "lib/libdep.so"))) << "the plugin's library is not bundled\n" << s::read_file(manifest);
+        expect(fatal(has_exact_line(manifest, "needs\tlibdep.so\tlib/libdep.so"))) << "the manifest does not state libdep.so at lib/libdep.so\n" << s::read_file(manifest);
+        expect(fatal(has_exact_line(manifest, "needs\tlibown.so\tlib/libown.so"))) << "the deployed library the program links left lib/\n" << s::read_file(manifest);
+        const auto plug = s::read_header(*tree / "bin/plugins/libplug.so");
+        expect(fatal(plug.runpath == "$ORIGIN/../../lib")) << "the plugin's search path in the tree is '" << plug.runpath << "'";
+        fs::rename(ext.at("lib"), ext.at("lib.away"));
+        auto run = s::run(*tree / "bin/app");
+        fs::rename(ext.at("lib.away"), ext.at("lib"));
+        expect(fatal(e2e::succeeded(run))) << "the packed program does not load its plugin\n" << s::text(run);
+        expect(fatal(s::has_line(s::text(run), "^plug=7$"))) << "the plugin did not answer\n" << s::text(run);
     };
 }};
 

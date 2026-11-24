@@ -78,10 +78,15 @@ struct PackageRef {
     std::string               program;
     // `layers.<layer> = false`: the platform provides no package for the layer.
     bool                      off = false;
+    // `layers.<layer> = "xim:<name>@<version>"`: an ecosystem payload, a
+    // prebuilt supplier of the layer and not a package of the graph (design
+    // 2026-11-22 §3.1); the reference as written, which `companions` spells
+    // the same way.
+    std::string               payload;
 
     bool empty() const {
         return name.empty() && program.empty() && !off && spec.path.empty()
-            && spec.git.empty() && spec.version.empty();
+            && spec.git.empty() && spec.version.empty() && payload.empty();
     }
 };
 
@@ -265,8 +270,8 @@ struct RowSpec {
     std::string tier = "preview", note, clangTriple, gccTriple, objectFormat, family, dataModel,
                 exeSuffix, sharedSuffix, loader, execution, exceptions;
     std::string march, mabi, codeModel, multilib, linkEmulation;
-    std::vector<std::string> flags, descriptorKeys, companions, linkWithoutMain;
-    bool standard = true, exact = false, exeSuffixFixed = false;
+    std::vector<std::string> flags, descriptorKeys, companions, linkWithoutMain, interfaces;
+    bool standard = true, exact = false, exeSuffixFixed = false, interfacesStated = false;
     Origin origin;
 };
 
@@ -303,6 +308,18 @@ struct SystemSpec {
     std::vector<std::string> commandScripts;
     // What the system's rows share unless a row states its own.
     std::string objectFormat, exeSuffix, sharedSuffix;
+    // The kernel headers as a package of their own (SPEC-016 §2.3): how a
+    // probe measures them and a payload's layout; `header` empty: none.
+    struct KernelAbi {
+        std::string header;
+        std::vector<std::string> version;
+        std::string packed;
+        std::vector<int> bits;
+        std::string include, archInclude, package;
+    } kernelAbi;
+    // The interfaces the system provides (`cfg(interface = …)`).
+    std::vector<std::string> interfaces;
+    bool interfacesStated = false;
     Origin origin;
 };
 
@@ -397,7 +414,7 @@ inline constexpr std::string_view kDefineKeys[] = {
     "triple", "tier", "note", "standard", "exact", "clang-triple", "gcc-triple", "object-format", "family",
     "data-model", "exe-suffix", "shared-suffix", "loader", "execution", "march", "mabi",
     "code-model", "multilib", "flags", "link-emulation", "descriptor-keys", "companions", "exceptions",
-    "exe-suffix-fixed", "link-without-main",
+    "exe-suffix-fixed", "link-without-main", "interfaces",
 };
 inline constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
@@ -405,6 +422,10 @@ inline constexpr std::string_view kProviderKeys[] = {
 };
 inline constexpr std::string_view kSystemKeys[] = {
     "name", "uname", "resources", "command-scripts", "object-format", "exe-suffix", "shared-suffix",
+    "kernel-abi", "interfaces",
+};
+inline constexpr std::string_view kSystemKernelAbiKeys[] = {
+    "header", "version", "packed", "include", "arch-include", "package",
 };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
@@ -457,7 +478,27 @@ inline std::expected<PackageRef, std::string> parse_ref_text(std::string_view te
         }
         return r;
     }
+    // A DIRECTORY (`path:<dir>`): the text a provider of a path platform names
+    // its package by, read back where the selection filters providers by the
+    // chosen platform. Read as a payload without its version before, the text
+    // matched no platform, and the provider of every path platform was left
+    // out: a row it defines took none of its keys (mcpp#1007, `linkage`).
+    if (text.starts_with("path:")) {
+        if (text.size() == 5) return std::unexpected(std::format("'{}' names no directory after `path:`", text));
+        r.spec.path = std::string(text.substr(5));
+        return r;
+    }
     const auto at = text.rfind('@');
+    // AN ECOSYSTEM PAYLOAD (`xim:linux-headers@6.18.64`): named by its index
+    // and always with its version, the rule `companions` states.
+    if (const auto colon = text.find(':'); colon != std::string_view::npos && colon < at) {
+        if (colon == 0 || at == std::string_view::npos || at == colon + 1 || at + 1 == text.size())
+            return std::unexpected(std::format(
+                "'{}' names a payload without its version; write \"<index>:<name>@<version>\", "
+                "for example \"xim:linux-headers@6.18.64\"", text));
+        r.payload = std::string(text);
+        return r;
+    }
     if (at == std::string_view::npos || at == 0 || at + 1 == text.size())
         return std::unexpected(std::format(
             "'{}' is not a package reference; write \"<name>@<version>\", for example "
@@ -480,6 +521,7 @@ inline std::expected<PackageRef, std::string> parse_ref_text(std::string_view te
 // `openkal-musl (path ../openkal-musl)`, `okrun (program)`.
 inline std::string display(const PackageRef& r) {
     if (r.off) return "false";
+    if (!r.payload.empty()) return r.payload;
     if (!r.program.empty()) return std::format("{} (program)", r.program);
     std::string n = r.spec.shortName.empty() ? r.name : r.spec.shortName;
     if (!r.spec.path.empty())

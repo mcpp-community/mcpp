@@ -248,6 +248,13 @@ struct Layer {
     // The package was added to the graph by the target's platform (SPEC-013
     // §4.3): still a graph package, reported as the platform's.
     bool        byPlatform = false;
+    // The kernel-abi layer's measured version, where its headers are a
+    // package of the system's (design 2026-11-22 §3.4, §3.8): "6.18.64".
+    std::string version;
+    // The kernel-abi layer's interfaces (`cfg(interface = …)`, §3.17): its
+    // provider's statement, or the system's; unstated, every interface.
+    std::vector<std::string> interfaces;
+    bool        interfacesStated = false;
 
     bool absent()   const { return origin == Origin::None; }
     bool prebuilt() const { return origin == Origin::Payload || origin == Origin::Xpkg; }
@@ -1102,12 +1109,14 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
         // rows read as a table rather than as a list of sentences.
         const std::string_view from = l.byPlatform ? std::string_view("platform")
                                                    : origin_name(l.origin);
+        const auto shown = l.version.empty() ? l.interfaceName
+                                             : std::format("{} {}", l.interfaceName, l.version);
         if (l.impl.empty())
             out += std::format("{}{:<17} {:<14} ({}{})\n", kIndent, label,
-                               l.interfaceName, from, suffix);
+                               shown, from, suffix);
         else
             out += std::format("{}{:<17} {:<14} ({}, {}{})\n", kIndent, label,
-                               l.interfaceName, l.impl, from, suffix);
+                               shown, l.impl, from, suffix);
     }
     return out;
 }

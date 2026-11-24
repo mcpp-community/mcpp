@@ -4,6 +4,129 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.23.1] - 2026-11-23
+
+### Added
+
+- On a Linux row, `[target.<selector>.layers] kernel-abi` states the kernel headers:
+  `"xim:linux-headers@<version>"` (an ecosystem payload, always with its version) or
+  `{ path = "<dir>" }` (a header directory without `mcpp.toml`). The statement holds with or
+  without a platform. Its directories reach every unit and the std module with `-isystem`, ahead
+  of the base. The headers in effect are measured by preprocessing `<linux/version.h>`, and the
+  report, `mcpp why toolchain` and `layers[].version` give the version. A stated version the
+  measurement contradicts is refused (`target-base`). So is a prebuilt form on any other layer,
+  on a row whose system publishes its kernel interface with its C library (macOS, Windows,
+  FreeBSD), and a second supplier on an openkal row. Which systems take the form, and how the
+  version is read, are the system row's data (`kernel-abi`), not the engine's (docs/22)
+  (mcpp#988).
+- A system row and a target row state the interfaces of their kernel-abi layer (`interfaces`):
+  every openkal interface on Linux, macOS, FreeBSD and Windows, fewer on the iOS rows (no program
+  start) and on `wasm32-emscripten`. `cfg(interface = "...")` reads the provider's list, else the
+  row's, else the system's, so it holds on a row without openkal as well. The same list is in
+  `layers[].interfaces` and `MCPP_KERNEL_ABI_INTERFACES` (mcpp#1005).
+- `riscv64-linux-musl` is a `preview` row: the musl cross payload `gcc@16.1.0` builds it on a
+  Linux x86_64 machine, and `mcpp run` starts its static programs under qemu-user
+  (`xim:qemu-user-riscv64@7.2.0`, installed on the first run). The `linux-musl` target set now
+  includes it (mcpp#1005).
+- The iOS simulator rows (`aarch64-ios-sim`, `x86_64-ios-sim`) state their runner: `simctl-run`
+  (`xim:apple-simulator-tools@0.3.0`) chooses a device, boots it and returns the program's
+  status. It boots a simulator device, so it is enabled on request (`[target.aarch64-ios-sim]
+  runner = true`, or `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`); a project's own `runner` stands
+  over it as before. `aarch64-ios` has no runner (mcpp#1005).
+- `mcpp::action::origin(path)` names the authored file a generated unit is a transformed copy
+  of, one of the action's inputs, on a `source` action. The build database gives it as
+  `ide.generated[].origin`. A generated unit that declares a module's primary name is a
+  `module-interface`. When the authored file is also among the sources, the duplicate-provider
+  error names the relation (mcpp#1004). `emit build-database` states S1 profile 0.4.0, the version
+  that defines the field (Sunrisepeak/mcpp-language-server#98).
+
+- A build holds each payload of mcpp's package store that its graph names as a root of the
+  store (`registry/data/roots/mcpp/<store-name>@<version>`, xlings' store-roots specification),
+  renewed by every build of that graph; `mcpp toolchain install` holds the toolchain it installs,
+  and a home from before has a root made for every payload it holds, once. `mcpp cache gc
+  --dry-run` says what would be collected and removes nothing.
+
+### Changed
+
+- openkal-platform 0.32.1 is the default platform of the openkal rows: a program of the firmware
+  and of DOS starts programs (`openkal.process`), an image on i686 starts an image
+  (mcpplibs/openkal-image#46), `riscv64-none-musl` runs over openkal-opensbi, and
+  `riscv64-linux-musl` is served by the platform's hosted arrangement over openkal-linux 0.27.2's
+  riscv64 layer and openkal-musl 0.30.3, run under qemu-user, where the specification's
+  conformance suite holds in every observation it makes.
+- xlings 2026.11.23.1 is the pinned provider, and the handshake requires its `store_roots`
+  feature (protocol 1.19): its collection keeps what a root holds, and its configuration of a
+  package that states `host_facts` runs again when those host files change (openxlings/xlings#712,
+  #727). An earlier provider is refused at the handshake, as before for one below the floor.
+  mcpp builds on mcpplibs.os 0.4.8, which reads a link's own time, and so do the launchers a
+  pack builds.
+- `mcpp cache gc` collects the package store after the cache: the provider removes the payloads
+  nothing references (`xlings self clean`), and with `--older-than` the roots no build used for
+  that long are released first. Before, payloads were never collected, and `xlings self clean`
+  in mcpp's registry listed the bases, libraries and platform packages projects use (154 payloads,
+  16 GB, on one home) as unreferenced.
+- Without a statement, the kernel headers are the base's own (a stated sysroot, a toolchain's own
+  sysroot such as `musl-gcc`'s, the host's root), else the version the toolchain's payload
+  declares. A build under gcc 16.2.0 now compiles against linux-headers 6.18.64, the version it
+  was built with, instead of the 5.11.1 the home's shared view linked to. The shared view is no
+  longer read for kernel headers, and mcpp no longer writes kernel headers into it; with neither
+  answer the build is refused before it compiles and names the statement to write.
+  A Linux compile names the headers it was decided to use, so a dependency's module interface
+  cached by an earlier version is compiled once more, then served from the cache.
+
+### Fixed
+
+- `layers`, `tools` and `link` in a `[target.<selector>]` table of the project or of
+  `config.toml` were accepted and had no effect on a row without a platform, with no report even
+  under `--strict`. They now complete the graph and reach the link on every row (docs/35);
+  `link.flags` that reaches no program says so, and `carrier`, a form of a platform's image, is a
+  warning there (`platform/carrier`).
+- A row a platform package defines takes the linkage its provider states. `i586-dos-djgpp`
+  (djgpp-platform, `linkage = "static"`) is linked statically, and `mcpp pack` in its default mode
+  packs its programs: a static program whose format is neither ELF, PE nor Mach-O has no runtime
+  closure, so none is asked for. A dynamic program of such a format is still refused, naming the
+  format (mcpp#1007).
+- The provider of a platform named by a path (`platform = { path = "<dir>" }`) is selected. Its
+  package reference `path:<dir>` was read as a payload without a version, so the selection left
+  it out, and what only the provider states, such as its `linkage`, did not apply (mcpp#1007).
+- A bare-metal row a platform defines is compiled, and its C library verified, for its
+  `clang-triple` (else the row), also when the row states no `march` or `link-emulation`. Before,
+  such a row (openkal-musl's `riscv64-none-musl`) had no target selection, and the verification
+  probe refused it.
+- `[target.<triple>] runner = true` and `runner = false` are read without the warning
+  "unsupported key 'runner'": the key check asked the value's type, and a boolean is not an array.
+- The runtime-closure check expands `$ORIGIN` at the directory a library was opened in, as the
+  loader does, not at the target of the link it was reached through. A program whose libraries are
+  links in a farm, each finding its dependencies beside it (compat.curand under LLVM), was refused
+  with `libgcc_s.so.1 not found` and ran when started.
+- On a macOS host, the link of a target other than the host's names the target, as its compile
+  does. `x86_64-macos` on Apple silicon linked its x86_64 objects for arm64 and found no `main`;
+  a C program now links and runs under Rosetta. The row stays `planned`: the LLVM payload's
+  libc++ is arm64 only.
+- `mcpp pack` carries the libraries of what the build deploys beside the program. An object of the
+  program's format and machine that `[runtime] deploy` or `mcpp::deploy` places (a plugin loaded
+  at run time, a helper program, another program under `--all-programs`) is a root of the runtime
+  closure as the program is, on ELF, PE, Mach-O and Android. A Qt platform plugin's
+  `libQt6XcbQpa.so.6`, which the program does not link, was left out of the package. On ELF a
+  deployed shared object is preloaded into the program's loader trace and its search path in the
+  tree becomes the bundle's `lib/` (docs/10, mcpp#1011).
+- `mcpp pack --all-programs` on `wasm32-emscripten` packs each program's module beside its
+  launcher. Before, only the program named after the package had its `.wasm` (mcpp#1007).
+- A build ended by a signal while it removed its compiler-run state no longer leaves the
+  configuration unbuildable. The removal could be cut short and leave a compiler unit without its
+  prepared transaction, which every later build refused ("compiler unit without prepared
+  transaction") until `mcpp clean`. The state is now renamed out of use before it is removed, and
+  such a remainder from an earlier version is removed by the next build.
+- A compiler's registration with its build no longer fails while the build is busy. The answer
+  was awaited for two seconds and the request then sent again, ten seconds in all, so under load
+  every retry queued a duplicate and the build failed with "compiler registration channel closed
+  or timed out" (measured on Windows and macOS CI). The answer is now awaited on the one
+  connection for as long as the build holds it.
+- `mcpp test` over several legs names a leg whose build failed, in the leg's section and in the
+  summary (`1 leg did not build`; `unbuilt` in the JSON summary). A build error reported as it
+  happened left the leg's section empty, and the summary counted no failure, although the run
+  ended with status 1.
+
 ## [2026.11.22.1] - 2026-11-22
 
 ### Added

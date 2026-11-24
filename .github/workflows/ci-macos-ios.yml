@@ -367,6 +367,54 @@ jobs:
           fi
           echo "ok: mcpp run --target aarch64-ios-sim printed 1-2-3 and exited 0"
 
+      # THE ROW'S OWN RUNNER (design 2026-11-22 §3.19): the same program with
+      # the project's runner and workspace removed. The provider states
+      # `simctl-run` with `enabled = false`, so the run is refused until it is
+      # enabled; enabled for one invocation, its `requires` are installed and
+      # the simulator runs the program.
+      - name: "aarch64-ios-sim: the provider's runner, refused until enabled, then runs"
+        run: |
+          set -uo pipefail
+          rm -rf /tmp/iosrow && cp -R /tmp/iostest /tmp/iosrow && rm -rf /tmp/iosrow/target
+          cd /tmp/iosrow
+          python3 - <<'PY'
+          import re
+          s = open("mcpp.toml").read()
+          s = re.sub(r'\[target\.aarch64-ios-sim\]\nrunner = \["simctl-run"\]\n', '', s)
+          s = re.sub(r'\[target\.aarch64-ios-sim\.xlings\.workspace\]\n"xim:apple-simulator-tools" = ""\n', '', s)
+          open("mcpp.toml", "w").write(s)
+          PY
+          if grep -qE '^[^#]*(simctl-run|apple-simulator-tools)' mcpp.toml; then echo "FAIL: the fixture still states a runner"; exit 1; fi
+          out=$("$MCPP_FRESH" run --target aarch64-ios-sim 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -8
+          [ "$rc" -eq 2 ] || { echo "FAIL: a run before consent exited $rc, not 2"; exit 1; }
+          grep -q 'runner-not-enabled' <<<"$out" || { echo "FAIL: the refusal carries no [runner-not-enabled]"; exit 1; }
+          out=$(MCPP_TARGET_AARCH64_IOS_SIM_RUNNER_ENABLED=true "$MCPP_FRESH" run --target aarch64-ios-sim 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -12
+          [ "$rc" -eq 0 ] || { echo "FAIL: the enabled run exited $rc"; exit 1; }
+          grep -qx '1-2-3' <<<"$out" || { echo "FAIL: the program's output line '1-2-3' is absent"; exit 1; }
+          echo "ok: the row's runner is refused until enabled, and enabled it runs the program in the simulator"
+
+      # THE LINK NAMES THE TARGET THE COMPILE NAMES. `x86_64-macos` is planned
+      # (the LLVM payload's libc++ is arm64 only, so a C++ link finds none of
+      # its symbols); a C program, opted in by naming the toolchain, links for
+      # x86_64 and runs under Rosetta. Before, the link carried no `--target`,
+      # linked for arm64 and found no `main` among the x86_64 objects.
+      - name: "x86_64-macos: a C program links for its target and runs under Rosetta"
+        run: |
+          set -uo pipefail
+          arch -x86_64 /usr/bin/true || { echo "SKIP: this runner has no Rosetta"; exit 0; }
+          rm -rf /tmp/xm && mkdir -p /tmp/xm/src && cd /tmp/xm
+          printf '[package]\nname = "xm"\nversion = "0.1.0"\n\n[targets.xm]\nkind = "bin"\nmain = "src/main.c"\n' > mcpp.toml
+          printf '#include <stdio.h>\nint main(void) { printf("xm %%d\\n", (int)sizeof(long)); return 6; }\n' > src/main.c
+          out=$("$MCPP_FRESH" run --target x86_64-macos --toolchain "llvm@${MCPP_LLVM_VER}" 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -8
+          [ "$rc" -eq 6 ] || { echo "FAIL: the run exited $rc, not the program's 6"; exit 1; }
+          grep -qx 'xm 8' <<<"$out" || { echo "FAIL: the program's line 'xm 8' is absent"; exit 1; }
+          bin=$(find target -type f -name xm -perm -u+x | head -1)
+          file "$bin" | grep -q x86_64 || { echo "FAIL: $bin is not an x86_64 program: $(file "$bin")"; exit 1; }
+          echo "ok: the link names x86_64-macos and the program runs under Rosetta"
+
       # THE THIRD ROW, BUILT HERE AND RUN ELSEWHERE (design 2026-10-23 §2.6,
       # S15). A simulator runs the host's architecture and this runner is
       # Apple silicon, so this job proves the artefact and the SDK's slice; the

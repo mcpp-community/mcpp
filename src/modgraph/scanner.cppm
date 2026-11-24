@@ -1334,8 +1334,15 @@ void scan_one_into(ScanResult& result,
             // action unit that declares no module asserts nothing.
             u.scanOverridden = !declaredByAction || !ov->provides.empty();
             // The override names modules; it does not carry the declaration.
-            u.declaration    = declaredByAction && ov->provides.empty()
-                                   ? ModuleDeclaration::None : ModuleDeclaration::Unknown;
+            // An action that declares a module's primary name declares its
+            // interface: only `export module M;` provides `M`. A partition's
+            // name (`M:P`) is provided by an interface or an implementation
+            // partition alike, and stays unknown (mcpp#1004).
+            u.declaration    = declaredByAction && ov->provides.empty() ? ModuleDeclaration::None
+                             : declaredByAction && ov->provides.front().find(':') == std::string::npos
+                                 ? ModuleDeclaration::Interface
+                                 : ModuleDeclaration::Unknown;
+            if (declaredByAction && !ov->origin.empty()) u.origin = native_path_from_generic(ov->origin);
             // A declared unit still gets its role from the same classifier —
             // scan_overrides overrides what was SCANNED, not what the file is.
             u.kind           = mcpp::classify(f, extTable);
@@ -1505,6 +1512,11 @@ void resolve_graph(ScanResult& result) {
                         same_file(first.path, second.path)
                             ? "; one file is reached as two packages, and a package that "
                               "both depend on would provide it once"
+                        : (!first.origin.empty() && same_file(first.origin, second.path))
+                              || (!second.origin.empty() && same_file(second.origin, first.path))
+                            ? "; one is the generated copy of the other (its action's origin), so the "
+                              "authored file is compiled through its copy and is listed as a source as "
+                              "well: remove it from the package's sources"
                             : "")});
     };
     std::set<std::string, std::less<>> withUnits;

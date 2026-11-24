@@ -5,6 +5,7 @@
 export module mcpp.toolchain.lifecycle;
 
 import std;
+import mcpp.provider.roots;
 import mcpp.config;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -1196,6 +1197,9 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
                 }
         }   // a binding that cannot be resolved degrades, as on the build path
 
+        // Held from its install, before a build names it: the store's
+        // collection keeps what a root names (design 2026-11-22 §3.11).
+        mcpp::provider::roots::use_dirs({payload->root});
         mcpp::ui::status("Installed",
             std::format("{} → {}", pkg.display_spec(), bin.string()));
         if (cfg.defaultToolchain.empty()) {

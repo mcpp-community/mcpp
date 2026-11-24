@@ -105,6 +105,28 @@
 #                   precedes it, and ELF is what neither states
 #   exe-suffix      the suffix of the system's programs
 #   shared-suffix   the suffix of its shared libraries
+#   kernel-abi      the system's kernel headers are a package apart from its C
+#                   library: how a probe measures them and how a payload lays
+#                   them out. Its rows accept a prebuilt `kernel-abi` statement
+#                   (`[target.<selector>.layers] kernel-abi`); a system without
+#                   the table has its kernel interface in one SDK or base with
+#                   its C library, and refuses one.
+#     header        the header the probe includes
+#     version       the macros of the version's parts, most significant first
+#     packed        { macro, bits }: the packed version and its parts' widths,
+#                   read when the macros above are absent; a part at its
+#                   width's maximum is saturated and not compared
+#     include       a payload's headers common to every architecture
+#     arch-include  a payload's headers of one architecture, `{arch}` the
+#                   target's, searched first; a payload without them serves
+#                   its host's architecture only
+#     package       the ecosystem package of the headers, which a toolchain's
+#                   payload declares (the headers its runtime was built with)
+#   interfaces      the interfaces the system provides, in openkal's names: the
+#                   answer of `cfg(interface = "<name>")` where the kernel-abi
+#                   layer is the system itself; unstated, every interface. A row
+#                   states its own where its C library or its system narrows
+#                   them for it, read first
 #
 # A row's `object-format`, `exe-suffix` and `shared-suffix` are read row first,
 # then system, then the convention of the object format (elf: none, `.so`;
@@ -197,10 +219,12 @@ triple   = "aarch64-macos-musl"
 tier     = "preview"
 standard = false
 
+# Served by the musl cross payload from x86_64 and run there under qemu-user
+# (design 2026-11-22 §3.19): measured building, linking statically and running.
 [[platform.define]]
 triple   = "riscv64-linux-musl"
 loader   = "/lib/ld-musl-riscv64.so.1"
-tier     = "planned"
+tier     = "preview"
 standard = true
 
 # 32-BIT ROWS (E11): registered intent, refused until served. No payload of the
@@ -464,12 +488,26 @@ triple   = "aarch64-ios"
 object-format = "mach-o"
 tier     = "preview"
 standard = true
+# An application of iOS starts no program and maps no code it writes (the
+# system's sandbox): the system's interfaces without openkal.process and
+# openkal.exec.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.task", "openkal.terminal", "openkal.net",
+              "openkal.datagram", "openkal.space", "openkal.timeout", "openkal.map", "openkal.region",
+              "openkal.prof", "openkal.debug"]
 
 [[platform.define]]
 triple   = "aarch64-ios-sim"
 object-format = "mach-o"
 tier     = "verified"
 standard = true
+# An application of iOS starts no program and maps no code it writes (the
+# system's sandbox): the system's interfaces without openkal.process and
+# openkal.exec.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.task", "openkal.terminal", "openkal.net",
+              "openkal.datagram", "openkal.space", "openkal.timeout", "openkal.map", "openkal.region",
+              "openkal.prof", "openkal.debug"]
 
 [[platform.define]]
 triple   = "x86_64-ios-sim"
@@ -480,6 +518,14 @@ standard = true
 # A new arch, a new os and a new object format; `em++` links `import std` with
 # the standard library surface the toolchain ships. One module plus its
 # JavaScript, no shared objects.
+# An application of iOS starts no program and maps no code it writes (the
+# system's sandbox): the system's interfaces without openkal.process and
+# openkal.exec.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.task", "openkal.terminal", "openkal.net",
+              "openkal.datagram", "openkal.space", "openkal.timeout", "openkal.map", "openkal.region",
+              "openkal.prof", "openkal.debug"]
+
 [[platform.define]]
 triple   = "wasm32-emscripten"
 tier     = "verified"
@@ -505,6 +551,11 @@ exe-suffix-fixed = true
 
 # OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
 # `okrun` on Linux, macOS and Windows of that architecture.
+# Emscripten's C library serves files from its own file systems and starts no
+# program.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs"]
+
 [[platform.define]]
 triple   = "x86_64-openkal"
 exe-suffix    = ".oke"
@@ -573,11 +624,13 @@ toolchain = "gcc@16.1.0"
 linkage   = "static"
 
 [[platform.provider]]
-name     = "musl-gcc"
-serves   = ["riscv64-linux-musl"]
-priority = 100
-hosts    = ["linux-{arch}", "linux-x86_64"]
-linkage  = "static"
+name      = "musl-gcc"
+serves    = ["riscv64-linux-musl"]
+priority  = 100
+hosts     = ["linux-{arch}", "linux-x86_64"]
+toolchain = "gcc@16.1.0"
+linkage   = "static"
+runner    = { cmd = ["qemu-riscv64-static", "{}"], hosts = ["linux-x86_64"], requires = ["xim:qemu-user-riscv64@7.2.0"] }
 
 # MinGW-w64: gcc, or clang with the payload as its sysroot (SPEC-016 §6).
 # On an x86_64 Linux machine a Windows program runs through Wine (design
@@ -623,12 +676,26 @@ serves   = ["aarch64-macos", "x86_64-macos"]
 priority = 100
 hosts    = ["macos-*"]
 
+# A device row has no runner: an artifact runs on a device only signed by its
+# developer. A simulator row runs through `simctl-run`, which chooses a device,
+# boots it, spawns the program and returns its status (design 2026-11-22
+# §3.19). The simulator runs the machine's architecture (`same-arch`), and its
+# first use boots a device whose state lives outside the build tree, so the
+# runner is enabled on request.
 [[platform.provider]]
 name      = "apple"
-serves    = ["aarch64-ios", "aarch64-ios-sim", "x86_64-ios-sim"]
+serves    = ["aarch64-ios"]
 priority  = 100
 hosts     = ["macos-*"]
 toolchain = "llvm@23.1.3"
+
+[[platform.provider]]
+name      = "apple"
+serves    = ["aarch64-ios-sim", "x86_64-ios-sim"]
+priority  = 100
+hosts     = ["macos-*"]
+toolchain = "llvm@23.1.3"
+runner    = { cmd = ["simctl-run", "{}"], host = "same-arch", hosts = ["macos-*"], requires = ["xim:apple-simulator-tools@0.3.0"], enabled = false }
 
 # The C library of a bare-metal RISC-V row is the target's, like the compiler:
 # no bare-metal package has to name one.
@@ -702,7 +769,7 @@ hosts     = ["*"]
 toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 linkage   = "static"
-platform  = "mcpplibs.openkal-platform@0.31.2"
+platform  = "mcpplibs.openkal-platform@0.32.1"
 
 [[platform.provider]]
 name      = "openkal"
@@ -712,7 +779,7 @@ hosts     = ["*"]
 toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 linkage   = "static"
-platform  = "mcpplibs.openkal-platform@0.31.2"
+platform  = "mcpplibs.openkal-platform@0.32.1"
 
 # The same arrangement on Windows, whose own interfaces a resource script
 # compiles against: their headers are the MinGW-w64 base's, which states them
@@ -725,23 +792,41 @@ hosts          = ["*"]
 toolchain      = "llvm@23.1.3"
 pairs          = ["llvm"]
 linkage        = "static"
-platform       = "mcpplibs.openkal-platform@0.31.2"
+platform       = "mcpplibs.openkal-platform@0.32.1"
 system-headers = "xim:mingw-w64-sysroot@20261104-2"
 
 # ── Systems ──────────────────────────────────────────────────────────────────
 
 [[platform.system]]
-name  = "linux"
-uname = "Linux"
+name       = "linux"
+uname      = "Linux"
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
+kernel-abi.header       = "linux/version.h"
+kernel-abi.version      = ["LINUX_VERSION_MAJOR", "LINUX_VERSION_PATCHLEVEL", "LINUX_VERSION_SUBLEVEL"]
+kernel-abi.packed       = { macro = "LINUX_VERSION_CODE", bits = [16, 8, 8] }
+kernel-abi.include      = "include"
+kernel-abi.arch-include = "arch/{arch}/include"
+kernel-abi.package      = "linux-headers"
 
 [[platform.system]]
 name          = "macos"
 uname         = "Darwin"
 object-format = "mach-o"
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
 
 [[platform.system]]
 name  = "freebsd"
 uname = "FreeBSD"
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
 
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
@@ -749,6 +834,11 @@ name            = "windows"
 object-format   = "pe"
 resources       = true
 command-scripts = [".bat", ".cmd"]
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
+
 
 # ── Execution relations ──────────────────────────────────────────────────────
 #

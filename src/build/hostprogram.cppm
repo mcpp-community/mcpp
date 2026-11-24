@@ -447,6 +447,12 @@ struct action {
     // inputs and outputs are unaffected: they keep naming files the way they
     // always have.
     action& cwd(const char* dir) { cwd_ = dir; return *this; }
+    // THE AUTHORED SOURCE THE OUTPUT IS A TRANSFORMED COPY OF (mcpp#1004): one
+    // of this action's inputs, the file a person edits to change the unit
+    // compiled from the output. Stated by the rule, which alone knows it; the
+    // build database names it (`ide.generated[].origin`) and a consumer reads
+    // the authored file as the unit's, not as a second provider of its module.
+    action& origin(const char* p) { origin_ = p; return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);
         std::printf(",\"role\":");                  esc(role);
@@ -469,6 +475,8 @@ struct action {
         // the bytes it did before protocol 13.
         if (env_.len) std::printf(",\"env\":[%s]", env_.c_str());
         if (cwd_[0]) { std::printf(",\"cwd\":"); esc(cwd_); }
+        // Omitted unless stated, as `cwd` is.
+        if (origin_[0]) { std::printf(",\"origin\":"); esc(origin_); }
         // Set only when the process could not allocate memory for a list.
         // A declaration cut short would otherwise be INVALID rather than
         // obviously wrong -- the engine turns this marker into a diagnostic
@@ -488,6 +496,7 @@ private:
     // `list`: it is one directory, never a JSON array.
     const char* outputDir_ = "";
     const char* cwd_ = "";
+    const char* origin_ = "";
     mutable bool overflow_ = false;
     static void esc(const char* s) { json_detail::esc(s); }
     // One entry of a list field; a list the allocator refused marks the

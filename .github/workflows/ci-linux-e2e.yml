@@ -31,6 +31,14 @@ on:
         description: whether the set gives this host any case
         type: boolean
         default: true
+      history:
+        description: the run whose stores the plan divided by (`none` for none); empty to resolve it
+        type: string
+        default: ''
+      coverage:
+        description: the run whose coverage map the plan read (`none` for none); empty to resolve it
+        type: string
+        default: ''
 
 jobs:
   e2e:
@@ -105,6 +113,8 @@ jobs:
       - uses: ./.github/actions/e2e-mtest
         with:
           host: linux
+          history: ${{ inputs.history }}
+          coverage: ${{ inputs.coverage }}
 
       - name: E2E suite
         # About twice the shard's budget of ten minutes (R4): reached only by a
@@ -469,7 +479,7 @@ jobs:
 
       - name: Bootstrap xlings + released mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.11.21.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.11.23.1
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
           xlings install mcpp -y -g

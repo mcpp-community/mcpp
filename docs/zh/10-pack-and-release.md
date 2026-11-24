@@ -548,6 +548,30 @@ if (!base) {
 `--mode vendored`。它把 `PT_INTERP` 重新指向宿主的 loader，代价是要求宿主的
 glibc 版本不低于产物构建时所用的那份。
 
+### 构建放在程序旁的对象（2026.11.23.1+）
+
+`[runtime] deploy`、`deploy_files` 或构建程序的 `mcpp::deploy` 放在程序旁的文件，按同一相对路径暂存在 `bin/` 之下。
+该文件是程序自身格式与机器的对象时（程序在运行时装载的插件、它启动的辅助程序，或 `--all-programs` 下包的另一个程序），
+它与程序一样是运行时闭包的根；它需要的库按同一模式规则携带，包括程序自身不链接的库（mcpp#1011）：
+
+| 格式 | 部署对象的需求的解析 | 暂存位置 |
+|---|---|---|
+| 本机的 ELF | 共享对象预装入程序的装载器追踪（`LD_PRELOAD`），其名字在程序的进程中解析，与程序 `dlopen` 时相同；部署的程序与程序一样追踪 | `lib/`；对象的搜索路径改为 `$ORIGIN/<到 lib/ 的路径>` |
+| 另一系统的 ELF | 其 `DT_NEEDED`，按程序的规则（程序旁或 `../lib`） | `lib/` |
+| PE | 其导入表，在程序的搜索目录中 | 程序旁，即装载器为已装载 DLL 的导入搜索之处 |
+| Mach-O | 其装载命令；`@rpath` 先经自身的 rpath，再经程序的 | 与程序自身的 dylib 相同 |
+| Android | 其 `DT_NEEDED`，在该腿的目录中 | 该腿的 `lib/<abi>/` |
+
+```
+target/dist/viewer-0.1.0-x86_64-linux-gnu/
+├── bin/viewer
+├── bin/platforms/libqxcb.so     ← 部署的文件；RUNPATH=$ORIGIN/../../lib
+└── lib/libQt6XcbQpa.so.6        ← 只有插件需要
+```
+
+其他格式的部署文件是程序打开的文件，没有闭包。没有装载器的程序（静态程序）不向自身进程装载对象，其部署对象不是根。
+`LD_PRELOAD` 以 `:` 与空白分隔条目，程序目录之下的路径含有这些字符的对象无法追踪；打包写出其名字，而不是不带其库地交付。
+
 ### WebAssembly（`wasm32-emscripten`）：词干家族
 
 ```
@@ -627,6 +651,10 @@ mcpp pack --target x86_64-windows-gnu     # from a Linux host
 反方向 —— 在 Windows 上给 Linux 产物打包 —— 仍然不支持：ELF 程序的闭包要靠
 目标自己的动态链接器解析，而 Windows 宿主没有办法运行它。Mach-O 程序的闭包是
 从文件里读出来的，因此一个 macOS 程序可以在任何宿主上打包。
+
+格式不属于这三种的程序（DJGPP 程序是 go32 引导段之后的 COFF），只有静态链接时才有确定的闭包：
+它为空，缺省模式直接打包。行的链接方式取其提供者的陈述，平台包的提供者同样适用
+（`[[platform.provider]]` 中的 `linkage = "static"`）。这类格式的动态程序被拒绝，拒绝写出其格式。
 
 ### macOS（Mach-O）：dylib 与程序放在同一目录
 

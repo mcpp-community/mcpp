@@ -1207,9 +1207,11 @@ conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`
   `accelerator = "none"` is how a section says "this build named no backend"
   without enumerating the ones it is not. `interface` (mcpp 2026.11.13.1) is the kernel-abi
   layer's second answer: an interface its provider states in `[kernel-abi]
-  provides-interfaces`, compared by membership as `accelerator` is. A provider
-  that states no list provides every interface; a graph without the layer
-  provides none. A package selects its sources by what the implementation
+  provides-interfaces`, or, where the layer is the system itself, the system
+  row's `interfaces` (mcpp 2026.11.23.1), compared by membership as `accelerator`
+  is. A provider or a system that states no list provides every interface; a
+  graph without the layer provides none. On `aarch64-ios` the answer for
+  `openkal.process` is false: an application of iOS starts no program. A package selects its sources by what the implementation
   beneath it provides, and names no implementation:
   `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`. Barewords `linux` / `macos` /
   `windows` / `unix` are sugar for the matching `os` / `family` test. A key
@@ -1377,6 +1379,53 @@ this returns. To branch on the resolved layer, use a layer predicate:
 `[target.'cfg(c-abi = "musl")'.build]` ([22 — The Target
 Side](22-target-side.md)). This paragraph said "which C library was resolved"
 until 2026.9.1.1, which was the wrong one of the two.
+
+### `layers.kernel-abi` — the kernel headers (mcpp 2026.11.23.1+)
+
+Linux publishes its kernel headers apart from its C library, so on a Linux row
+they are a prebuilt supplier of the `kernel-abi` layer and can be stated:
+
+```toml
+[target.x86_64-linux-gnu.layers]
+kernel-abi = "xim:linux-headers@6.18.64"     # an ecosystem payload, always with its version
+# kernel-abi = { path = "third_party/uapi" }  # or a header directory (no mcpp.toml in it)
+```
+
+The statement is read from the project, then this machine's `config.toml`, then
+the platform, key by key; it applies whether or not the row has a platform. With
+no statement, and a C library from a prebuilt base, the build takes the first
+of two answers: the base's own headers (a stated sysroot, a toolchain's own
+sysroot such as `musl-gcc`'s, the host's root), then the version the
+toolchain's payload declares (gcc 16.2.0 declares 6.18.64; the bundled LLVM
+5.11.1). The home's shared view is not an answer: it is shared by toolchains
+that declare different versions. With neither, the build is refused before it
+compiles and names the statement to write.
+`kernel-abi = false` states that the build has no such layer (a freestanding
+arrangement): no headers are decided or measured.
+
+The headers in effect are measured, as the C library is: the compiler
+preprocesses a unit that includes `<linux/version.h>` with the build's search
+path, and the report shows the result:
+
+```
+      Target x86_64-linux-gnu
+             kernel-abi        linux 6.18.64  (xim:linux-headers@6.18.64, mcpp.toml:10, prebuilt)
+```
+
+A stated version that the measurement contradicts is refused. The directories
+are given to every unit and to the std module with `-isystem`, ahead of the
+base; a header the supplier lacks (`<scsi/sg.h>`, which glibc ships) is still
+the base's. A payload that carries each architecture's headers
+(`arch/<arch>/include`, linux-headers 6.18.64 revision 1 and 7.3.5) serves a
+cross build too; one that carries its installing machine's only is refused for
+another architecture, with the remedy.
+
+The forms are refused where they do not apply (`target-base`): on macOS,
+Windows and FreeBSD the kernel interface is part of the base (`sysroot`), and no
+other layer takes a prebuilt form. On an openkal row the layer is the openkal
+implementation: a second supplier is refused by rule one. A manifest that uses
+the forms states `[package] mcpp = ">=2026.11.23.1"`; an older mcpp ignores the
+key on a row without a platform.
 
 ### `abi` — a switch the whole artefact shares (mcpp 2026.9.12.2+)
 

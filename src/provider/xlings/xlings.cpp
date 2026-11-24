@@ -398,7 +398,7 @@ std::string unmet(const mcpp::provider::ProviderInfo& info) {
         return std::format("is {}, older than {}", info.version, pinned::kXlingsVersion);
     for (auto feature : {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
                          "payload_currency", "binding_state", "network_diagnostics",
-                         "download_socket_budgets", "read_only_queries"})
+                         "download_socket_budgets", "read_only_queries", "store_roots"})
         if (std::ranges::find(info.features, feature) == info.features.end())
             return std::format("does not offer `{}`", feature);
     if (std::ranges::find(info.capabilities, "install_packages") == info.capabilities.end())
@@ -1803,6 +1803,16 @@ int install_from(const Env& env, const std::filesystem::path& dir, std::span<con
     std::vector<std::string> args{"install", "--from", dir.string()};
     args.insert(args.end(), refs.begin(), refs.end());
     args.push_back("-y");
+    return run_shown(invocation(env, std::move(args)));
+}
+
+int collect_store(const Env& env, bool dryRun) {
+    // A collection removes payloads an install of another process may be
+    // about to name: it holds the turn every writer of the home's state holds.
+    std::optional<mcpp::home::Turn> turn;
+    if (!dryRun) hold_state_turn(turn, env, "collecting the store");
+    std::vector<std::string> args{"self", "clean"};
+    if (dryRun) args.push_back("--dry-run");
     return run_shown(invocation(env, std::move(args)));
 }
 

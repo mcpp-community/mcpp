@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.11.22.1"
+version     = "2026.11.23.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -125,7 +125,7 @@ mcpplibs.mwrap.xz   = "5.8.3.1"
 
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.
-mcpplibs.os = "0.4.7"
+mcpplibs.os = "0.4.8"
 
 # `modules/` holds what gets linked into this binary; `src/` is what has not
 # been separated yet, and shrinking it is the direction. Each entry is an

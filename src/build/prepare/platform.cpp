@@ -216,6 +216,8 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.descriptorKeys = set.keep(d.descriptorKeys);
         r.companions = set.keep(d.companions);
         r.linkWithoutMain = set.keep(d.linkWithoutMain);
+        r.interfaces = set.keep(d.interfaces);
+        r.interfacesStated = d.interfacesStated;
         r.exceptions = set.keep(d.exceptions);
         r.exeSuffixFixed = d.exeSuffixFixed;
         r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);
@@ -243,11 +245,20 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         p.runnerExclusive = sp.runnerExclusive;
         set.providers.push_back(p);
     };
-    for (auto const& sys : s.systems)
+    for (auto const& sys : s.systems) {
+        auto const& k = sys.kernelAbi;
         set.systems.push_back({ .name = set.keep(sys.name), .uname = set.keep(sys.uname),
                                 .resources = sys.resources, .commandScripts = set.keep(sys.commandScripts),
                                 .objectFormat = set.keep(sys.objectFormat), .exeSuffix = set.keep(sys.exeSuffix),
-                                .sharedSuffix = set.keep(sys.sharedSuffix) });
+                                .sharedSuffix = set.keep(sys.sharedSuffix),
+                                .kernelAbi = { .header = set.keep(k.header), .version = set.keep(k.version),
+                                               .packed = set.keep(k.packed), .bits = set.keep(k.bits),
+                                               .include = set.keep(k.include),
+                                               .archInclude = set.keep(k.archInclude),
+                                               .package = set.keep(k.package) },
+                                .interfaces = set.keep(sys.interfaces),
+                                .interfacesStated = sys.interfacesStated });
+    }
     // A platform the engine's own providers name (openkal-platform) is served by
     // those; its shorthands are not registered twice.
     const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {
@@ -658,6 +669,30 @@ cfgpred::Ctx platform_cfg_context(const PrepareState& state) {
     return cfgpred::context_for(target_of(state).str(), state.platformPackageShortName);
 }
 
+// THE TIERS ABOVE A PLATFORM (SPEC-013 §6): this machine's `[target.<selector>]`
+// tables, then the project's, each matching one merged by key in specificity
+// order. One merge for a platform's statement and for a row without one.
+void merge_override_tables(const PrepareState& state, mp::Statement& into) {
+    const auto ctx = platform_cfg_context(state);
+    std::vector<mp::Override> config;
+    if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->platformOverrides;
+    for (auto const* o : mcpp::platform::matching(config, matcher(ctx))) mcpp::platform::merge(into, o->fields);
+    auto project = project_tables(*state.m);
+    for (auto const* o : mcpp::platform::matching(project, matcher(ctx))) mcpp::platform::merge(into, o->fields);
+}
+
+// A LAYER'S PREBUILT FORMS (design 2026-11-22 §3.1): an ecosystem payload
+// (`xim:<name>@<version>`), or a directory that is no package (no mcpp.toml;
+// a directory with one is a package of the graph, as a base package's is,
+// SPEC-002 §2.5). Which layers accept them on a row is the system's data.
+bool prebuilt_layer(const mp::LayerEntry& e) {
+    if (!e.ref.payload.empty()) return true;
+    if (e.ref.spec.path.empty()) return false;
+    std::error_code ec;
+    return !fs::is_regular_file(fs::path(e.ref.spec.path) / "mcpp.toml", ec);
+}
+
+
 // A `planned` row the chosen platform was to serve (`state.plannedRow`), checked
 // against the platform's statement once it is read: served when a provider of the
 // statement lists the row with a toolchain; refused, naming the platform, when not.
@@ -846,11 +881,22 @@ std::optional<std::pair<std::string, std::string>> take_platform_series_restart(
 
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
     auto& P = state.platform;
-    if (P.selection.none) return false;
     const auto t = target_of(state);
 
+    // A ROW WITHOUT A PLATFORM HAS AN EMPTY STATEMENT, AND THE TIERS ABOVE IT
+    // OVERRIDE IT AS THEY OVERRIDE A PLATFORM'S (design 2026-11-22 §3.2). The
+    // keys of this machine's and the project's `[target.<selector>]` tables
+    // used to be merged only once a platform package was read, so on a row
+    // without one they were accepted and dropped; the layers and tools they
+    // name are completed below as a platform's are. Merged again each round:
+    // the merge replaces by key, and a round adds no table.
+    if (P.selection.none) {
+        P.fields = {};
+        merge_override_tables(state, P.fields);
+    }
+
     // ── The package, once: find it, read it, merge what overrides it ──────
-    if (!P.active) {
+    if (!P.selection.none && !P.active) {
         const mcpp::modgraph::PackageRoot* found = nullptr;
         const auto& ref = P.selection.ref;
         for (std::size_t i = 1; i < state.packages.size(); ++i) {
@@ -924,14 +970,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         P.selection.hosted = *hosted;
         state.platformData = mcpp::platform::view_of(found->manifest.platform, t.str(), *hosted);
         P.fields = state.platformData;
-        const auto ctx = platform_cfg_context(state);
-        std::vector<mp::Override> config;
-        if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->platformOverrides;
-        for (auto const* o : mcpp::platform::matching(config, matcher(ctx)))
-            mcpp::platform::merge(P.fields, o->fields);
-        auto project = project_tables(*state.m);
-        for (auto const* o : mcpp::platform::matching(project, matcher(ctx)))
-            mcpp::platform::merge(P.fields, o->fields);
+        merge_override_tables(state, P.fields);
         P.active = true;
         state.platformInjected.insert(P.package);
         // A base, or descriptor keys, the platform states, which this pass
@@ -955,6 +994,12 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         auto const& e = it->second;
         if (e.ref.off) {
             P.layers[std::string(layer)] = { "none", e.origin.tier };
+            continue;
+        }
+        // A prebuilt supplier is no package of the graph: the target side
+        // decides and wires it (`step9_kernel_headers`).
+        if (prebuilt_layer(e)) {
+            P.layers[std::string(layer)] = { mp::display(e.ref), e.origin.tier };
             continue;
         }
         if (auto pv = provided.find(std::string(layer)); pv != provided.end()) {
@@ -1328,7 +1373,7 @@ std::expected<void, std::string> step4b_check_platform_versions(PrepareState& st
 // a build programs' graph under a host platform linked its programs without
 // the C library and the C++ run-time, and `okld check` refused `free`.)
 void step4b_platform_member_edges(PrepareState& state) {
-    if (!state.platform.active || !state.workspacePlan() || state.platformLayerSpecs.empty()) return;
+    if (!state.workspacePlan() || state.platformLayerSpecs.empty()) return;
     // The packages of the plan by short name, so a member's edge to a layer
     // provider is a lookup.
     std::map<std::string, std::vector<std::size_t>, std::less<>> byName;
@@ -1513,11 +1558,7 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
         program.runners[name] = std::move(r);
     }
     mcpp::platform::merge(s, program);
-    std::vector<mp::Override> config;
-    if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->platformOverrides;
-    for (auto const* o : mcpp::platform::matching(config, matcher(cfgCtx))) mcpp::platform::merge(s, o->fields);
-    auto project = project_tables(*state.m);
-    for (auto const* o : mcpp::platform::matching(project, matcher(cfgCtx))) mcpp::platform::merge(s, o->fields);
+    merge_override_tables(state, s);
     if (P.active) keep_platform_naming(s, state.platformData, P.display(), conflicts);
     const auto envKey = target_env_name(t, "RUNNER");
     if (auto e = mcpp::invocation::get(envKey); e && !e->empty()) {
@@ -1559,7 +1600,6 @@ void step13_platform_statement(PrepareState& state) {
 // tables), as they stand when they are asked for: the std module is compiled
 // before the statement is final, and is a unit like any other.
 std::vector<std::string> platform_unit_cxxflags(const PrepareState& state) {
-    if (!state.platform.active) return {};
     return mcpp::platform::evaluate_flags(platform_statement(state), matcher(platform_cfg_context(state))).cxxflags;
 }
 
@@ -1575,8 +1615,22 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
                return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
            });
 
+    // Who states the link: the platform, or on a row without one the tiers
+    // above it (design 2026-11-22 §3.2). The fields are read wherever they are
+    // stated; only the platform's identity needs a platform.
+    const std::string stater = P.active ? std::format("the platform {}", P.display())
+                                        : std::string("this build");
+    // `carrier` is a form of the platform's image (SPEC-013 §11): on a row
+    // without a platform it describes nothing, and a configuration that serves
+    // both kinds of row may state it, so it is said and not refused.
+    if (!P.active && !P.fields.carriers.empty())
+        mcpp::diag::warning("platform/carrier", std::format(
+            "`carrier` ({}) is stated for {}, which uses no platform; a carrier is a form of a "
+            "platform's image, so this build has none and the key is not used",
+            mcpp::platform::origin_text(P.fields.carriers.front().origin), t.str()));
+
     // ── The programs the link and the seal run (§4.4, §4.6) ───────────────
-    if (P.active) {
+    {
         std::set<std::string> needed;
         for (auto const& in : P.fields.link.inputs)
             if (!in.from.empty()) needed.insert(in.from.front());
@@ -1595,43 +1649,48 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             refusal::record(refusal::Code::PlatformToolAbsent);
             auto it = P.fields.tools.find(name);
             const std::string from = it == P.fields.tools.end()
-                ? std::string("the platform names no package that builds it")
+                ? std::string("no package that builds it is named")
                 : std::format("{} builds it ({})", mp::display(it->second.ref),
                               mcpp::platform::origin_text(it->second.origin));
             return std::unexpected(std::format(
-                "the platform {} links {} with `{}`, and it is neither built by the graph nor found "
+                "{} links {} with `{}`, and it is neither built by the graph nor found "
                 "on this machine; {}.\n"
                 "       Name the package that builds it for this machine:\n"
                 "\n"
-                "           [target.'cfg(platform = \"{}\")'.tools]\n"
+                "           [target.{}.tools]\n"
                 "           {} = \"<package>@<version>\"      # or {{ path = \"<dir>\" }}, {{ program = \"<name>\" }}",
-                P.display(), t.str(), name, from, mp::platform_name(state.platformPackageShortName),
+                stater, t.str(), name, from,
+                P.active ? std::format("'cfg(platform = \"{}\")'",
+                                       mp::platform_name(state.platformPackageShortName))
+                         : t.str(),
                 name));
         }
     }
     // A platform that links with ld.lld needs one beside the compiler; its
     // absence is said here, not as a link line that starts with a flag.
-    if (P.active && P.fields.link.driver.value == "lld" && linksSomething
+    if (P.fields.link.driver.value == "lld" && linksSomething
         && mcpp::freestanding::resolve_lld_any(state.tc->binaryPath).empty()) {
         refusal::record(refusal::Code::LldRequiredAbsent);
         return std::unexpected(std::format(
-            "the platform {} links {} with ld.lld itself ({}), and the toolchain has no ld.lld "
+            "{} links {} with ld.lld itself ({}), and the toolchain has no ld.lld "
             "beside {}.\n"
             "       Use a toolchain whose payload carries it -- the platform's own is {} -- with "
             "`[target.<selector>] toolchain`, or remove the line that names this one.",
-            P.display(), t.str(), mcpp::platform::origin_text(P.fields.link.driver.origin),
+            stater, t.str(), mcpp::platform::origin_text(P.fields.link.driver.origin),
             state.tc->binaryPath.generic_string(),
             P.fields.toolchain.set ? P.fields.toolchain.value : std::string("an llvm toolchain")));
     }
     // `link.flags` are words for ld.lld itself; a platform that links through
     // the compiler gives them to no program, and says so rather than dropping
     // them (`[platform.build] ldflags` reach the compiler's link).
-    if (P.active && P.fields.link.flags.set && P.fields.link.driver.value != "lld")
+    if (P.fields.link.flags.set && P.fields.link.driver.value != "lld")
         mcpp::diag::warning("build", std::format(
-            "the platform {} states `[platform.link] flags` ({}), and it links through the "
+            "{} states `{}` ({}), and it links through the "
             "compiler: those words are given to ld.lld only, so this link uses none of them.\n"
-            "       Words for the compiler's link belong in `[platform.build] ldflags`.",
-            P.display(), mcpp::platform::origin_text(P.fields.link.flags.origin)));
+            "       Words for the compiler's link belong in `{}`.",
+            stater, P.active ? "[platform.link] flags" : "[target.<selector>.link] flags",
+            mcpp::platform::origin_text(P.fields.link.flags.origin),
+            P.active ? "[platform.build] ldflags" : "[target.<selector>.build] ldflags"));
     // THE PLATFORM, REPORTED (SPEC-013 §9): which one and why, then what it
     // contributes beyond the layers the Target lines already showed.
     if (P.active) {

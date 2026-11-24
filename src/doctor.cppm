@@ -1372,6 +1372,10 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
                             ? std::string("platform")
                             : std::string(mcpp::targetside::origin_name(l.origin))},
             {"subset",    l.subset},
+            // The kernel-abi layer's measured version and its interfaces
+            // (design 2026-11-22 §3.8, §3.17); added fields.
+            {"version",   l.version},
+            {"interfaces", l.interfacesStated ? nlohmann::json(l.interfaces) : nlohmann::json(nullptr)},
         };
     };
     data["layers"] = nlohmann::json::array({

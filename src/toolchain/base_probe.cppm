@@ -36,13 +36,12 @@ inline bool is_payload_layout(const fs::path& root) {
         || fs::exists(root / "lib64" / "libc.so", ec)   || fs::exists(root / "lib" / "libc.so", ec);
 }
 
-inline PayloadPaths payload_layout_paths(const fs::path& root, const fs::path& linuxInclude) {
+inline PayloadPaths payload_layout_paths(const fs::path& root) {
     PayloadPaths pp;
     std::error_code ec;
     pp.glibcInclude = root / "include";
     pp.glibcLib = fs::exists(root / "lib64" / "libc.so.6", ec) || fs::exists(root / "lib64" / "libc.so", ec)
                 ? root / "lib64" : root / "lib";
-    pp.linuxInclude = fs::exists(root / "include" / "linux" / "limits.h", ec) ? fs::path{} : linuxInclude;
     return pp;
 }
 

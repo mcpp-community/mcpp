@@ -765,29 +765,7 @@ probe_payload_paths(const std::filesystem::path& compilerBin,
     pp.glibcInclude = glibcInclude;
     pp.glibcLib     = glibcLib;
 
-    // Find linux kernel headers (optional — search across index prefixes,
-    // then the active home registry). Require the actual payload: a
-    // delegating index package (xim:linux-headers → scode:linux-headers)
-    // leaves a metadata-only husk under its own prefix, and the discovery
-    // must skip it instead of giving up (issue #120: glibc's local_lim.h
-    // needs <linux/limits.h>, so a silent miss breaks every glibc build).
-    constexpr std::string_view kLinuxLimits = "include/linux/limits.h";
-    auto linuxHeaders =
-        mcpp::provider::beside(compilerBin, "linux-headers", kLinuxLimits);
-    if (!linuxHeaders)
-        linuxHeaders = mcpp::provider::in_home_store("linux-headers", kLinuxLimits);
-    if (linuxHeaders) {
-        pp.linuxInclude = *linuxHeaders / "include";
-    } else {
-        mcpp::log::verbose("probe",
-            "linux-headers payload not found under any index prefix — "
-            "glibc builds will fail at <linux/limits.h>");
-    }
-
-    mcpp::log::verbose("probe", std::format(
-        "payload paths: glibcLib='{}' linuxInclude='{}'",
-        pp.glibcLib.string(),
-        pp.linuxInclude.empty() ? "(none)" : pp.linuxInclude.string()));
+    mcpp::log::verbose("probe", std::format("payload paths: glibcLib='{}'", pp.glibcLib.string()));
     return pp;
 }
 

@@ -806,6 +806,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     if (!plan) return Refusal{1, about(run, m, plan.error().message)};
     plan->platform = ctx.plan.platform;
     plan->loadedLegs = std::move(loadedLegs);
+    plan->programStatic = ctx.plan.manifest.buildConfig.linkage == "static";
     plan->linkageName = opts.linkage == mcpp::pack::Linkage::Static ? "static"
                       : opts.linkage == mcpp::pack::Linkage::Shared ? "shared"
                       : opts.mode == mcpp::pack::Mode::Static ? "static"

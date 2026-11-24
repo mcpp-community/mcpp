@@ -57,6 +57,10 @@ public:
     std::filesystem::path home_of_store(const std::filesystem::path& store) const override {
         return store.parent_path().parent_path();
     }
+    // xlings' store-roots specification: `<home>/data/roots/<owner>/`.
+    std::filesystem::path roots_of(const std::filesystem::path& store, std::string_view owner) const override {
+        return store.parent_path() / "roots" / std::string(owner);
+    }
     // A home's environment as a payload's build bakes it into its compiler: `subos/default`, or
     // `subos/current`, the link a home keeps to its active environment (gcc 16.2.0 revision 1
     // was built in `/w/xh/subos/current`). Either names the building home's, not this one's.
@@ -317,6 +321,7 @@ public:
     int install_from(const std::filesystem::path& dir, std::span<const std::string> refs) const override {
         return xlings::install_from(env_, dir, refs);
     }
+    int collect_store(bool dryRun) const override { return xlings::collect_store(env_, dryRun); }
     std::string adopt_index_snapshot(std::string_view name, const std::filesystem::path& snapshot) const override {
         return xlings::adopt_index_snapshot(env_, name, snapshot);
     }

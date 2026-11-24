@@ -204,7 +204,14 @@ namespace pinned {
     // --with-index` writes a bundle and `xlings install --from <dir>` installs
     // from one. `mcpp fetch` and `[build] offline` stand on these (design
     // 2026-11-21, offline and toolchain defaults §3.1, §3.2).
-    inline constexpr std::string_view kXlingsVersion   = "2026.11.21.1";
+    //
+    // Eighteenth, at 2026.11.23.1 (openxlings/xlings#712, protocol 1.19). The
+    // store's collection keeps what a root under `data/roots/<owner>/` holds
+    // (feature `store_roots`): `mcpp cache gc` asks for a collection after the
+    // builds have registered their payloads as roots, and an earlier xlings
+    // reads none and removes them. Measured on one home before roots: `xlings
+    // self clean --dry-run` listed 154 payloads (16 GB) projects use.
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.23.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -626,6 +633,10 @@ int install_direct(const Env& env, std::string_view target, bool quiet = false);
 // <dir> <refs>` (xlings 2026.11.21.1), their lines shown as install_direct's.
 int download_to(const Env& env, std::span<const std::string> refs, const std::filesystem::path& dir);
 int install_from(const Env& env, const std::filesystem::path& dir, std::span<const std::string> refs);
+// `xlings self clean [--dry-run]` in the home: the store's collection, which
+// keeps what the home's environments, their dependency closure and the owners'
+// roots reference (xlings' store-roots specification).
+int collect_store(const Env& env, bool dryRun);
 std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot);
 // The marker of an index tree a bundle placed, which a later bundle may
 // replace. A refresh replaces it as it replaces any copy: an index mcpp owns

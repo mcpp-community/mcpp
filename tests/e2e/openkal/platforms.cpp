@@ -1,7 +1,8 @@
 // Platform packages: a class of targets a platform states, its version group and its series,
 // the default platform release, a target a platform defines, the platform skeleton, and a row a
 // platform defines taking nothing of the payload's host (formerly tests/e2e/952, 1020, 1021,
-// 1025, 1040, 1049, 1057), the package index naming a row's platform (1106), and a platform's
+// 1025, 1040, 1049, 1057), a bare-metal row a platform defines compiled for its clang triple
+// (1157), the package index naming a row's platform (1106), and a platform's
 // plugin resolving apart from the project's build program and a series skipping a release the
 // build cannot use (972).
 import std;
@@ -728,6 +729,51 @@ flags  = ["-e", "_start"]
         expect(fatal(exe.has_value())) << "no program";
         const auto h = s::read_header(*exe);
         expect(fatal(h.kind == s::format::elf && !h.wide)) << "the program is not ELF32";
+    };
+    "1157 a bare metal row a platform defines is compiled for its clang triple"_test[s::elf][s::llvm] = [] {
+        // A bare-metal row a platform defines with no machine description (`riscv64-none-toy`,
+        // no `march`, no `link-emulation`): every compile is told the row's clang-triple, and
+        // the build succeeds. Before, such a row resolved to no bare-metal description, its
+        // compiles had no `--target`, and the C library's verification probe refused it.
+        const auto t = s::case_dir();
+        s::project(t / "plat", {{"mcpp.toml", std::format(R"([package]
+name    = "toy-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{}"
+
+[[platform.define]]
+triple        = "riscv64-none-toy"
+clang-triple  = "riscv64-unknown-elf"
+object-format = "elf"
+execution     = "toy"
+
+[[platform.provider]]
+serves = ["riscv64-none-toy"]
+
+[platform.build]
+cflags  = ["-fno-pic"]
+ldflags = ["-nostdlib", "-Wl,-e,_start"]
+
+[platform.layers]
+"kernel-abi"       = false
+"c-abi"            = false
+"c++-abi"          = false
+"compiler-runtime" = false
+)", s::llvm_version())}});
+        s::project app(t / "app", {{"mcpp.toml", "[package]\nname    = \"toy\"\nversion = \"0.1.0\"\n\n[targets.toy]\nkind = \"bin\"\nmain = \"src/main.c\"\n\n[target.riscv64-none-toy]\nplatform = { path = \"../plat\" }\n"},
+                                   {"src/main.c", "#ifndef __riscv\n#error not compiled for riscv\n#endif\nvoid _start(void) { for (;;) {} }\n"}});
+        auto r = app.mcpp({"build", "--target", "riscv64-none-toy"});
+        expect(fatal(e2e::succeeded(r))) << "the row did not build: " << s::text(r);
+        r = app.mcpp({"why", "flags", "--target", "riscv64-none-toy"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "--target=riscv64-unknown-elf")))
+            << "the row's clang-triple is not the compiles' target: " << s::text(r);
+        std::optional<fs::path> exe;
+        for (const auto& f : s::find_files(app.at("target/riscv64-none-toy"), "toy"))
+            if (f.parent_path().filename() == "bin") { exe = f; break; }
+        expect(fatal(exe.has_value())) << "no program";
+        expect(fatal(s::read_header(*exe).kind == s::format::elf)) << "the program is not ELF";
     };
     "1106 the package index names the platform of a row"_test[s::elf][s::llvm][s::fresh_sandbox] = [] {
         // A row no table knows, `x86_64-toyos`, a `planned` row, `i686-linux-musl`, a row the

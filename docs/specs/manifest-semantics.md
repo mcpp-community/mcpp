@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.28 |
-| **最后修改** | 2026-11-21 |
+| **版本** | 1.29 |
+| **最后修改** | 2026-11-23 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`<br>`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md`(§24) |
@@ -198,8 +198,13 @@ feature-deps          feature-xlings         ← 限定词是门
 | `[target.<selector>.xlings…]` | 目标 | **已实现**(2026.9.6.4) |
 | `[target.<triple>].sysroot` | 目标 | **已实现** |
 | `[target.<triple>].run_under` | 目标(执行宿主) | **已实现**(2026.10.24.1) |
-| `[target.<selector>]` 的 `platform`、`layers`、`tools`、`link`、`carrier` | 目标 | **已实现**(2026.10.27.1,SPEC-013) |
+| `[target.<selector>]` 的 `platform`、`layers`、`tools`、`link`、`carrier` | 目标 | **已实现**(2026.10.27.1,SPEC-013);没有平台的行上同样生效(2026.11.23.1,SPEC-013 §6) |
+| `[target.<selector>.layers] kernel-abi` 的预制形式 `"<索引>:<名>@<版本>"`、`{ path = "<目录>" }` | 目标 | **已实现**(2026.11.23.1,SPEC-002 §3.9) |
 | `[host] platform` | 宿主 | **已实现**(2026.10.27.1,SPEC-013 §4) |
+
+`layers.<层>` 的值有四种形式:依赖图中的包(包引用)、`false`、生态载荷 `"<索引>:<名>@<版本>"` 与不带 `mcpp.toml` 的
+目录 `{ path = "<目录>" }`;后两种是预制供给者,拼写与 `companions` 的载荷、`sysroot = { path = … }` 相同,只在
+系统行为该层给出测量方式时被接受(SPEC-002 §3.9)。载荷引用**必须**带版本。
 
 顶层平台键对象**不是**遗留拼法,它是宿主轴**正确**的写法:工具必须能在这台机器上
 执行。`[target.<triple>].sysroot` 是目标轴 xpkg 引用的既有先例。
@@ -959,3 +964,4 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.26 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#990,设计 2026-11-21 离线与缺省 §3.2):§9 第 22 条 `[build] offline` 与第 23 条 `[xlings] archives`,两者按 §2 的四层取值,一次运行陈述为一个变量。 |
 | 1.27 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#992):新增 §16,特性的 `description`、一个目录项与查询回答的三种状态。 |
 | 1.28 | 2026-11-22 | mcpp 2026.11.22.1(设计 2026-11-22 §6.2):§9 第 12 条,生效的 `[indices]` 中一个位置只有一个名字,两项指向同一位置时拒绝(`index-location-named-twice`)。 |
+| 1.29 | 2026-11-23 | mcpp 2026.11.23.1(设计 2026-11-22 内核接口与派生状态 §3.1、§3.2):`layers.<层>` 的四种值,载荷与目录两种预制形式;平台键在没有平台的行上生效。 |

@@ -141,7 +141,7 @@ step4b_define_provisioning_closures(PrepareState& state) {
                 // file provides and imports, and reads nothing (D6). A unit
                 // that declares no `provides` asserts nothing; the build's own
                 // scan finds its imports, as it did with the empty placeholder.
-                mm.modules.declaredUnits[o] = mcpp::manifest::ScanOverride{a.provides, a.imports};
+                mm.modules.declaredUnits[o] = mcpp::manifest::ScanOverride{a.provides, a.imports, a.origin};
                 // D26: a generated module interface must say which module it
                 // is. Without `.provides()` nothing writes its BMI, and the
                 // first importer fails far from the action.

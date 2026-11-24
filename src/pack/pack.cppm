@@ -209,8 +209,9 @@ struct Options {
     // What the build placed relative to the executable, from
     // `runtime.deploy_files` and `runtime.deploy` (#615), as paths relative to
     // the executable's directory. Each is staged at the same relative path
-    // beside the packed executable, in every mode: these are files a program
-    // opens, not libraries a closure decides about.
+    // beside the packed executable, in every mode. One that is an object of
+    // the program's format and machine is also a root of the closure
+    // (`deployed_objects`, mcpp#1011); the rest are files a program opens.
     std::vector<std::filesystem::path> runtimeFiles;
     // Does the RESOLVED C++ runtime contract require the toolchain's own
     // runtime to travel WITH the artifact — i.e. `cxx_runtime =
@@ -308,6 +309,9 @@ struct Plan {
     // `shared`, or `declared` (each library as it declares itself). Set by the
     // caller from the build.
     std::string                          linkageName = "declared";
+    // The build linked the program static (the row's or the project's
+    // `linkage`): it names no loader and no library, whatever its format.
+    bool                                 programStatic = false;
     // The other legs of a tree or a single file (SPEC-014 §3), set by the caller
     // after `make_plan` as `extraSharedLegs` is.
     std::vector<LoadedLeg>               loadedLegs;
@@ -460,6 +464,13 @@ struct ClosureReadInput {
     // each resolves again where it came from instead of shadowing a newer
     // version there. `mcpp pack` leaves it empty.
     std::vector<std::string>           notInFirstDir;
+    // THE OTHER ROOTS (mcpp#1011): objects the build placed relative to
+    // `object`'s directory, as paths relative to it. Each is read as `object`
+    // is and its names resolve by the same rule -- a plugin the program loads
+    // at run time needs its libraries in the tree as much as the program does.
+    // A Mach-O root inherits the program's rpaths, as an image the program
+    // loads does.
+    std::vector<std::filesystem::path> deployed;
 };
 
 // A name that resolved to a file, and where that file is staged: `dest` is
@@ -1015,10 +1026,16 @@ bool soname_matches(std::string_view soname,
 struct LddClosure {
     std::vector<ResolvedDep> found;
     std::vector<std::string> notFound;
+    // A deployed object the loader could not load into the program's trace,
+    // with its reason (mcpp#1011): its closure is unknown, which is said.
+    std::vector<std::string> notLoaded;
 };
 
+// `preload`: deployed shared objects, relative to `binary`'s directory, which
+// the loader loads into the trace (see `trace_closure`).
 std::expected<LddClosure, std::string>
-ldd_parse(const std::filesystem::path& binary)
+ldd_parse(const std::filesystem::path& binary,
+          const std::vector<std::filesystem::path>& preload = {})
 {
     // Don't shell out to `ldd` directly — many distros (and our own
     // xim:glibc sandbox) ship `ldd` as a shell script that tries to
@@ -1028,11 +1045,19 @@ ldd_parse(const std::filesystem::path& binary)
     // executing main(). This routes through the binary's *own*
     // PT_INTERP so it works even when our sandbox's ldd wrapper is
     // broken or missing.
-    auto out = run_capture({ binary.string() }, { { "LD_TRACE_LOADED_OBJECTS", "1" } });
-    if (!out) return std::unexpected(out.error());
+    mcpp::run::Env env{ { "LD_TRACE_LOADED_OBJECTS", "1" } };
+    std::string preloadList;
+    for (auto const& rel : preload)
+        preloadList += (preloadList.empty() ? "./" : ":./") + rel.generic_string();
+    if (!preloadList.empty()) env.push_back({ "LD_PRELOAD", preloadList });
+    const std::vector<std::string> argv{ binary.string() };
+    auto r = mcpp::run::execute(argv, { .env = env,
+        .cwd = preloadList.empty() ? std::string{} : binary.parent_path().string() });
+    if (r.exit_code != 0) return std::unexpected(std::format(
+        "command exited with {}: {}", r.exit_code, mcpp::build::command_line::display(argv)));
 
     LddClosure deps;
-    std::istringstream is{*out};
+    std::istringstream is{r.output};
     std::string line;
     while (std::getline(is, line)) {
         // Trim leading whitespace.
@@ -1040,6 +1065,18 @@ ldd_parse(const std::filesystem::path& binary)
         while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
         line.erase(0, i);
         if (line.empty()) continue;
+        // glibc's words for a preloaded object it did not load: `ERROR: ld.so:
+        // object './<rel>' from LD_PRELOAD cannot be preloaded (<why>): ignored.`
+        if (auto at = line.find("from LD_PRELOAD cannot be preloaded"); at != std::string::npos) {
+            const auto open = line.find("'./"), close = line.find('\'', open + 3);
+            const auto why0 = line.find('(', at), why1 = line.find(')', why0);
+            deps.notLoaded.push_back(std::format("{}: the loader does not load it into the program ({})",
+                open == std::string::npos || close == std::string::npos ? line
+                    : line.substr(open + 3, close - open - 3),
+                why0 == std::string::npos || why1 == std::string::npos ? std::string("no reason given")
+                    : line.substr(why0 + 1, why1 - why0 - 1)));
+            continue;
+        }
         if (line.starts_with("statically linked")) return deps;   // no deps
         // Skip vDSO (no on-disk file).
         if (line.starts_with("linux-vdso")) continue;
@@ -1068,6 +1105,68 @@ ldd_parse(const std::filesystem::path& binary)
         deps.found.push_back(std::move(d));
     }
     return deps;
+}
+
+// THE LOADER'S CLOSURE OF A PROGRAM AND OF WHAT THE BUILD DEPLOYED BESIDE IT
+// (mcpp#1011). A deployed shared object is preloaded into the program's trace:
+// the loader then resolves its names in the program's process, with the
+// program's search path and the libraries the program already loads, which is
+// what a `dlopen` from the program finds. A deployed program has a loader of
+// its own (glibc loads no executable into another process) and is traced as
+// the program is. An object with neither a loader nor a needed library has no
+// closure. Names are merged by soname, the program's first.
+//
+// THE PROGRAM IS TRACED ALONE FIRST. A preloaded object satisfies every later
+// request for its soname, so a deployed library the program also links would
+// be resolved as the preloaded path and leave the program's own resolution of
+// that name -- the file `lib/` must carry -- out of the trace (measured with
+// glibc 2.39).
+//
+// `LD_PRELOAD` separates its entries by `:` and white space and has no escape,
+// so an object whose path below the program's directory holds one cannot be
+// named to the loader; it is reported, not dropped.
+std::expected<LddClosure, std::string>
+trace_closure(const std::filesystem::path& program,
+              const std::vector<std::filesystem::path>& deployed)
+{
+    const auto dir = program.parent_path();
+    std::vector<std::filesystem::path> preload, programs;
+    LddClosure merged;
+    for (auto const& rel : deployed) {
+        const auto facts = mcpp::runtime::elf::inspect_elf_runtime(dir / rel);
+        if (facts && facts->interp.empty() && facts->needed.empty()) continue;
+        if (facts && !facts->interp.empty()) { programs.push_back(rel); continue; }
+        if (rel.generic_string().find_first_of(": \t\n") != std::string::npos) {
+            merged.notLoaded.push_back(std::format(
+                "{}: its path holds a character LD_PRELOAD separates entries by", rel.generic_string()));
+            continue;
+        }
+        preload.push_back(rel);
+    }
+    std::set<std::string> found, notFound;
+    auto merge = [&](LddClosure&& c) {
+        for (auto& d : c.found)
+            if (found.insert(d.soname).second) merged.found.push_back(std::move(d));
+        for (auto& n : c.notFound)
+            if (notFound.insert(n).second) merged.notFound.push_back(std::move(n));
+        for (auto& n : c.notLoaded) merged.notLoaded.push_back(std::move(n));
+    };
+    auto first = ldd_parse(program);
+    if (!first) return std::unexpected(first.error());
+    merge(std::move(*first));
+    if (!preload.empty()) {
+        auto loaded = ldd_parse(program, preload);
+        if (!loaded) return std::unexpected(loaded.error());
+        merge(std::move(*loaded));
+    }
+    for (auto const& rel : programs) {
+        auto other = ldd_parse(dir / rel);
+        if (!other) return std::unexpected(std::format("{}: {}", rel.generic_string(), other.error()));
+        merge(std::move(*other));
+    }
+    // A name some trace resolved is not missing because another did not.
+    std::erase_if(merged.notFound, [&](const std::string& n) { return found.contains(n); });
+    return merged;
 }
 
 // Sandbox-local patchelf path via xlings module. Fail soft if the
@@ -1367,6 +1466,12 @@ write_topentry_wrapper(const std::filesystem::path& stagingRoot,
     return write_executable_script(stagingRoot / std::string(binaryName), body);
 }
 
+// Where the target distribution keeps the loader `soname` names (the LSB
+// layout: `/lib64/` for x86_64's, `/lib/` elsewhere).
+std::string distro_loader(std::string_view soname) {
+    return (soname == "ld-linux-x86-64.so.2" ? "/lib64/" : "/lib/") + std::string(soname);
+}
+
 // Find the dynamic linker's SONAME in `deps` (something like
 // "ld-linux-x86-64.so.2"). Empty when not found, e.g. for static.
 std::string find_loader_soname(const std::vector<ResolvedDep>& deps) {
@@ -1461,6 +1566,41 @@ stage_runtime_files(const Plan& plan, const std::filesystem::path& stagedExeDir,
             "failed to copy {} -> {}: {}", src.string(), dst.string(), ec.message())});
     }
     return {};
+}
+
+// THE DEPLOYED FILES THAT ARE ROOTS OF THE CLOSURE (mcpp#1011): the runtime
+// files in `dir`, the directory `program` lies in, that are objects of the
+// program's own format and machine -- a plugin the program loads, a helper it
+// starts, another program of the package. Paths relative to `dir`. Every other
+// deployed file is one the program opens, and has no closure.
+//
+// The format is read from the file, not from its name: a Qt plugin is
+// `libqxcb.so` and a helper program has no suffix at all.
+std::vector<std::filesystem::path>
+deployed_objects(const Plan& plan, const std::filesystem::path& program,
+                 const std::filesystem::path& dir)
+{
+    namespace bf = mcpp::pack::binfmt;
+    std::vector<std::filesystem::path> out;
+    const auto own = bf::identify(program);
+    if (own.format == bf::Format::Unknown) return out;
+    for (auto const& rel : plan.opts.runtimeFiles) {
+        const auto id = bf::identify(dir / rel);
+        if (id.format != own.format) continue;
+        // Mach-O's identity states no machine (a fat file has several), and
+        // its magic is also a Java class file's: the file is one of the
+        // program's when its load commands read for the program's slice.
+        if (own.format == bf::Format::MachO) {
+            auto t = mcpp::toolchain::triple::parse(plan.triple);
+            if (!bf::macho_needed(dir / rel, t ? t->arch
+                    : std::string(mcpp::toolchain::platform::host_arch)))
+                continue;
+        } else if (id.arch != own.arch) {
+            continue;
+        }
+        out.push_back(rel);
+    }
+    return out;
 }
 
 // Steps 1-3 of `run`'s generic (non-PE, non-wasm, non-shared-object) path:
@@ -2025,18 +2165,26 @@ ClosureRead read_closure(const ClosureReadInput& in)
     // loader does.
     std::set<std::string> seen;
 
+    const auto objectDir = in.object.parent_path();
     if (in.rule != ClosureRule::MachO) {
-        std::vector<std::filesystem::path> queue{in.object};
+        // The roots are read first, the program last, so that the program's
+        // own names are the ones resolved first (the queue is a stack).
+        std::vector<std::filesystem::path> queue;
+        for (auto const& rel : in.deployed) queue.push_back(objectDir / rel);
+        queue.push_back(in.object);
+        const std::set<std::filesystem::path> rootSet(queue.begin(), queue.end());
         while (!queue.empty()) {
             auto current = queue.back();
             queue.pop_back();
             auto names = bf::needed_names(current);
             if (!names) {
-                // The object itself was chosen by the caller, so an unreadable
-                // one is reported; a member that cannot be read was already
-                // staged and contributes nothing further.
-                if (current == in.object)
-                    out.unresolved.push_back({current.filename().string(), names.error()});
+                // A root was chosen by the caller, so an unreadable one is
+                // reported; a member that cannot be read was already staged
+                // and contributes nothing further.
+                if (rootSet.contains(current))
+                    out.unresolved.push_back({current == in.object
+                        ? current.filename().generic_string()
+                        : current.lexically_relative(objectDir).generic_string(), names.error()});
                 continue;
             }
             for (auto const& name : *names) {
@@ -2098,8 +2246,18 @@ ClosureRead read_closure(const ClosureReadInput& in)
         const auto programDir = in.object.parent_path();
         const auto programRpaths = first->rpaths;
         std::set<std::string> seenDest;
-        std::vector<Image> queue{
-            Image{in.object, {}, std::move(first->names), std::move(first->rpaths)}};
+        // The roots below the program on the stack, as on the other rules.
+        std::vector<Image> queue;
+        for (auto const& rel : in.deployed) {
+            auto root = bf::macho_needed(objectDir / rel, in.arch);
+            if (!root) {
+                out.unresolved.push_back({rel.generic_string(), root.error()});
+                continue;
+            }
+            queue.push_back(Image{objectDir / rel, rel.parent_path(),
+                                  std::move(root->names), std::move(root->rpaths)});
+        }
+        queue.push_back(Image{in.object, {}, std::move(first->names), std::move(first->rpaths)});
 
         // `@loader_path/<rest>` -> `<rest>`; nullopt when `s` does not begin
         // with the token followed by a separator.
@@ -2284,6 +2442,7 @@ run_pe(const Plan& plan)
         in.rule        = ClosureRule::Pe;
         in.searchDirs  = plan.searchDirs;
         in.forceBundle = plan.forceBundleLibs;
+        in.deployed    = deployed_objects(plan, stagedExe, stagedExe.parent_path());
         const auto read = read_closure(in);
         // PE's rule resolves every name (see `ClosureRule`); what can remain
         // is an executable the reader could not parse, which no format can
@@ -2347,16 +2506,23 @@ run_wasm(const Plan& plan)
     const auto builtDir = plan.builtBinary.parent_path();
     // The module beside the launcher is the row's companion (N33): absent when
     // the link embedded it (`-sSINGLE_FILE=1`), and removed before every link,
-    // so a module present here is this launcher's.
-    auto family = mcpp::pack::emscripten_stem_family(builtDir, plan.binaryName);
-    for (auto const& name : family.siblings) {
-        std::error_code fec;
-        std::filesystem::copy_file(builtDir / name,
-            plan.stagingRoot / "bin" / name,
-            std::filesystem::copy_options::overwrite_existing, fec);
-        if (fec) return std::unexpected(Error{std::format(
-            "failed to copy {} -> {}: {}", (builtDir / name).string(),
-            (plan.stagingRoot / "bin" / name).string(), fec.message())});
+    // so a module present here is this launcher's. EVERY PROGRAM OF THE
+    // PACKAGE HAS ITS OWN (mcpp#1007): under `--all-programs` the others were
+    // staged as files beside the chosen one, launcher alone, and `cmd.exe.js`
+    // travelled without `cmd.exe.wasm`.
+    std::vector<std::string> launchers{ plan.binaryName };
+    for (auto const& other : plan.opts.otherPrograms) launchers.push_back(other);
+    for (auto const& launcher : launchers) {
+        auto family = mcpp::pack::emscripten_stem_family(builtDir, launcher);
+        for (auto const& name : family.siblings) {
+            std::error_code fec;
+            std::filesystem::copy_file(builtDir / name,
+                plan.stagingRoot / "bin" / name,
+                std::filesystem::copy_options::overwrite_existing, fec);
+            if (fec) return std::unexpected(Error{std::format(
+                "failed to copy {} -> {}: {}", (builtDir / name).string(),
+                (plan.stagingRoot / "bin" / name).string(), fec.message())});
+        }
     }
 
     if (auto r = stage_runtime_files(plan, stagedJs.parent_path()); !r) return r;
@@ -3065,6 +3231,7 @@ run_shared_program(const Plan& plan)
         in.rule         = ClosureRule::Android;
         in.searchDirs   = leg.searchDirs;
         in.platformDirs = leg.platformDirs;
+        in.deployed     = deployed_objects(plan, leg.artifact, leg.artifact.parent_path());
         const auto read = read_closure(in);
         std::vector<std::pair<std::filesystem::path, std::filesystem::path>> copies;
         if (auto r = stage_closure(plan, read, leg.dir, needs, unresolved, prefix,
@@ -3207,6 +3374,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             in.rule   = ClosureRule::MachO;
             auto t = mcpp::toolchain::triple::parse(plan.triple);
             in.arch   = t ? t->arch : std::string(mcpp::toolchain::platform::host_arch);
+            in.deployed = deployed_objects(plan, plan.builtBinary, plan.builtBinary.parent_path());
             const auto read = read_closure(in);
             if (auto r = stage_closure(plan, read, plan.stagingRoot / "bin", needs,
                                        unresolved, {}); !r)
@@ -3285,7 +3453,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                     "       This target links it dynamically whatever the linkage asked; pack it with "
                     "a mode that states its closure (--mode vendored).",
                     plan.binaryName, !f->interp.empty() ? "a loader" : "shared libraries")});
-        if (plan.opts.mode != Mode::Static) {
+        // A STATIC PROGRAM OF A FORMAT WITH NO DYNAMIC LINKER HAS NO CLOSURE
+        // (mcpp#1007): a DJGPP program, COFF under a go32 stub, is linked whole
+        // by the row's statement (`linkage = "static"`), and there is no loader
+        // to ask. The default mode packs it as it packs a static ELF, whose
+        // closure the file says is empty; a format mcpp reads is still asked.
+        const bool closureByBuild = plan.programStatic
+            && mcpp::pack::binfmt::identify(plan.builtBinary).format == mcpp::pack::binfmt::Format::Unknown;
+        if (plan.opts.mode != Mode::Static && !closureByBuild) {
             // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
             // `$ORIGIN`.
             //
@@ -3348,11 +3523,22 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                 return t && !t->loads_on_host();
             }();
             std::vector<std::string> targetSystemNames;
+            // The objects the build deployed beside the program are roots of
+            // the closure as the program is (mcpp#1011), read by the same rule.
+            // A program with no loader loads none of them into its process.
+            const auto deployed = selfContained ? std::vector<std::filesystem::path>{}
+                : deployed_objects(plan, plan.builtBinary, plan.builtBinary.parent_path());
             auto foreign_closure = [&]() -> std::expected<LddClosure, std::string> {
                 LddClosure c;
                 if (!facts) return c;
                 const auto bin = plan.builtBinary.parent_path();
-                for (auto const& name : facts->needed) {
+                std::vector<std::string> names = facts->needed;
+                for (auto const& rel : deployed)
+                    if (auto f = mcpp::runtime::elf::inspect_elf_runtime(bin / rel))
+                        names.insert(names.end(), f->needed.begin(), f->needed.end());
+                std::set<std::string> seen;
+                for (auto const& name : names) {
+                    if (!seen.insert(name).second) continue;
                     std::error_code ec;
                     std::filesystem::path found;
                     for (auto const& dir : {bin, bin.parent_path() / "lib"})
@@ -3362,9 +3548,9 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                 }
                 return c;
             };
-            auto deps = selfContained ? decltype(ldd_parse(plan.builtBinary)){}
+            auto deps = selfContained ? std::expected<LddClosure, std::string>{}
                       : foreignSystem ? foreign_closure()
-                                      : ldd_parse(plan.builtBinary);
+                                      : trace_closure(plan.builtBinary, deployed);
             if (!deps) return std::unexpected(Error{std::format(
                 "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
 
@@ -3414,6 +3600,8 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                 needs.push_back({name, ClosureNeed::Kind::Unresolved, {}});
                 unresolved.push_back(name + ": the loader finds no file for it");
             }
+            if (bundling)
+                unresolved.insert(unresolved.end(), deps->notLoaded.begin(), deps->notLoaded.end());
             if (!unresolved.empty())
                 unresolvedText = unresolved_reason(plan.binaryName, unresolved,
                     "The loader looks through the program's run-time search path "
@@ -3446,6 +3634,11 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             if (toBundle.empty()) {
                 if (auto r = mcpp::pack::relocate::strip_search_paths(bundledBinary); !r)
                     return std::unexpected(Error{r.error()});
+                // The deployed objects of the closure, by the same rule.
+                for (auto const& rel : deployed)
+                    if (auto r = mcpp::pack::relocate::strip_search_paths(
+                            bundledBinary.parent_path() / rel); !r)
+                        return std::unexpected(Error{r.error()});
             }
 
             auto patchelf = sandbox_patchelf(cfg);
@@ -3456,6 +3649,31 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                                                  mcpp::build::loader::Form::Executable,
                                                  patchelf); !r)
                         return std::unexpected(Error{r.error()});
+                }
+                // A DEPLOYED OBJECT FINDS THE BUNDLED LIBRARIES AS THE PROGRAM
+                // DOES (mcpp#1011). Its search path is its own when it has one
+                // (DT_RUNPATH hides the program's from the libraries it needs),
+                // and the build's points into this machine's store or SDK; it
+                // becomes the bundle's `lib/`, relative to where the object is
+                // staged. A deployed program takes the program's form and loader.
+                for (auto const& rel : deployed) {
+                    const auto staged = bundledBinary.parent_path() / rel;
+                    const auto facts = mcpp::runtime::elf::inspect_elf_runtime(staged);
+                    if (!facts || (facts->interp.empty() && facts->needed.empty())) continue;
+                    const bool program = !facts->interp.empty();
+                    if (!toBundle.empty()) {
+                        const auto up = (plan.stagingRoot / "lib")
+                                            .lexically_relative(staged.parent_path()).generic_string();
+                        if (auto r = set_search_path(staged, "$ORIGIN/" + up,
+                                program ? mcpp::build::loader::Form::Executable
+                                        : mcpp::build::loader::Form::SharedLibrary,
+                                patchelf); !r)
+                            return std::unexpected(Error{r.error()});
+                    }
+                    if (program && (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None))
+                        if (auto soname = find_loader_soname(deps->found); !soname.empty())
+                            if (auto r = set_interpreter(staged, distro_loader(soname), patchelf); !r)
+                                return std::unexpected(Error{r.error()});
                 }
 
                 // EVERY BUNDLED LIBRARY, not just the executable.
@@ -3505,10 +3723,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                 //                   loader directly.
                 if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
                     if (auto soname = find_loader_soname(deps->found); !soname.empty()) {
-                        auto distroLoader =
-                            (soname == "ld-linux-x86-64.so.2" ? "/lib64/" : "/lib/")
-                            + soname;
-                        if (auto r = set_interpreter(bundledBinary, distroLoader,
+                        if (auto r = set_interpreter(bundledBinary, distro_loader(soname),
                                                      patchelf); !r)
                             return std::unexpected(Error{r.error()});
                     }

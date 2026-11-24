@@ -52,7 +52,7 @@
 | 写法 | 展开(mcpp 2026.10.30.1 的目标表与 openkal-platform 0.18.0) |
 |---|---|
 | `openkal` | `x86_64-openkal`、`aarch64-openkal` |
-| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl`(`planned` 的行不在内) |
+| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl`、`riscv64-linux-musl`(`planned` 的行不在内) |
 | `linux` | `x86_64-linux-gnu`、`aarch64-linux-gnu` |
 
 ### 1.4 一条命令的腿

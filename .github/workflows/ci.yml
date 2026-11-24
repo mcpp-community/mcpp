@@ -167,9 +167,14 @@ jobs:
       windows: ${{ steps.plan.outputs.windows }}
       windows_work: ${{ steps.plan.outputs.windows_work }}
       windows_count: ${{ steps.plan.outputs.windows_count }}
+      # The history and the coverage map the plan divided by: every shard reads
+      # these two runs, so that each computes its part of one division.
+      history: ${{ steps.mtest.outputs.history }}
+      coverage: ${{ steps.mtest.outputs.coverage }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/e2e-mtest
+        id: mtest
         with:
           host: '*'
       - name: The plan
@@ -439,6 +444,8 @@ jobs:
       shards: ${{ needs.e2e-plan.outputs.linux || '[1,2,3]' }}
       count: ${{ needs.e2e-plan.outputs.linux_count || '3' }}
       work: ${{ needs.e2e-plan.outputs.linux_work != 'false' }}
+      history: ${{ needs.e2e-plan.outputs.history }}
+      coverage: ${{ needs.e2e-plan.outputs.coverage }}
 
   macos:
     needs: [build-macos, changes]
@@ -456,6 +463,8 @@ jobs:
       shards: ${{ needs.e2e-plan.outputs.macos || '[1,2,3]' }}
       count: ${{ needs.e2e-plan.outputs.macos_count || '3' }}
       work: ${{ needs.e2e-plan.outputs.macos_work != 'false' }}
+      history: ${{ needs.e2e-plan.outputs.history }}
+      coverage: ${{ needs.e2e-plan.outputs.coverage }}
 
   macos-ios:
     needs: [build-macos, changes]
@@ -478,6 +487,8 @@ jobs:
       shards: ${{ needs.e2e-plan.outputs.windows || '[1,2,3]' }}
       count: ${{ needs.e2e-plan.outputs.windows_count || '3' }}
       work: ${{ needs.e2e-plan.outputs.windows_work != 'false' }}
+      history: ${{ needs.e2e-plan.outputs.history }}
+      coverage: ${{ needs.e2e-plan.outputs.coverage }}
 
   windows-msvc-xlings:
     needs: [build-windows, changes]

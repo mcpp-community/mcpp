@@ -7369,3 +7369,20 @@ UTest a_conditional_test_table_carries_discover_alone{"Manifest/AConditionalTest
         "[target.'cfg(os = \"emscripten\")'.test]\ndiscover = \"tests/x.cpp\"\n");
     expect(fatal(!bad.has_value()));
 }};
+
+// `runner = true` and `runner = false` enable or disable the runner stated for
+// the row (2026.11.17.1); a boolean is read, not reported as an unsupported key.
+UTest a_boolean_runner_is_a_known_key{"Manifest/ABooleanRunnerIsAKnownKey", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "r"
+version = "0.1.0"
+
+[target.aarch64-ios-sim]
+runner = true
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    expect(all.find("runner") == std::string::npos) << all;
+}};

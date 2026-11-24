@@ -212,7 +212,7 @@ this mcpp builds. The environment is completed as above (`linux` is
 | Set | Members (2026.10.30.1, openkal-platform 0.18.0) |
 |---|---|
 | `openkal` | `x86_64-openkal`, `aarch64-openkal` |
-| `linux-musl` | `x86_64-linux-musl`, `aarch64-linux-musl` |
+| `linux-musl` | `x86_64-linux-musl`, `aarch64-linux-musl`, `riscv64-linux-musl` |
 | `linux` | `x86_64-linux-gnu`, `aarch64-linux-gnu` |
 
 Every member must select the same platform; a set whose members select
@@ -545,7 +545,7 @@ provider's runner ([41](41-devices.md)).
 | `aarch64-linux-gnu` | preview | `llvm@23.1.3` | base package | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
-| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `riscv64-linux-musl` | preview | `gcc@16.1.0` | payload | — | — | — |
 | `i686-linux-musl`, `i686-linux-gnu` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | base | payload |
 | `aarch64-windows-gnu` | preview | `llvm@23.1.3` | base | base | base | base |

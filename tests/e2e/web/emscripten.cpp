@@ -1,7 +1,7 @@
 // The Web row (wasm32-emscripten): the executable named `<name>.js` beside its `.wasm`, staged and
 // run, and `kind = "shared"` refused; a build program compiled by the host's compiler, also from a
 // fresh home; the profile's level at the link and the wasm exception model; the longjmp model; a
-// module with no program start (formerly tests/e2e/650, 657, 981, 1079; 981b is mcpp#981). Each case needs an emsdk payload and skips without one.
+// module with no program start; every program of a package packed with its module (formerly tests/e2e/650, 657, 981, 1079; 981b is mcpp#981, 1155 mcpp#1007). Each case needs an emsdk payload and skips without one.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -246,6 +246,19 @@ E2E emscripten{"emscripten", s::home_fixture, [] {
         r = app.mcpp({"pack", "--target", "wasm32-emscripten", "--pkg-format", "dir"});
         expect(fatal(e2e::succeeded(r))) << "a single-file web link did not pack: " << s::text(r);
         expect(fatal(!s::find_file(app.at("target/dist"), "app.wasm").has_value())) << "a module was packed";
+    };
+
+    "1155 every program of a web package packs with its module"_test[s::elf] = [] {
+        // mcpp#1007: `--all-programs` on the web row ships each program's launcher with the module
+        // its link wrote, not the module of the program named after the package alone.
+        if (!have_emsdk()) skip("1155 -- no emsdk payload installed (looked under xim-x-emsdk/*/emscripten)");
+        s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[targets.other]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                                               {"src/main.cpp", "import std;\nint main() { std::println(\"ok\"); return 0; }\n"}});
+        auto r = app.mcpp({"pack", "--target", "wasm32-emscripten", "--all-programs", "--pkg-format", "dir"});
+        expect(fatal(e2e::succeeded(r))) << "the web package's programs did not pack: " << s::text(r);
+        const auto staged = app.at("target/dist/app-0.1.0-wasm32-emscripten");
+        for (const auto* f : {"bin/app.js", "bin/app.wasm", "bin/other.js", "bin/other.wasm"})
+            expect(fatal(fs::is_regular_file(staged / f))) << "the staged tree has no " << f;
     };
 
     "981b a web module with no program start links without main"_test[s::elf] = [] {

@@ -871,6 +871,33 @@ relative path among them is relative to `cwd`. A variable's value is part of
 the edge's command line, and changing it re-runs the action. An action that
 declares neither keeps the protocol 12 command line byte for byte.
 
+#### The authored file of a generated unit: `.origin()` (2026.11.23.1+)
+
+An action that writes a transformed copy of a file a person edits (a source
+with its imports rewritten, a module unit with a prologue added) names that
+file with `.origin(...)`. The file is one of the action's inputs, and the
+action's role is `source`:
+
+```cpp
+const std::string in = std::string(mcpp::manifest_dir()) + "/templates/core.cppm";
+a.role = mcpp::roles::source;
+a.arg("rewrite").arg(in.c_str()).arg(out.c_str())
+ .input(in.c_str())
+ .origin(in.c_str())
+ .output(out.c_str())
+ .provides("app.core")
+ .submit();
+```
+
+The build database states the relation as `ide.generated[].origin`
+([50](50-machine-output.md)), so an editor shows the authored file as the
+unit's source. The engine does not infer the relation from the inputs. An
+`origin` that is not among the inputs, or one stated on an action of another
+role, is refused when the build program runs. A unit that declares the primary
+name of a module in `.provides(...)` is that module's interface unit. When the
+authored file is also listed in `sources`, both provide the module, and the
+error that refuses the second provider names this relation.
+
 #### A dependency's program in an action: `${mcpp.artifact:}` (2026.9.27.1+)
 
 A dependency edge with `artifacts = ["<bin>"]` builds that program for the

@@ -25,6 +25,7 @@ struct DefinitionSet {
     bool provisional = false;
     std::deque<std::string> strings;            // stable addresses
     std::deque<std::vector<std::string_view>> lists;
+    std::deque<std::vector<int>> numbers;
     std::vector<Row> rows;
     std::vector<Provider> providers;
     std::vector<System> systems;
@@ -35,6 +36,7 @@ struct DefinitionSet {
         for (auto const& s : v) out.push_back(keep(s));
         return out;
     }
+    std::span<const int> keep(const std::vector<int>& v) { return numbers.emplace_back(v); }
 };
 
 // Registers a platform's definitions. A row the table or an earlier set already

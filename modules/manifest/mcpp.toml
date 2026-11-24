@@ -25,7 +25,7 @@ mcpp.surface     = { path = "../surface" }
 mcpp.toolchain-model = { path = "../toolchain-model" }
 mcpp.versioning  = { path = "../versioning" }
 
-mcpplibs.os = "0.4.7"
+mcpplibs.os = "0.4.8"
 
 # Subsystem-level tests. They see only this package, which is what lets them
 # state its contract in isolation; the root `tests/unit/` states the facts two

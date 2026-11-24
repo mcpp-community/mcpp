@@ -106,7 +106,7 @@ UTest gcc_over_the_hosts_payload{"LinkLineGolden/GccOverTheHostsPayload", [] {
     t.dir("glibc/include");
     t.dir("gcc/lib64");
     auto plan = plan_for(tc::CompilerId::GCC, t.file("gcc/bin/g++"), "x86_64-linux-gnu");
-    plan.toolchain.base.payload = tc::PayloadPaths{ t.root / "glibc/include", glibc, {} };
+    plan.toolchain.base.payload = tc::PayloadPaths{ t.root / "glibc/include", glibc };
     const auto f = compute_flags(plan);
     const Words want{ "-B<t>/glibc/lib64", "-L<t>/glibc/lib64", "-Wl,-rpath,<t>/glibc/lib64",
                       "-L<t>/gcc/lib64", "-Wl,-rpath,<t>/gcc/lib64",
@@ -125,7 +125,7 @@ UTest clang_over_the_hosts_payload{"LinkLineGolden/ClangOverTheHostsPayload", []
     t.file("llvm/bin/clang++.cfg");
     t.dir("llvm/include/c++/v1");
     auto plan = plan_for(tc::CompilerId::Clang, t.file("llvm/bin/clang++"), "x86_64-linux-gnu");
-    plan.toolchain.base.payload = tc::PayloadPaths{ t.root / "glibc/include", glibc, {} };
+    plan.toolchain.base.payload = tc::PayloadPaths{ t.root / "glibc/include", glibc };
     const auto f = compute_flags(plan);
     const Words want{ "-B<t>/glibc/lib64", "-L<t>/glibc/lib64", "-Wl,-rpath,<t>/glibc/lib64",
                       "-Wl,--dynamic-linker=<t>/glibc/lib64/ld-linux-x86-64.so.2" };
@@ -190,7 +190,7 @@ UTest the_graph_supplies_the_c_library{"LinkLineGolden/TheGraphSuppliesTheCLibra
     t.file("llvm/bin/clang++.cfg");
     t.dir("llvm/include/c++/v1");
     auto plan = plan_for(tc::CompilerId::Clang, t.file("llvm/bin/clang++"), "x86_64-linux-musl");
-    plan.toolchain.base.payload = tc::PayloadPaths{ t.root / "glibc/include", glibc, {} };
+    plan.toolchain.base.payload = tc::PayloadPaths{ t.root / "glibc/include", glibc };
     plan.targetSide.kernelAbi = { ts::Origin::Graph, "openkal", "openkal-linux@0", false };
     plan.targetSide.cAbi = { ts::Origin::Graph, "musl", "openkal-musl@0", false };
     plan.targetSide.cxx = { ts::Origin::Graph, "libc++", "openkal-llvm-runtime@0", false };

@@ -286,6 +286,36 @@ UTest force_bundle_reaches_the_system_list{"PackClosurePe/ForceBundleReachesTheS
     expect(with.platform.empty());
 }};
 
+UTest a_deployed_dll_is_a_root_of_the_closure{"PackClosurePe/ADeployedDllIsARootOfTheClosure", [] {
+    // mcpp#1011: a plugin the program loads at run time imports what the
+    // program does not; its names resolve as the program's do and are staged
+    // beside the program, where the loader searches for a loaded DLL's imports.
+    Tree t;
+    auto exe = t.write("bin/app.exe", pe_importing({"core.dll"}));
+    t.write("bin/platforms/qwin.dll", pe_importing({"gui.dll", "KERNEL32.dll"}));
+    t.write("deps/core.dll", pe_importing({}));
+    t.write("deps/gui.dll", pe_importing({"core.dll"}));
+
+    mcpp::pack::ClosureReadInput in;
+    in.object     = exe;
+    in.rule       = mcpp::pack::ClosureRule::Pe;
+    in.searchDirs = {t.root / "bin", t.root / "deps"};
+    auto without = mcpp::pack::read_closure(in);
+    expect(eq(member_dests(without), (Names{"core.dll"})));
+
+    in.deployed = {"platforms/qwin.dll"};
+    auto with = mcpp::pack::read_closure(in);
+    expect(eq(member_dests(with), (Names{"core.dll", "gui.dll"})));
+    expect(eq(with.platform, (Names{"KERNEL32.dll"})));
+    expect(with.unresolved.empty());
+
+    // A deployed root that cannot be read is named by its path.
+    t.write("bin/platforms/broken.dll", "MZ");
+    in.deployed = {"platforms/broken.dll"};
+    auto broken = mcpp::pack::read_closure(in);
+    expect(eq(unresolved_names(broken), (Names{"platforms/broken.dll"})));
+}};
+
 // ── SPEC-007 R4.2/R4.3: one destination, one writer (#723 self-review) ──
 //
 // `place_runtime_dlls` is the function behind the `place-dlls` ninja edge.
@@ -465,6 +495,26 @@ UTest a_loader_path_subdirectory_is_staged_at_that_subdirectory{"PackClosureMach
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
     expect(eq(member_dests(r), (Names{"plugins/libp.dylib", "plugins/libq.dylib"})));
+    expect(r.unresolved.empty());
+}};
+
+UTest a_deployed_bundle_inherits_the_programs_rpaths{"PackClosureMachO/ADeployedBundleInheritsTheProgramsRpaths", [] {
+    // mcpp#1011: an image the program loads at run time is a root; its
+    // `@rpath` names resolve through the program's rpaths as dyld resolves
+    // them, and its `@loader_path` names below its own staged directory.
+    Tree t;
+    auto app = t.write("bin/app", macho_naming({}, {"@loader_path"}));
+    t.write("bin/plugins/libp.dylib",
+            macho_naming({"@rpath/libdep.dylib", "@loader_path/libq.dylib"}, {}));
+    t.write("bin/libdep.dylib", macho_naming({}, {}));
+    t.write("bin/plugins/libq.dylib", macho_naming({}, {}));
+
+    mcpp::pack::ClosureReadInput in;
+    in.object   = app;
+    in.rule     = mcpp::pack::ClosureRule::MachO;
+    in.deployed = {"plugins/libp.dylib"};
+    auto r = mcpp::pack::read_closure(in);
+    expect(eq(member_dests(r), (Names{"libdep.dylib", "plugins/libq.dylib"})));
     expect(r.unresolved.empty());
 }};
 

@@ -25,7 +25,7 @@ resolve toolchain payload        ← project/default/install paths share one pip
         ▼
 ensure_declared_runtime()        ← exact glibc@version installed; the payload is never written
         ▼
-detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
+detect / probe                   ← triple, sysroot, payload paths (glibc)
         ▼
 ToolchainLinkModel (single resolver for the C-library axis)
         ├──► flags.cppm        (main build compile/link flags)
@@ -70,7 +70,7 @@ triple 解析器，加上封闭的已知目标词汇表；`compat.cppm` 是唯�
 |---|---|
 | `targetTriple` | `<compiler> -dumpmachine` |
 | `sysroot` | `-print-sysroot`（经校验：必须真的带有 libc 头文件），并为烙有构建期路径、在本机不存在的 xlings 构建版 GCC 提供 remap 回退 |
-| `payloadPaths` | 由已解析的 runtime binding（§2.1）精确指名 glibc payload；linux-headers 仍作为同级 payload 被发现。没有 binding 就没有 payload-first，这是设计使然 |
+| `payloadPaths` | 由已解析的 runtime binding（§2.1）精确指名 glibc payload。没有 binding 就没有 payload-first，这是设计使然。内核头文件在目标侧之后决定（`base.kernel`，即 kernel-abi 层），在每种模式下接在基座之前 |
 | runtime dirs | 工具链私有的 lib 目录，供产物的 `-L`/`-rpath` 使用 |
 
 注意，probe 刻意**不再**从 clang cfg 中挖 `--sysroot`：cfg 是这套机制的输出，
