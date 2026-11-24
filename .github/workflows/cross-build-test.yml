@@ -235,9 +235,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Restored here and saved by this job alone, on main, after its last
-      # step (rule R3). The Wine packages were evicted with everything else
-      # while the repository's caches exceeded their limit, and `apt` then
-      # took 26 to 50 minutes (2026-10-01); with one writer per key they stay.
+      # step (rule R3).
       - name: Restore mcpp sandbox
         id: sandbox
         uses: actions/cache/restore@v4
@@ -252,72 +250,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.xlings
-          key: xlings-${{ runner.os }}-mingw-cross-v3-${{ hashFiles('.xlings.json') }}
+          key: xlings-${{ runner.os }}-mingw-cross-v4-${{ hashFiles('.xlings.json') }}
           restore-keys: |
-            xlings-${{ runner.os }}-mingw-cross-v3-
-
-      # THE KEY NAMES THE RUNNER IMAGE, because the image is what the cached
-      # packages have to agree with. Wine's i386 closure is Multi-Arch: same
-      # with the amd64 libraries the image ships, and the two must be one
-      # version. Under the old fixed key (`-v1`) the cache was saved once and
-      # never again, the image moved on, and on 2026-10-15 (run 38695300904,
-      # a cache HIT) the cached libxml2:i386 3.9 met the image's
-      # libxml2:amd64 3.10: dpkg installed the stale i386 package, apt then
-      # upgraded it, and the upgrade's shared changelog was refused. A new
-      # image is a new key; until main has saved it, `restore-keys` hands back
-      # the previous image's packages, which the step below only uses where
-      # their version is still the one apt asks for.
-      - name: Runner image version
-        id: image
-        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore wine debs
-        id: wine
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/wine-debs
-          key: wine-debs-${{ runner.os }}-ubuntu24.04-${{ steps.image.outputs.version }}
-          restore-keys: |
-            wine-debs-${{ runner.os }}-ubuntu24.04-
-
-      # APT INSTALLS, ALWAYS; THE CACHE ONLY SPARES IT THE DOWNLOAD. The cached
-      # packages are put where apt keeps what it downloaded, and apt then
-      # resolves wine against the image as it is today: a cached package whose
-      # version is still current is used as is, anything newer is fetched.
-      # Nothing older than the image is ever installed, which is what
-      # `dpkg -i` of the cached set did whenever the image had moved on. Cold
-      # (no cache at all), this is the plain install it always was.
-      - name: Install wine
-        timeout-minutes: 20
-        run: |
-          sudo dpkg --add-architecture i386 || true
-          # The runner image carries third-party apt lists (Google Chrome
-          # among them) that this job does not use, and a transient
-          # `Hash Sum mismatch` on one of them fails the whole update -- which
-          # killed two cross-build jobs in setup, before a single byte was
-          # compiled. Dropping the lists this job has no use for is what makes
-          # the step's failure mean something about this job.
-          #
-          # BY CONTENT, NOT BY FILENAME. The first attempt removed
-          # `google-chrome.list` and the update failed on the same URL: on
-          # ubuntu-24.04 the runner writes deb822 `.sources` files, so the
-          # name was a guess and the guess was wrong.
-          sudo grep -rlE 'dl[.]google[.]com|packages[.]microsoft[.]com' \
-               /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
-          if ls ~/wine-debs/*.deb >/dev/null 2>&1; then
-            sudo cp ~/wine-debs/*.deb /var/cache/apt/archives/
-          fi
-          sudo apt-get update -qq
-          sudo apt-get install -y --download-only wine64 wine \
-            || sudo apt-get install -y --download-only wine
-          # What main saves is what this image installs: packages no longer
-          # in any index (the previous image's, carried in by restore-keys)
-          # are dropped first, so the cache does not grow with every image.
-          sudo apt-get autoclean -qq
-          rm -rf ~/wine-debs && mkdir -p ~/wine-debs
-          cp /var/cache/apt/archives/*.deb ~/wine-debs/ 2>/dev/null || true
-          sudo apt-get install -y wine64 wine || sudo apt-get install -y wine
-          wine --version
+            xlings-${{ runner.os }}-mingw-cross-v4-
 
       - name: Bootstrap mcpp via xlings
         env:
@@ -343,6 +278,21 @@ jobs:
           echo "MCPP=$MCPP_BOOT" >> "$GITHUB_ENV"
           echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
           echo "MCPP_BOOT=$MCPP_BOOT" >> "$GITHUB_ENV"
+
+      # Wine is the package the engine's Windows-on-Linux runner names
+      # (`xim:wine@11.0`, builtin.toml): one portable WoW64 tree, which runs
+      # 32- and 64-bit PE programs without the host's i386 architecture. Taken
+      # from apt, Wine was a closure of about 200 packages whose download
+      # depended on the runner's mirror and on a cache the repository's limit
+      # evicts; on 2026-11-24 it exceeded the step's 20 minutes three times in
+      # a row. The package is one archive, kept with the xlings cache.
+      - name: Install wine
+        run: |
+          "$XLINGS_BIN" install wine@11.0 -y
+          bin="$HOME/.xlings/data/xpkgs/xim-x-wine/11.0/bin"
+          test -x "$bin/wine" || { echo "::error::wine 11.0 is not at $bin"; exit 1; }
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/wine" --version
 
       - uses: ./.github/actions/use-built-mcpp
         with:
@@ -465,13 +415,6 @@ jobs:
         with:
           path: ~/.xlings
           key: ${{ steps.xlings.outputs.cache-primary-key }}
-
-      - name: Save wine debs
-        if: ${{ github.event_name == 'push' && steps.wine.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: ~/wine-debs
-          key: ${{ steps.wine.outputs.cache-primary-key }}
 
   # ── windows → linux ───────────────────────────────────────────────────────
   # The mirror of mingw-cross-wine. Two jobs because a Windows runner cannot
