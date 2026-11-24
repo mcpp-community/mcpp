@@ -1356,29 +1356,6 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
     return std::nullopt;
 }
 
-// ─── The dispatch pass ───────────────────────────────────────────────
-//
-// A `role = "artifact"` action is a ninja edge, and the staged tree is
-// produced here, in C++, AFTER ninja has finished. So an artifact action
-// cannot depend on the staged tree in the pass that built it, and a
-// single-pass `--format <name>` is not expressible. Two passes are, and
-// every value this one needs was answered by the first:
-//
-//   `ov`                  the overrides that produced the build above
-//   `plan->stagingRoot`   from make_plan, which resolved the triple
-//   `opts.formatName`     the request, already checked against the graph
-//
-// NOTHING IS RE-DERIVED, and that is the whole discipline of this block.
-// `stagingRoot` is a function of the package name, the version, the resolved
-// triple and the mode; the resolved triple is not known until a prepare has
-// run, so computing it a second time before prepare -- from the host triple,
-// say -- is the shape where two derivations of one value agree on every
-// machine the author has and disagree on one they do not.
-//
-// One pass serves every member of the group: each member has its own stage,
-// the programs act for the member they belong to (`BuildOverrides::
-// pack_stages`), and one ninja drive builds every member's edges.
-
 // Copy a provider's distributable `product` into `dir` under its own name, with
 // those of `beside` (outputs the product consumed) below the product's own
 // directory, at their places relative to it. Each destination is replaced, and
@@ -1404,6 +1381,28 @@ std::string copy_distributable(const std::filesystem::path& product,
     return {};
 }
 
+// ─── The dispatch pass ───────────────────────────────────────────────
+//
+// A `role = "artifact"` action is a ninja edge, and the staged tree is
+// produced here, in C++, AFTER ninja has finished. So an artifact action
+// cannot depend on the staged tree in the pass that built it, and a
+// single-pass `--format <name>` is not expressible. Two passes are, and
+// every value this one needs was answered by the first:
+//
+//   `ov`                  the overrides that produced the build above
+//   `plan->stagingRoot`   from make_plan, which resolved the triple
+//   `opts.formatName`     the request, already checked against the graph
+//
+// NOTHING IS RE-DERIVED, and that is the whole discipline of this block.
+// `stagingRoot` is a function of the package name, the version, the resolved
+// triple and the mode; the resolved triple is not known until a prepare has
+// run, so computing it a second time before prepare -- from the host triple,
+// say -- is the shape where two derivations of one value agree on every
+// machine the author has and disagree on one they do not.
+//
+// One pass serves every member of the group: each member has its own stage,
+// the programs act for the member they belong to (`BuildOverrides::
+// pack_stages`), and one ninja drive builds every member's edges.
 std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Backend& be) {
     // WHICH ARTIFACT ACTIONS THIS BUILD ALREADY HAD, before a format was
     // requested. The dispatch below reports what the REQUEST introduced,
