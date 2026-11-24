@@ -186,7 +186,8 @@ environment. On PyPI the name `mcpp` belongs to an unrelated project, hence
 
 ```bash
 nix run github:mcpp-community/nix-mcpp -- --version      # try it
-nix profile install github:mcpp-community/nix-mcpp       # install it
+nix profile add github:mcpp-community/nix-mcpp           # install it (Nix 2.30+)
+nix profile install github:mcpp-community/nix-mcpp       # the same, before Nix 2.30
 ```
 
 The flake in [`mcpp-community/nix-mcpp`](https://github.com/mcpp-community/nix-mcpp)
