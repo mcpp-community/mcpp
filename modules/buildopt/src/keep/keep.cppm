@@ -83,6 +83,10 @@ struct Run {
 };
 Run run_end(const std::filesystem::path& dir);
 
+// The BMIs the directory keeps with the lines of an earlier source, as the
+// record names them (`bmi-kept.list`); what a failed step is asked against.
+std::vector<std::string> kept(const std::filesystem::path& dir);
+
 // What a run says of its BMIs after it, one line each; empty when none changed.
 // `the BMI of c.gcm changed: its importers were compiled again`, and for a
 // kept one what was not done and the key that states otherwise.
@@ -167,6 +171,10 @@ void run_begin(const std::filesystem::path& dir, std::optional<bool> ignoreLocat
     const auto keptFile = dir / kKeptFile;
     for (auto const& bmi : read_lines(keptFile)) std::filesystem::remove(dir / bmi, ec);
     std::filesystem::remove(keptFile, ec);
+}
+
+std::vector<std::string> kept(const std::filesystem::path& dir) {
+    return read_lines(dir / kKeptFile);
 }
 
 std::vector<std::string> summary(const Run& run) {

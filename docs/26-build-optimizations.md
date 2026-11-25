@@ -27,7 +27,7 @@ by default; the others are stated by a parameter.
 | `gcm-locations` | on | `[profile.<name>] bmi_cutoff`, `MCPP_BMI_CUTOFF` | GCC: a BMI whose line maps alone moved is kept; importers name the earlier lines |
 | `scan-pass` | on | — | The scans of a graph run before its compiles, as a pass of their own |
 | `split-schedule` | off | `[build] bmi_schedule`, `MCPP_BMI_SCHEDULE` | Importers start when a BMI exists, not when its compiler exits |
-| `private-fragment` | on | `[build] private_fragment`, `MCPP_PRIVATE_FRAGMENT` | A private module fragment is built as a unit of its own |
+| `private-fragment` | on | `[build] private_fragment` (`unit`, `conservative`, `as-written`), `MCPP_PRIVATE_FRAGMENT` | A private module fragment is built as a unit of its own |
 
 `MCPP_BUILDOPT=off mcpp build` is the standard build for one invocation: every entry
 off. An entry with no parameter produces the bytes the standard build produces, so
@@ -68,10 +68,20 @@ links; an edit above it reaches the importers, as it must.
 - GCC does not implement `module :private;`. Built as a unit of its own, the file builds
   with GCC as well.
 - A fragment that reads what is local to the interface's translation unit — a macro
-  defined in the module's purview, an unnamed namespace, a `static` at namespace scope,
-  a using-directive at namespace scope — is built as written, and `--verbose` says which
-  line decided it. With a compiler that builds no fragment as written, that is a warning.
+  defined in the module's purview (`#define`, `#undef`, `#include`, `#pragma`, `#line`), an
+  unnamed namespace, a `static` at namespace scope (`extern "C" { … }` is namespace scope), a
+  using-directive at namespace scope, a line continuation between the module declaration and
+  the fragment — is built as written, and `--verbose` says which line decided it. With a
+  compiler that builds no fragment as written, that is a warning.
+- A condition (`#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif`) and `#error` or
+  `#warning` before the fragment do not keep it from being a unit: a condition only decides
+  which declarations exist, and the implementation unit receives them from the interface. A
+  condition still open at the module declaration or at the fragment does.
+- The text is read as C++ tokens: comments and the contents of string, character and raw
+  string literals are not code, and a digit separator (`1'000`) is part of a number.
 - `[build] private_fragment = "as-written"` hands the file to the compiler unchanged.
+  `"conservative"` builds the fragment as a unit of its own and refuses any directive in the
+  purview, as before conditions were let through; it is the check available on GCC.
 
 ## The notes of a build
 
@@ -85,6 +95,32 @@ note  hub.cppm is the whole of module hub, which 46 units import: its function b
 The note is given when the rebuild started at a module of one file with at least five
 importing units, once a build directory. Beside it, a build that replaced or kept BMIs
 states which ([04](04-mcpp-toml.md), `bmi_cutoff`).
+
+## Checking whether an optimization is the cause
+
+Every entry is on because most projects build the same with it and sooner. When a build
+fails at a step an entry acted on, it ends with a `tip:` that names the entry and the one
+invocation that checks it:
+
+```
+tip: src/c.cppm was built as two units (private-fragment), and one of them failed.
+     To check whether that is the cause: MCPP_PRIVATE_FRAGMENT=as-written mcpp build   ([build] private_fragment = "as-written" keeps it)
+     If it builds, report the file; MCPP_BUILDOPT=off turns every optimization off for one run.
+```
+
+The tip is given for the step that failed, so a failure of another file says nothing. The
+ladder is the same for every entry:
+
+1. Turn off the one entry for one invocation: `MCPP_PRIVATE_FRAGMENT=as-written mcpp build`
+   (`conservative` on GCC), `MCPP_BMI_CUTOFF=exact mcpp build` (it removes the BMIs kept with
+   earlier lines first, so the products are those of a build from nothing).
+2. Turn off every entry: `MCPP_BUILDOPT=off mcpp build`.
+3. A failure that remains after both is not an entry's. A failure that goes with one is worth
+   a report naming the file, and the manifest keys above keep the statement.
+
+Three tips exist: a source built as two units that failed, a unit that imports a BMI kept
+with earlier lines that failed, and a failed link where either is in the graph (which cannot
+say which unit). A test program that fails when it runs gives none.
 
 ## What the home's cache places (2026.11.21.1+)
 
@@ -125,7 +161,7 @@ run for a minute is named once on a `Running` line, with the package and source 
 
 ```toml
 [build]
-private_fragment = "as-written"   # "unit" (default) | "as-written"
+private_fragment = "as-written"   # "unit" (default) | "conservative" | "as-written"
 bmi_schedule     = "on"           # "auto" (default, = off) | "on" | "off"
 
 [profile.dev]

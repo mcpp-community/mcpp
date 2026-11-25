@@ -49,6 +49,7 @@ import mcpp.provider.select;
 import mcpp.provider.roots;
 import mcpp.buildopt.keep;
 import mcpp.buildopt.advice;
+import mcpp.buildopt.registry;
 import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
@@ -363,6 +364,15 @@ std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputD
 void write_unit_cache_sidecar(const std::filesystem::path& outputDir, const std::filesystem::path& cacheDir,
                               const std::vector<std::filesystem::path>& roots);
 std::vector<std::pair<std::string, std::string>> read_unit_cache_sidecar(const std::filesystem::path& outputDir);
+
+// SPEC-019 §9: what the entries of the register acted on, beside build.ninja
+// (`buildopt-applied.tsv`), for the tip a failure gives. The plan writes it;
+// the fast path, which has no plan, reads it as well.
+void write_buildopt_sidecar(const BuildPlan& plan);
+// After a failed run, in either path: says, as a tip of the failed run, how to
+// check whether an entry is the cause, when an entry acted on the step that
+// failed. `ninjaOutput` is the run's raw output.
+void report_buildopt_failure(const std::filesystem::path& outputDir, std::string_view ninjaOutput);
 
 // #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
 //
@@ -1319,6 +1329,55 @@ void write_unit_cache_sidecar(const std::filesystem::path& outputDir, const std:
         for (const auto& r : roots) text += mcpplibs::os::fs::utf8(r) + "\n";
     }
     std::ofstream(outputDir / kUnitCacheSidecar, std::ios::binary | std::ios::trunc) << text;
+}
+
+void write_buildopt_sidecar(const BuildPlan& plan) {
+    namespace advice = mcpp::buildopt::advice;
+    advice::Applied applied;
+    std::map<std::string, advice::Fragment> fragments;
+    // As the step record spells a source: with forward slashes, whatever the host.
+    const auto spelled = [](const std::filesystem::path& p) {
+        auto s = mcpplibs::os::fs::utf8(p);
+        std::ranges::replace(s, '\\', '/');
+        return s;
+    };
+    for (auto const& cu : plan.compileUnits) {
+        const auto source = spelled(cu.source);
+        if (!cu.writtenAs.empty()) {
+            auto& f = fragments[spelled(cu.writtenAs)];
+            f.written = spelled(cu.writtenAs);
+            f.units.push_back(source);
+        }
+        if (!cu.imports.empty() && !cu.servedFromCache) applied.importers.push_back({source, cu.imports});
+    }
+    for (auto& [written, f] : fragments) applied.fragments.push_back(std::move(f));
+    if (const auto* entry = mcpp::buildopt::registry::find(mcpp::buildopt::registry::kPrivateFragment))
+        applied.fragmentCheck = std::string(plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC
+                                            && !entry->checkGcc.empty() ? entry->checkGcc : entry->check);
+    advice::write_applied(plan.outputDir, applied);
+}
+
+void report_buildopt_failure(const std::filesystem::path& outputDir, std::string_view ninjaOutput) {
+    namespace advice = mcpp::buildopt::advice;
+    if (mcpp::buildopt::registry::standard_only()) return;
+    const auto applied = advice::read_applied(outputDir);
+    const auto kept = mcpp::buildopt::keep::kept(outputDir);
+    if (applied.fragments.empty() && kept.empty()) return;
+    advice::Failed failed;
+    failed.linked = advice::linker_failed(ninjaOutput);
+    // The step that failed, by the source it reads (the step record).
+    if (const auto record = mcpp::build::progress::read_record(outputDir)) {
+        for (auto const& outputs : advice::failed_outputs(ninjaOutput)) {
+            for (auto const& o : outputs) {
+                const auto step = record->step.find(mcpp::build::progress::normalise(o));
+                if (step == record->step.end()) continue;
+                if (const auto source = record->sources.find(step->second); source != record->sources.end())
+                    failed.sources.push_back(source->second);
+                break;
+            }
+        }
+    }
+    for (auto const& tip : advice::suspects(applied, kept, failed)) mcpp::diag::on_failure(tip.domain, tip.text);
 }
 
 std::vector<std::pair<std::string, std::string>> read_unit_cache_sidecar(const std::filesystem::path& outputDir) {
@@ -4953,6 +5012,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     write_compiler_cap_sidecar(plan.outputDir, plan.scheduleCompilerCap);
     write_memory_threshold_sidecar(plan.outputDir, plan.memoryThreshold);
     write_unit_cache_sidecar(plan.outputDir, plan.unitCacheDir, plan.immutableRoots);
+    write_buildopt_sidecar(plan);
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
@@ -5667,6 +5727,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                 plan.targetSide.cAbiDecl->absent);
         // (the fast path reads the same list from the sidecar this build
         // wrote beside build.ninja — see `write_c_abi_absent_sidecar`)
+        report_buildopt_failure(plan.outputDir, out);
         BuildError failure{"build failed", plan.outputDir / plan.graphFile,
                            std::move(diagnostics)};
         failure.reported = reported;

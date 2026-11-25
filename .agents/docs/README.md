@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-373 records.
+374 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### build
 
+- [clang BMI 的截断与私有模块片段判定的收窄](2026-11-26-clang-bmi-cutoff-and-private-fragment-refinement-design.md) — active
 - [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [大型工作区的构建空间与复用（mcpp#874）](2026-10-31-workspace-space-and-reuse-design.md) — active
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
@@ -215,6 +216,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [clang BMI 的截断与私有模块片段判定的收窄](2026-11-26-clang-bmi-cutoff-and-private-fragment-refinement-design.md) — active
 - [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
 - [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active
 - [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active

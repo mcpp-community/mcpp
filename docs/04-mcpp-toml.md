@@ -684,7 +684,7 @@ dependency_linkage = "static"     # How dependencies arrive: static (default) | 
 cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
 jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
-private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
+private_fragment = "unit"         # A private module fragment: unit (default) | conservative (a unit; any purview directive refuses) | as-written (chapter 26)
 ```
 
 A file a word of `[build] ldflags` names by absolute path is an input of every
