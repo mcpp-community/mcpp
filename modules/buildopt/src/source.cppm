@@ -31,14 +31,33 @@
 //
 // WHAT MAKES A FRAGMENT NOT MOVABLE, AND IS THEREFORE LEFT AS WRITTEN. The
 // implementation unit sees what the interface declares in the module's
-// purview; it does not see what is local to the interface's translation unit.
-// Read from the text, with no semantic analysis, and refused when in doubt:
+// purview; it does not see what is local to the interface's translation unit,
+// nor what the preprocessor held there. Read from the text, with no semantic
+// analysis, and refused when in doubt:
 //
-//   - a preprocessor directive in the purview before the fragment (a macro the
-//     fragment may use; the global module fragment is copied, and is not this)
-//   - an unnamed namespace, or `static` at namespace scope, before the fragment
+//   - a directive in the purview before the fragment that changes what the
+//     fragment means: `#define`, `#undef`, `#include`, `#pragma`, `#line`, and
+//     any not named below. The conditionals (`#if`, `#ifdef`, `#ifndef`,
+//     `#elif`, `#else`, `#endif`) and `#error`, `#warning` do not: a condition
+//     only decides which declarations exist, and the implementation unit
+//     receives them from the BMI. A condition that is open at the module
+//     declaration or at the fragment is refused, since the units would not
+//     close it. (The global module fragment is copied, and is not this.)
+//   - a use of `_Pragma` or `__pragma` there
+//   - an unnamed namespace, or `static` at namespace scope (a linkage
+//     specification `extern "C" { ... }` is namespace scope), before the
+//     fragment
 //   - a using-directive at namespace scope before the fragment
+//   - a line continuation (`\` before a newline) from the module declaration
+//     to the fragment, where a physical line is not a logical one
 //   - a module that is a partition, or no module declaration at all
+//
+// The text is read once as C++ tokens: comments, string and character
+// literals (raw strings included) are blanked, and a digit separator
+// (`1'000`) is part of a number, not the start of a literal. With
+// `private_fragment = "conservative"` any directive in that purview refuses,
+// which is the rule before the narrowed one and the one a compiler that
+// cannot build a fragment as written (GCC) is checked against.
 //
 // A fragment that passes these and still does not build as a unit names its
 // own lines in the compiler's error; `private_fragment = "as-written"` builds
@@ -62,16 +81,18 @@ struct Units {
 // The units a source with a private module fragment is built as. nullopt: the
 // text has no private module fragment. An error: it has one that stays as
 // written, and why. `spelling` is the file's path as `#line` names it.
+// `conservative`: any directive in the purview before the fragment refuses,
+// as it did before the conditionals were let through.
 std::optional<std::expected<Units, std::string>>
-private_fragment(std::string_view text, std::string_view spelling);
+private_fragment(std::string_view text, std::string_view spelling, bool conservative = false);
 
-// Whether this build builds private module fragments as units: the entry's
-// switch (`MCPP_PRIVATE_FRAGMENT`, then `[build] private_fragment`, then the
+// How this build builds private module fragments: the entry's switch
+// (`MCPP_PRIVATE_FRAGMENT`, then `[build] private_fragment`, then the
 // default, "unit"), under the statement that turns every entry off. A value
-// that is neither "unit" nor "as-written" is handed to `onInvalid` and the
-// default stands.
-bool private_fragment_as_unit(const mcpp::manifest::Manifest& m,
-                              const std::function<void(std::string_view)>& onInvalid = {});
+// that is none of the three is handed to `onInvalid` and the default stands.
+enum class Fragment { AsWritten, Unit, Conservative };
+Fragment private_fragment_policy(const mcpp::manifest::Manifest& m,
+                                 const std::function<void(std::string_view)>& onInvalid = {});
 
 } // namespace mcpp::buildopt::source
 
@@ -85,11 +106,12 @@ std::string_view trim(std::string_view s) {
     return s;
 }
 
+bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
 bool word_at(std::string_view s, std::size_t at, std::string_view word) {
-    auto ident = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
     if (s.substr(at, word.size()) != word) return false;
-    if (at > 0 && ident(s[at - 1])) return false;
-    return at + word.size() >= s.size() || !ident(s[at + word.size()]);
+    if (at > 0 && ident_char(s[at - 1])) return false;
+    return at + word.size() >= s.size() || !ident_char(s[at + word.size()]);
 }
 
 bool has_word(std::string_view s, std::string_view word) {
@@ -98,28 +120,177 @@ bool has_word(std::string_view s, std::string_view word) {
     return false;
 }
 
-// One line's code: comments removed, string and character literals blanked.
-// `inBlock` carries a block comment over lines.
-std::string code_of(std::string_view line, bool& inBlock) {
-    std::string out;
-    for (std::size_t i = 0; i < line.size(); ++i) {
-        if (inBlock) {
-            if (line.substr(i, 2) == "*/") { inBlock = false; ++i; }
-            continue;
-        }
-        if (line.substr(i, 2) == "//") break;
-        if (line.substr(i, 2) == "/*") { inBlock = true; ++i; continue; }
-        if (line[i] == '"' || line[i] == '\'') {
-            const char quote = line[i];
-            out += quote;
-            for (++i; i < line.size() && line[i] != quote; ++i)
-                if (line[i] == '\\') ++i;
-            out += quote;
-            continue;
-        }
-        out += line[i];
+// THE TEXT AS C++ TOKENS, to the length it has. Comments and the contents of
+// string and character literals are blanked (the newlines stay, so a line is a
+// line), and `joins` holds the offsets of a backslash that joins its line to
+// the next. Three things a reader by lines gets wrong are read here:
+//
+//   1'000        a digit separator is part of a number; taken for the start of
+//                a character literal it hid the rest of the line, `;` and `{`
+//   R"d(...)d"   a raw string runs over lines and holds anything, `"` and
+//                `module :private;` included
+//   \<newline>   a comment, a literal or a directive goes on to the next line
+struct Code {
+    std::string              text;
+    std::vector<std::size_t> joins;
+};
+
+// The newline at `at` is joined to the next line by a backslash before it.
+bool joined(std::string_view t, std::size_t at) {
+    if (at > 0 && t[at - 1] == '\r') --at;
+    return at > 0 && t[at - 1] == '\\';
+}
+
+// The end of the logical line that holds `from`: its newline, or the text's end.
+std::size_t line_end(std::string_view t, std::size_t from, std::vector<std::size_t>& joins) {
+    for (std::size_t j = from; j < t.size(); ++j) {
+        if (t[j] != '\n') continue;
+        if (!joined(t, j)) return j;
+        joins.push_back(j);
     }
-    return out;
+    return t.size();
+}
+
+// A raw string opens at the quote at `at` when an `R` (with its encoding
+// prefix, if any) stands before it as a word of its own.
+bool raw_string_at(std::string_view t, std::size_t at) {
+    if (at == 0 || t[at - 1] != 'R') return false;
+    std::size_t from = at - 1;
+    while (from > 0 && ident_char(t[from - 1])) --from;
+    const auto prefix = t.substr(from, at - from);
+    return prefix == "R" || prefix == "u8R" || prefix == "uR" || prefix == "UR" || prefix == "LR";
+}
+
+// One past the end of the raw string opened at `at`; npos when it is not
+// well formed (no `(`, a delimiter of more than 16 characters or with a
+// character it may not have, no closing), and the compiler then says why.
+std::size_t raw_string_end(std::string_view t, std::size_t at) {
+    const auto open = t.find('(', at + 1);
+    if (open == std::string_view::npos || open - at - 1 > 16) return std::string_view::npos;
+    const auto delimiter = t.substr(at + 1, open - at - 1);
+    if (delimiter.find_first_of(" ()\\\t\r\n") != std::string_view::npos) return std::string_view::npos;
+    const auto closing = std::format("){}\"", delimiter);
+    const auto end = t.find(closing, open + 1);
+    return end == std::string_view::npos ? end : end + closing.size();
+}
+
+// One past the closing quote of the literal opened by the quote at `at`; where
+// a newline comes first the literal is not closed, and ends before it.
+std::size_t quoted_end(std::string_view t, std::size_t at, std::vector<std::size_t>& joins) {
+    const char quote = t[at];
+    for (std::size_t j = at + 1; j < t.size(); ++j) {
+        if (t[j] == '\\') {
+            std::size_t next = j + 1;
+            if (next + 1 < t.size() && t[next] == '\r' && t[next + 1] == '\n') ++next;
+            if (next < t.size() && t[next] == '\n') joins.push_back(j);
+            j = next;
+        } else if (t[j] == quote) {
+            return j + 1;
+        } else if (t[j] == '\n') {
+            return j;
+        }
+    }
+    return t.size();
+}
+
+// One past the end of the pp-number that starts at `at`: identifier characters
+// and dots, a sign after an exponent, and a `'` before one more of them.
+std::size_t number_end(std::string_view t, std::size_t at) {
+    std::size_t j = at;
+    for (; j < t.size(); ++j) {
+        const char c = t[j];
+        const bool sign = (c == '+' || c == '-') && j > at && std::string_view("eEpP").contains(t[j - 1]);
+        const bool separator = c == '\'' && j + 1 < t.size() && ident_char(t[j + 1]);
+        if (!(ident_char(c) || c == '.' || sign || separator)) break;
+    }
+    return j;
+}
+
+// The directives whose rest of the line is not tokens (`#include <a'b>`,
+// `#error don't`).
+bool text_directive(std::string_view word) {
+    return word == "include" || word == "include_next" || word == "import" || word == "error" || word == "warning";
+}
+
+Code read_code(std::string_view t) {
+    Code r{std::string(t), {}};
+    auto blank = [&](std::size_t from, std::size_t to) {
+        for (; from < to && from < r.text.size(); ++from)
+            if (r.text[from] != '\n' && r.text[from] != '\r') r.text[from] = ' ';
+    };
+    bool lineStart = true;
+    for (std::size_t i = 0; i < t.size();) {
+        const char c = t[i];
+        if (c == '\n') { lineStart = true; ++i; continue; }
+        if (c == ' ' || c == '\t' || c == '\r') { ++i; continue; }
+        if (c == '\\') {
+            std::size_t next = i + 1;
+            if (next + 1 < t.size() && t[next] == '\r' && t[next + 1] == '\n') ++next;
+            if (next < t.size() && t[next] == '\n') { r.joins.push_back(i); i = next + 1; continue; }
+        }
+        const bool atLineStart = std::exchange(lineStart, false);
+        if (c == '#' && atLineStart) {
+            std::size_t w = i + 1;
+            while (w < t.size() && (t[w] == ' ' || t[w] == '\t')) ++w;
+            std::size_t e = w;
+            while (e < t.size() && ident_char(t[e])) ++e;
+            if (text_directive(t.substr(w, e - w))) {
+                const auto end = line_end(t, e, r.joins);
+                blank(e, end);
+                i = end;
+                continue;
+            }
+        } else if (t.substr(i, 2) == "//") {
+            const auto end = line_end(t, i, r.joins);
+            blank(i, end);
+            i = end;
+            continue;
+        } else if (t.substr(i, 2) == "/*") {
+            const auto close = t.find("*/", i + 2);
+            const auto end = close == std::string_view::npos ? t.size() : close + 2;
+            blank(i, end);
+            i = end;
+            continue;
+        } else if (c == '"' && raw_string_at(t, i) && raw_string_end(t, i) != std::string_view::npos) {
+            const auto end = raw_string_end(t, i);
+            blank(i + 1, end - 1);
+            i = end;
+            continue;
+        } else if (c == '"' || c == '\'') {
+            const auto end = quoted_end(t, i, r.joins);
+            blank(i + 1, end > i + 1 && t[end - 1] == c ? end - 1 : end);
+            i = end;
+            continue;
+        } else if ((std::isdigit(static_cast<unsigned char>(c))
+                    || (c == '.' && i + 1 < t.size() && std::isdigit(static_cast<unsigned char>(t[i + 1]))))
+                   && (i == 0 || !ident_char(t[i - 1]))) {
+            i = number_end(t, i);
+            continue;
+        }
+        ++i;
+    }
+    return r;
+}
+
+// The word after the `#` of a directive line (empty for a line that is `#`
+// alone, and for one whose next token is not a word: `# 12 "file"`); nullopt
+// when the line is not a directive.
+std::optional<std::string_view> directive_of(std::string_view line) {
+    line = trim(line);
+    if (!line.starts_with('#')) return std::nullopt;
+    line = trim(line.substr(1));
+    std::size_t n = 0;
+    while (n < line.size() && ident_char(line[n])) ++n;
+    return n == 0 && !line.empty() ? std::string_view("?") : line.substr(0, n);
+}
+
+// What a directive does to the fragment's meaning. The conditionals only
+// decide which declarations exist, and the implementation unit receives those
+// from the interface; `#error` and `#warning` are said where they stand.
+bool opens_condition(std::string_view w) { return w == "if" || w == "ifdef" || w == "ifndef"; }
+bool leaves_meaning(std::string_view w) {
+    return w.empty() || opens_condition(w) || w == "endif" || w == "else" || w == "elif" || w == "elifdef"
+        || w == "elifndef" || w == "error" || w == "warning";
 }
 
 std::string line_directive(std::size_t line, std::string_view spelling) {
@@ -131,22 +302,35 @@ std::string line_directive(std::size_t line, std::string_view spelling) {
     return std::format("#line {} \"{}\"\n", line, quoted);
 }
 
+// The conditional directives open at line `to` (not counting it).
+int open_conditions(const std::vector<std::string>& code, std::size_t to) {
+    int depth = 0;
+    for (std::size_t i = 0; i < to; ++i) {
+        const auto w = directive_of(code[i]);
+        if (!w) continue;
+        if (opens_condition(*w)) ++depth;
+        else if (*w == "endif") --depth;
+    }
+    return depth;
+}
+
 } // namespace
 
 std::optional<std::expected<Units, std::string>>
-private_fragment(std::string_view text, std::string_view spelling) {
+private_fragment(std::string_view text, std::string_view spelling, bool conservative) {
     std::vector<std::string_view> lines;
+    std::vector<std::size_t> starts;
     for (std::size_t at = 0; at <= text.size();) {
         const auto end = text.find('\n', at);
+        starts.push_back(at);
         lines.push_back(text.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at));
         if (end == std::string_view::npos) break;
         at = end + 1;
     }
-    std::vector<std::string> code(lines.size());
-    {
-        bool inBlock = false;
-        for (std::size_t i = 0; i < lines.size(); ++i) code[i] = code_of(lines[i], inBlock);
-    }
+    const auto scanned = read_code(text);
+    std::vector<std::string> code;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+        code.emplace_back(std::string_view(scanned.text).substr(starts[i], lines[i].size()));
     auto compact = [](std::string_view s) {
         std::string c;
         for (char ch : s)
@@ -176,15 +360,40 @@ private_fragment(std::string_view text, std::string_view spelling) {
     if (moduleName.find(':') != std::string::npos)
         return Result{std::unexpected("the unit is a partition")};
 
+    // Where a physical line is not a logical one, the lines below are not the
+    // text the compiler reads.
+    for (auto at : scanned.joins) {
+        const auto line = static_cast<std::size_t>(std::ranges::upper_bound(starts, at) - starts.begin()) - 1;
+        if (line >= *declared && line <= *fragment)
+            return Result{std::unexpected(std::format(
+                "line {}: a line continuation between the module declaration and the fragment", line + 1))};
+    }
+    // A condition that holds the declaration or the fragment is not closed by
+    // the unit that ends before the one and begins at the other.
+    if (!conservative) {
+        if (open_conditions(code, *declared) != 0)
+            return Result{std::unexpected(std::format(
+                "line {}: a conditional directive is open at the module declaration", *declared + 1))};
+        if (open_conditions(code, *fragment) != 0)
+            return Result{std::unexpected(std::format(
+                "line {}: a conditional directive is open at the fragment", *fragment + 1))};
+    }
+
     // The purview before the fragment: what is local to the interface's
     // translation unit, and so not seen by an implementation unit.
     std::vector<bool> scopes;   // one a brace still open; true: a namespace's
     std::string statement;      // the code since the last `;`, `{` or `}`
     for (std::size_t i = *declared + 1; i < *fragment; ++i) {
         const auto c = trim(code[i]);
-        if (c.starts_with("#"))
+        if (const auto word = directive_of(c)) {
+            if (conservative || !leaves_meaning(*word))
+                return Result{std::unexpected(std::format(
+                    "line {}: a preprocessor directive in the module's purview before the fragment", i + 1))};
+            continue;
+        }
+        if (has_word(c, "_Pragma") || has_word(c, "__pragma"))
             return Result{std::unexpected(std::format(
-                "line {}: a preprocessor directive in the module's purview before the fragment", i + 1))};
+                "line {}: a pragma in the module's purview before the fragment", i + 1))};
         for (char ch : c) {
             if (ch == '{') {
                 const bool ns = has_word(statement, "namespace") && statement.find('(') == std::string::npos;
@@ -200,7 +409,11 @@ private_fragment(std::string_view text, std::string_view spelling) {
                     && std::ranges::all_of(scopes, [](bool s) { return s; }))
                     return Result{std::unexpected(std::format(
                         "line {}: `static` at namespace scope before the fragment", i + 1))};
-                scopes.push_back(ns);
+                // `extern "C" {` holds declarations of the scope it stands in.
+                const auto st = trim(statement);
+                const bool linkage = st.starts_with("extern") && word_at(st, 0, "extern")
+                    && trim(st.substr(6)).starts_with('"') && trim(st.substr(6)).ends_with('"');
+                scopes.push_back(ns || linkage);
                 statement.clear();
             } else if (ch == '}') {
                 if (!scopes.empty()) scopes.pop_back();
@@ -245,16 +458,17 @@ private_fragment(std::string_view text, std::string_view spelling) {
     return Result{std::move(units)};
 }
 
-bool private_fragment_as_unit(const mcpp::manifest::Manifest& m,
-                              const std::function<void(std::string_view)>& onInvalid) {
-    if (registry::standard_only()) return false;
+Fragment private_fragment_policy(const mcpp::manifest::Manifest& m,
+                                 const std::function<void(std::string_view)>& onInvalid) {
+    if (registry::standard_only()) return Fragment::AsWritten;
     std::string v;
     if (auto e = mcpp::invocation::get("MCPP_PRIVATE_FRAGMENT")) v = *e;
     else v = m.buildConfig.privateFragment;
-    if (v.empty() || v == "unit") return true;
-    if (v == "as-written") return false;
+    if (v.empty() || v == "unit") return Fragment::Unit;
+    if (v == "conservative") return Fragment::Conservative;
+    if (v == "as-written") return Fragment::AsWritten;
     if (onInvalid) onInvalid(v);
-    return true;
+    return Fragment::Unit;
 }
 
 } // namespace mcpp::buildopt::source

@@ -72,11 +72,11 @@ static void build_private_fragments_as_units(PrepareState& state,
                                              const std::vector<mcpp::modgraph::PackageRoot>& packages) {
     namespace fs = std::filesystem;
     namespace source = mcpp::buildopt::source;
-    const bool asUnit = source::private_fragment_as_unit(*state.m, [](std::string_view bad) {
+    const auto policy = source::private_fragment_policy(*state.m, [](std::string_view bad) {
         mcpp::diag::warning("build", std::format(
-            "ignoring invalid private_fragment '{}' (expected \"unit\" or \"as-written\")", bad));
+            "ignoring invalid private_fragment '{}' (expected \"unit\", \"conservative\" or \"as-written\")", bad));
     });
-    if (!asUnit) return;
+    if (policy == source::Fragment::AsWritten) return;
     auto& units = state.scan.graph.units;
     const auto count = units.size();
     for (std::size_t i = 0; i < count; ++i) {
@@ -88,7 +88,7 @@ static void build_private_fragments_as_units(PrepareState& state,
             text.assign(std::istreambuf_iterator<char>(in), {});
         }
         if (text.find("private") == std::string::npos) continue;
-        auto split = source::private_fragment(text, written.generic_string());
+        auto split = source::private_fragment(text, written.generic_string(), policy == source::Fragment::Conservative);
         if (!split) continue;
         if (!*split) {
             const auto why = std::format("{}: the private module fragment is built as written ({})",
