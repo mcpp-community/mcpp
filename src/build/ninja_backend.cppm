@@ -1335,11 +1335,17 @@ void write_buildopt_sidecar(const BuildPlan& plan) {
     namespace advice = mcpp::buildopt::advice;
     advice::Applied applied;
     std::map<std::string, advice::Fragment> fragments;
+    // As the step record spells a source: with forward slashes, whatever the host.
+    const auto spelled = [](const std::filesystem::path& p) {
+        auto s = mcpplibs::os::fs::utf8(p);
+        std::ranges::replace(s, '\\', '/');
+        return s;
+    };
     for (auto const& cu : plan.compileUnits) {
-        const auto source = mcpplibs::os::fs::utf8(cu.source);
+        const auto source = spelled(cu.source);
         if (!cu.writtenAs.empty()) {
-            auto& f = fragments[mcpplibs::os::fs::utf8(cu.writtenAs)];
-            f.written = mcpplibs::os::fs::utf8(cu.writtenAs);
+            auto& f = fragments[spelled(cu.writtenAs)];
+            f.written = spelled(cu.writtenAs);
             f.units.push_back(source);
         }
         if (!cu.imports.empty() && !cu.servedFromCache) applied.importers.push_back({source, cu.imports});
