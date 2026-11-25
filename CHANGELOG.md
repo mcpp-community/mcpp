@@ -4,6 +4,48 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.26.1] - 2026-11-26
+
+### Changed
+
+- A private module fragment is still a unit of its own when the purview before it holds
+  conditions (`#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif`) or `#error` and
+  `#warning`: a condition only decides which declarations exist, and the implementation unit
+  receives them from the interface. Before, any directive refused. A directive that changes what
+  the fragment means (`#define`, `#undef`, `#include`, `#pragma`, `#line`, `_Pragma`), and a
+  condition still open at the module declaration or at the fragment, still leave the source as
+  written, and `--verbose` names the line (SPEC-019 §5).
+- The text before a fragment is read as C++ tokens. A digit separator (`1'000`) no longer hides
+  the rest of its line, a raw string literal may run over lines and hold `module :private;`, a
+  `static` inside `extern "C" { … }` is a `static` at namespace scope, and a line continuation
+  between the module declaration and the fragment leaves the source as written. Each of these
+  only makes more sources built as written (SPEC-019 §5 items 4 and 8).
+- `MCPP_BUILDOPT`, `MCPP_PRIVATE_FRAGMENT` and `MCPP_BMI_SCHEDULE` are part of the request a
+  recorded build is replayed for: the first build after one of them changes writes the graph
+  again. Before, a build with no edit replayed the graph the other value had written.
+
+### Added
+
+- `[build] private_fragment = "conservative"` (and `MCPP_PRIVATE_FRAGMENT=conservative`): the
+  fragment is a unit of its own, and any directive in the purview before it leaves the source as
+  written, as before conditions were let through. It is the way to check the entry on GCC, which
+  cannot build a fragment as written.
+- A build that fails at a step an optimization acted on ends with a `tip:` that names the entry
+  and the one invocation that checks it: a source built as two units that failed, a unit that
+  imports a BMI kept with the lines of an earlier source that failed, a link that failed where
+  either is in the graph. A failure of another step says nothing; `--quiet` gives none. The
+  register states, for each entry that is on and has a key, the value that checks it
+  (`check`), and the text is made of it (SPEC-019 §9, docs/26).
+
+### Recorded
+
+- A reader for clang's `.pcm`, which would keep a BMI when only the function hashes, offsets and
+  locations differ, is not implemented. Measured with clang 20.1.7 to 23.1.6: the operand that
+  holds a function's hash is at an index that varies with the declaration and the version, and a
+  third of the edits change the width of that 32-bit value in the stream, which moves the bit
+  offsets and three offset tables. Without a model of the declaration records, a reader cannot
+  tell the field from an interface change (SPEC-019 §8, SPEC-018 §2.2).
+
 ## [2026.11.24.1] - 2026-11-24
 
 ### Fixed

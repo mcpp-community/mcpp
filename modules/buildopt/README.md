@@ -22,7 +22,7 @@ by a parameter.
 | `gcm-locations` | edge | conditional | on | `[profile.<name>] bmi_cutoff = "ignore-locations" \| "exact"`, `MCPP_BMI_CUTOFF` | A GCC BMI whose line maps alone moved is kept; its importers name the earlier lines |
 | `scan-pass` | graph | exact | on | — | The scans of a graph run as a pass of their own before its compiles |
 | `split-schedule` | graph | shape | off | `[build] bmi_schedule = "auto" \| "on" \| "off"`, `MCPP_BMI_SCHEDULE` | Importers start when a BMI exists, not when its compiler exits (two-phase with clang, detached code generation with gcc) |
-| `private-fragment` | source | source | on | `[build] private_fragment = "unit" \| "as-written"`, `MCPP_PRIVATE_FRAGMENT` | A private module fragment is built as a unit of its own, so an edit of it reaches no importer |
+| `private-fragment` | source | source | on | `[build] private_fragment = "unit" \| "conservative" \| "as-written"`, `MCPP_PRIVATE_FRAGMENT` | A private module fragment is built as a unit of its own, so an edit of it reaches no importer |
 `MCPP_BUILDOPT=off` turns every entry off for one invocation: the standard build.
 An entry with no parameter has nothing to choose — its products are the bytes the
 standard build gives — and is turned off only by that statement.
@@ -56,6 +56,6 @@ A reader of another compiler's format is one more file under the part it belongs
 | Optimization | Expected benefit | Why not yet |
 |---|---|---|
 | A one-file module split into interface and implementation with no marker in the source | An edit of a function body reaches no importer, without the developer writing `module :private;` | Needs semantic analysis (which definitions are inline, templates, constexpr; which bodies read what is local to the interface). A semantic provider can supply it through the source seam |
-| Clang: a BMI kept when the interface an importer can observe is unchanged | With clang, any edit of a body or a comment stops at the module | Needs a semantic difference of two versions of an interface; measured on one three-unit case only |
+| Clang: a BMI kept when the interface an importer can observe is unchanged | With clang, any edit of a body or a comment stops at the module | Measured 2026-11-26 on clang 20.1.7 to 23.1.6: the hash of a non-inline function (the one field that moves with its body) sits at an operand that varies with the declaration (26, 27 and 29 for member functions of one version) and with the version; a third of the edits change the width of the 32-bit hash in the stream, which moves the bit offsets and three offset tables after it. Without a model of the declaration records a reader cannot tell that field from an interface change |
 | The tests a change affects, by symbol | `mcpp test --since` runs fewer tests | Needs references across imports; dynamic dispatch can hide a test |
 | Two versions of one library in one program, renamed apart | A dependency chain that names two versions builds | Possible for module-only packages; headers, C libraries and macros are not renamed. No measurement of how often it occurs |
