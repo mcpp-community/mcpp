@@ -10,6 +10,7 @@ import :state;
 import std;
 import mcpp.diag;
 import mcpp.home;
+import mcpp.libs.entry_users;
 import mcpp.log;
 import mcpp.build.source_digest;
 import nlohmann.json;
@@ -503,6 +504,12 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
             }
         }
         mcpp::bmi_cache::touch_accessed(key);
+        // The tree this build reads it for uses it, so an edit of another
+        // checkout of the package does not remove it (mcpp#1025).
+        if (depIdent->sourceKind == "path")
+            mcpp::libs::entry_users::add(key.dir(), depIdent->sourceRef.empty()
+                                                        ? pkgRoot.root
+                                                        : std::filesystem::path(depIdent->sourceRef));
         sup.of[i] = Supply::Served;
         sup.digest[i] = probe.bmiDigest;
         sup.key[i] = key;
@@ -595,35 +602,18 @@ std::expected<void, std::string> step13_dependency_cache(PrepareState& state, Bu
     return {};
 }
 
-// AN EDITED TREE'S PREVIOUS ENTRY IS REPLACED (mcpp#974), as a `path` host
-// tool's is (tool_store::write_entry, mcpp#874). Every edit of a `path`
-// dependency is a new key, and none would be collected before `[cache]
-// unused_days`: the tree an entry was built from is written beside it, and an
-// entry of the same package from the same tree under another digest is removed
-// as this one is written. Another checkout of the package is another tree, and
-// keeps its entries.
-static void replace_tree_siblings(const mcpp::bmi_cache::CacheKey& key, const std::filesystem::path& tree) {
-    namespace fs = std::filesystem;
+// AN EDITED TREE'S PREVIOUS ENTRY IS RELEASED (mcpp#974, mcpp#1025), as a
+// `path` host tool's is: every edit of a `path` dependency is a new key, and
+// none would be collected before `[cache] unused_days`. The entry records the
+// trees that use it, and the tree that wrote this one is taken from the
+// entries of the same package it used under other digests; an entry no tree
+// uses is removed (mcpp.libs.entry_users). Another checkout of the package
+// keeps the entries it uses.
+static void supersede_tree_entries(const mcpp::bmi_cache::CacheKey& key, const std::filesystem::path& tree) {
     const auto plus = key.version.find("+path.");
     if (plus == std::string::npos) return;
-    const auto origin = tree.lexically_normal().generic_u8string();
-    const std::string text(origin.begin(), origin.end());
-    std::error_code ec;
-    std::ofstream(key.dir() / "source", std::ios::binary | std::ios::trunc) << text;
-    const auto versionDir = key.dir().parent_path();
-    const auto prefix = std::format("{}@{}", key.packageName, key.version.substr(0, plus + 6));
-    auto from_this_tree = [&](const fs::path& entry) {
-        std::ifstream in(entry / "source", std::ios::binary);
-        return in && std::string{std::istreambuf_iterator<char>(in), {}} == text;
-    };
-    for (auto const& v : fs::directory_iterator(versionDir.parent_path(), ec)) {
-        const auto name = v.path().filename().u8string();
-        if (v.path() == versionDir || !std::string(name.begin(), name.end()).starts_with(prefix)) continue;
-        std::error_code kec;
-        for (auto const& entry : fs::directory_iterator(v.path(), kec))
-            if (from_this_tree(entry.path())) fs::remove_all(entry.path(), kec);
-        fs::remove(v.path(), kec);   // only when nothing else is left in it
-    }
+    mcpp::libs::entry_users::supersede(key.dir(),
+        std::format("{}@{}", key.packageName, key.version.substr(0, plus + 6)), tree);
 }
 
 void populate_dependency_cache(BuildContext& ctx) {
@@ -645,7 +635,7 @@ void populate_dependency_cache(BuildContext& ctx) {
         for (auto const& up : task.interfaces)
             task.key.imports[up.keyHex] = mcpp::bmi_cache::entry_bmi_digest(up);
         auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
-        if (pr && !task.treeRoot.empty()) replace_tree_siblings(task.key, task.treeRoot);
+        if (pr && !task.treeRoot.empty()) supersede_tree_entries(task.key, task.treeRoot);
         if (!pr) {
             mcpp::diag::warning("build", std::format(
                 "bmi cache populate failed for {}@{}: {}",

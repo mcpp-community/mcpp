@@ -266,7 +266,7 @@ inline std::string missing_interpreter_note(const std::filesystem::path& artifac
         missing = std::format("'{}' is not on PATH", script->viaEnv);
     if (missing.empty()) return {};
     return std::format(
-        "'{}' runs through its first line, `{}`, and {}.\n"
+        "'{0}' runs through its first line, `{1}`, and {2}.\n"
         "      A toolchain payload names the program that runs its artefacts in\n"
         "      `.mcpp-toolchain.json`; one installed before its recipe wrote that file\n"
         "      names none, and its artefacts run through their `#!` line.\n"

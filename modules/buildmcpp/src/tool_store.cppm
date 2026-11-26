@@ -45,6 +45,7 @@ export module mcpp.build.tool_store;
 
 import std;
 import mcpp.invocation;
+import mcpp.libs.entry_users;
 import nlohmann.json;
 import mcpp.manifest;
 import mcpp.toolchain.fingerprint;
@@ -131,16 +132,22 @@ bool entry_valid(const std::filesystem::path& entryDir, const Key& k,
                  std::string_view toolName, std::string_view exeSuffix);
 
 // Writes the entry's record. `source` is the tree a `path` package was
-// built from: written beside the record, and an entry of the same package
-// from the same tree under another stamp (`<version>+path.<stamp>`) is
-// superseded and removed -- a path package's every edit was a new key, and
-// none was ever collected (mcpp#874).
+// built from: it becomes a user of the entry and stops being one of the
+// entries of the same package it used under another stamp
+// (`<version>+path.<stamp>`), which are removed when no tree uses them -- a
+// path package's every edit was a new key, and none was ever collected
+// (mcpp#874); another checkout's build may still read one (mcpp#1025).
 void write_entry(const std::filesystem::path& entryDir, const Key& k,
                  const std::filesystem::path& source = {});
 
 // Marks the entry used now: `mcpp cache` collects by last use, and the
 // record's time is that use (the record's content is the key, compared
 // field by field, and does not change).
+// A hit of the entry for the `path` package at `source`: the tree becomes one
+// of its users (mcpp.libs.entry_users). Nothing for an index package.
+void add_user(const std::filesystem::path& entryDir, const Key& k,
+              const std::filesystem::path& source);
+
 void touch(const std::filesystem::path& entryDir);
 
 // ── Overrides (the escape hatch every comparable system provides) ──────────
@@ -265,27 +272,15 @@ void write_entry(const fs::path& entryDir, const Key& k, const fs::path& source)
     }
     const auto plus = k.version.find("+path.");
     if (source.empty() || plus == std::string::npos) return;
-    const auto origin = source.lexically_normal().generic_u8string();
-    const std::string text(origin.begin(), origin.end());
-    std::ofstream(entryDir / "source", std::ios::trunc) << text;
-    // `<index>/<package>@<version>+path.<stamp>/<key>/`: the siblings of this
-    // version directory that differ only in the stamp.
-    const auto versionDir = entryDir.parent_path();
-    const auto prefix = std::format("{}@{}", k.packageName, k.version.substr(0, plus + 6));
-    auto same_source = [&](const fs::path& keyDir) {
-        std::ifstream in(keyDir / "source");
-        if (!in) return false;
-        const std::string was{std::istreambuf_iterator<char>(in), {}};
-        return was == text;
-    };
-    for (auto const& v : fs::directory_iterator(versionDir.parent_path(), ec)) {
-        const auto name = v.path().filename().string();
-        if (v.path() == versionDir || !name.starts_with(prefix)) continue;
-        std::error_code kec;
-        for (auto const& key : fs::directory_iterator(v.path(), kec))
-            if (same_source(key.path())) fs::remove_all(key.path(), kec);
-        fs::remove(v.path(), kec);   // only when nothing else is left in it
-    }
+    // The tree is a user of this entry and no longer of the ones it was built
+    // into before (mcpp.libs.entry_users, the rule the dependency cache holds).
+    mcpp::libs::entry_users::supersede(
+        entryDir, std::format("{}@{}", k.packageName, k.version.substr(0, plus + 6)), source);
+}
+
+void add_user(const fs::path& entryDir, const Key& k, const fs::path& source) {
+    if (source.empty() || k.version.find("+path.") == std::string::npos) return;
+    mcpp::libs::entry_users::add(entryDir, source);
 }
 
 // The rule of mcpp::home::mark_used, which this module cannot import: the

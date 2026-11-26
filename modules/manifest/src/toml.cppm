@@ -1399,9 +1399,24 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // [profile.<name>] — bundled build settings.
     if (auto* profile_table = doc->get_table("profile");
         profile_table && !profile_table->empty()) {
+        // The keys a profile has. One outside them was dropped without a word
+        // (`opt_level = 3` in an example read as no key, the profile's `opt`
+        // its default).
+        static constexpr std::string_view kProfileKeys[] = {
+            "opt", "debug", "lto", "strip", "ndebug", "trim_paths", "bmi_cutoff", "split_debuginfo",
+            "dependency_linkage", "dependency_debug", "cflags", "cxxflags", "ldflags", "dialect_cxxflags",
+        };
         for (auto& [pname, pval] : *profile_table) {
             if (!pval.is_table()) continue;
             auto& tt = pval.as_table();
+            for (auto const& [key, _] : tt)
+                if (std::ranges::find(kProfileKeys, key) == std::end(kProfileKeys)) {
+                    std::string supported;
+                    for (auto k : kProfileKeys) supported += std::format("{}{}", supported.empty() ? "" : ", ", k);
+                    m.schemaWarnings.push_back(std::format(
+                        "[profile.{}] has unsupported key '{}' (ignored). Supported keys: {}.",
+                        pname, key, supported));
+                }
             Profile pr;
             if (auto it = tt.find("opt"); it != tt.end()) {
                 if      (it->second.is_string()) pr.optLevel = it->second.as_string();
@@ -1460,6 +1475,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             read_list("cflags",   pr.cflags);
             read_list("cxxflags", pr.cxxflags);
             read_list("ldflags",  pr.ldflags);
+            read_list("dialect_cxxflags", pr.dialectCxxflags);
             m.profiles[pname] = pr;
         }
     }

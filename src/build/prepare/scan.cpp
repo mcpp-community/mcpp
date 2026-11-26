@@ -1394,10 +1394,32 @@ static void report_reopened_tables(PrepareState& state) {
             state.reportCompatUse("reopened-dotted-table", i, std::format("[{}]", path));
 }
 
+// A C LIBRARY FROM THE GRAPH AND NO C++ ABI (mcpp#898). The graph replaced the
+// C library, no package supplies the C++ ABI, and a unit imports the standard
+// library module: the toolchain's C++ library is built against another C
+// library, and the std module's precompile failed inside its headers
+// (`features.h` not found under GCC 16.1, `__config` under LLVM 23.1) with
+// nothing that named the decision. Everything the refusal reads is known once
+// the units are scanned. A stated `cxx_runtime` is the author's answer.
+static std::expected<void, std::string> step11_cxx_abi_supplier(PrepareState& state, bool needsStdModule) {
+    const auto& ts = state.resolvedTargetSide;
+    if (!needsStdModule || !ts.cAbi.fromGraph() || !ts.cxx.absent()) return {};
+    if (!state.m->buildConfig.cxxRuntime.empty()) return {};
+    refusal::record(refusal::Code::LayerRequirement);
+    return std::unexpected(std::format(
+        "the graph supplies the C library ({}, {}) and no package supplies the C++ ABI.\n"
+        "       The standard library module is compiled with the toolchain's C++ library, which is\n"
+        "       built against another C library.\n"
+        "       help: add a dependency that provides `mcpp:c++-abi`, or state "
+        "[build] cxx_runtime = \"host-coupled\"",
+        ts.cAbi.interfaceName.empty() ? std::string("c-abi") : ts.cAbi.interfaceName, ts.cAbi.impl));
+}
+
 std::expected<void, std::string> phase11_scan(PrepareState& state) {
     report_reopened_tables(state);
     auto needsStdModule = step11_scan_sources(state);
     if (!needsStdModule) return std::unexpected(needsStdModule.error());
+    if (auto r = step11_cxx_abi_supplier(state, *needsStdModule); !r) return std::unexpected(r.error());
     if (auto r = refuse_plugin_units_in_target(state); !r) return std::unexpected(r.error());
     if (auto r = step11_cxx_compiler_gate(state); !r) return std::unexpected(r.error());
     step11_public_module_check(state);

@@ -1558,6 +1558,16 @@ static std::vector<std::string> tool_upstream_keys(PrepareState& state, const st
     return keys;
 }
 
+// The tree a `path` tool package is read from, a user of its store entry
+// (mcpp#1025); empty for any other package.
+static std::filesystem::path tool_source_tree(const PrepareState& state, std::size_t depIdx) {
+    if (depIdx < 1 || depIdx - 1 >= state.dep_cache_identities.size()
+        || state.dep_cache_identities[depIdx - 1].sourceKind != "path")
+        return {};
+    const auto& id = state.dep_cache_identities[depIdx - 1];
+    return id.sourceRef.empty() ? state.packages[depIdx].root : std::filesystem::path(id.sourceRef);
+}
+
 // Returns true when the tool is already resolved (a valid store entry, or a
 // plan-only deferral), in which case the caller's per-tool work is done.
 static std::expected<bool, std::string>
@@ -1650,6 +1660,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     if (mcpp::build::tool_store::entry_valid(ctx.entry, ctx.key, ctx.toolName,
                                              exeSuffix)) {
         mcpp::build::tool_store::touch(ctx.entry);
+        mcpp::build::tool_store::add_user(ctx.entry, ctx.key, tool_source_tree(state, ctx.depIdx));
         state.usedCacheRecords.insert((ctx.entry / "entry.json").string());
         step6_record_tool_provision(state, ctx, ctx.binOut);
         return true;
@@ -1866,14 +1877,7 @@ step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
         | std::filesystem::perms::others_exec,
         std::filesystem::perm_options::add, cpEc);
     // A path package's tree, so that its superseded entries are collected.
-    std::filesystem::path toolSource;
-    if (ctx.depIdx >= 1 && ctx.depIdx - 1 < state.dep_cache_identities.size()
-        && state.dep_cache_identities[ctx.depIdx - 1].sourceKind == "path") {
-        const auto& id = state.dep_cache_identities[ctx.depIdx - 1];
-        toolSource = id.sourceRef.empty() ? state.packages[ctx.depIdx].root
-                                          : std::filesystem::path(id.sourceRef);
-    }
-    mcpp::build::tool_store::write_entry(ctx.entry, ctx.key, toolSource);
+    mcpp::build::tool_store::write_entry(ctx.entry, ctx.key, tool_source_tree(state, ctx.depIdx));
     state.usedCacheRecords.insert((ctx.entry / "entry.json").string());
     // The sub-build tree is large (protoc is several hundred
     // objects) and the key covers every input, so a hit never

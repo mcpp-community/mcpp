@@ -119,3 +119,22 @@ package = {
     expect(fatal(!bad.has_value()));
     expect(bad.error().format().contains("features.x.description must be a string")) << bad.error().format();
 }};
+
+// The third source (mcpp#1018): an installed payload answers from the `mcpp.toml` it carries,
+// read from its directory, and states what the manifest and the descriptor state.
+UTest an_installed_manifest_states_the_same_catalogue{"FeatureCatalog/InstalledManifestSameCatalogue", [] {
+    const auto dir = std::filesystem::temp_directory_path()
+        / std::format("mcpp-feature-catalog-{}", std::random_device{}());
+    std::filesystem::create_directories(dir / "src");
+    { std::ofstream(dir / "mcpp.toml") << kToml; }
+    { std::ofstream(dir / "src" / "widget.cppm") << "export module widget;\n"; }
+    auto installed = mm::load(dir / "mcpp.toml");
+    std::filesystem::remove_all(dir);
+    if (auto&& failed = expect(fatal(installed.has_value())); !failed) failed << installed.error().format();
+    auto fromToml = mm::parse_string(kToml);
+    expect(fatal(fromToml.has_value()));
+    const auto a = mm::feature_catalog(*installed);
+    const auto b = mm::feature_catalog(*fromToml);
+    expect(fatal(eq(a.size(), b.size())));
+    for (std::size_t i = 0; i < a.size(); ++i) expect(eq(a[i].description, b[i].description)) << a[i].name;
+}};

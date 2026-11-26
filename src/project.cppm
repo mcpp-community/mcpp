@@ -389,6 +389,8 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
         to.cflags.insert(to.cflags.begin(), from.cflags.begin(), from.cflags.end());
         to.cxxflags.insert(to.cxxflags.begin(), from.cxxflags.begin(), from.cxxflags.end());
         to.ldflags.insert(to.ldflags.begin(), from.ldflags.begin(), from.ldflags.end());
+        to.dialectCxxflags.insert(to.dialectCxxflags.begin(), from.dialectCxxflags.begin(),
+                                  from.dialectCxxflags.end());
     }
 
     for (auto const& [triple, from] : layer.targetOverrides) {
@@ -1189,6 +1191,7 @@ export std::string root_position_key(
         list("profile." + name + ".cflags", pr.cflags);
         list("profile." + name + ".cxxflags", pr.cxxflags);
         list("profile." + name + ".ldflags", pr.ldflags);
+        list("profile." + name + ".dialect_cxxflags", pr.dialectCxxflags);
     }
     for (auto const& [name, idx] : m.indices)
         field("index." + name, std::format("{}#{}#{}#{}#{}", idx.url, idx.rev, idx.tag,

@@ -38,7 +38,7 @@ Two more keys are here because a library has them and no other example does:
 counters = { path = "../counters" }
 
 [profile.release]
-opt_level = 3
+opt = 3
 ```
 
 ## The criterion

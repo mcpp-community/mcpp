@@ -2373,10 +2373,17 @@ struct Profile {
     // `dev` and `debug`, else the profile's `debug`.
     std::string dependencyDebug;
     bool        dependencyDebugDeclared = false;
-    // Passthrough escape hatch (fixed keys, open values — I6 completeness):
+    // Passthrough escape hatch (fixed keys, open values — I6 completeness).
+    // `cflags` and `cxxflags` are root-position words: they reach the units of
+    // the build's roots (the root package, the selected members), as `[build]
+    // cflags` does (SPEC-004 §9). `ldflags` reaches every image.
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;
     std::vector<std::string> ldflags;
+    // The graph-wide words of the profile (mcpp#1025): `[build]
+    // dialect_cxxflags`'s meaning and reach -- the standard library module,
+    // the scan and every C++ unit of the graph -- after `[build]`'s own.
+    std::vector<std::string> dialectCxxflags;
 };
 
 struct Manifest {

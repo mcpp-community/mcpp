@@ -369,6 +369,11 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
                                       pr.ldflags.begin(), pr.ldflags.end());
         state.m->buildConfig.graphLdflags.insert(state.m->buildConfig.graphLdflags.end(),
                                            pr.ldflags.begin(), pr.ldflags.end());
+        // The profile's graph-wide words, after `[build] dialect_cxxflags`: the
+        // root's set is the one the standard library module, the scan and every
+        // C++ unit read (mcpp#1025).
+        state.m->buildConfig.dialectCxxflags.insert(state.m->buildConfig.dialectCxxflags.end(),
+                                                    pr.dialectCxxflags.begin(), pr.dialectCxxflags.end());
     }
 
     // Every directory a package payload may legitimately have been INSTALLED
