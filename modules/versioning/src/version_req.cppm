@@ -147,6 +147,11 @@ bool is_constraint(std::string_view s);
 
 bool matches(const Requirement& r, const Version& v);
 
+// Whether `r` reaches the pre-release `v` at all: it names a pre-release of the
+// same numbers. `matches` asks it first; a refusal asks it to tell a pre-release
+// the range does not see from one it sees and excludes.
+bool prerelease_visible(const Requirement& r, const Version& v);
+
 // Indices of ALL versions in `available` that match `req` and tie for highest
 // precedence. Normally one element. More than one means distinct entries
 // compare EQUAL — only possible when they differ solely in build metadata
@@ -319,6 +324,8 @@ std::expected<Comparator, std::string> parse_comparator(std::string_view s) {
     return Comparator{op, *v};
 }
 
+} // namespace
+
 // SemVer/npm/Cargo pre-release visibility: a pre-release candidate is only
 // eligible when the requirement itself names a pre-release at the SAME numeric
 // tuple. Two bugs collapse into this one rule:
@@ -333,8 +340,6 @@ bool prerelease_visible(const Requirement& r, const Version& v) {
         if (c.v.isPrerelease() && c.v.same_numbers(v)) return true;
     return false;
 }
-
-} // namespace
 
 bool is_constraint(std::string_view s) {
     if (s.empty()) return true;      // "any version"
