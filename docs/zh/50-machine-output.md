@@ -596,6 +596,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `device-source-unconsumed` | 一个设备类源文件没有到达任何 action，因此没有任何东西编译它 |
 | `host-module-missing` | `build.mcpp` 导入的模块，没有任何依赖以 host module 的形式提供 |
 | `runtime-closure` | 镜像的某个 `DT_NEEDED` 在加载期没有由链接期为它读取的那个文件满足：镜像的搜索路径上没有文件满足它，或由另一个同名文件满足（2026.11.27.1+） |
+| `static-tls-image` | 精确 `exports` 表明宿主以 `dlopen` 加载的共享镜像，以静态 TLS 块（`DF_STATIC_TLS`）占用的大小超过 C 库为这类镜像提供的余量（2026.11.27.1+） |
 | `soname-collision` | 同一次构建的两个共享库以同一个名字加载，即文件名或陈述的 `soname` 相同（2026.11.27.1+） |
 | `build-program-unpublished-input` | `mcpp publish`：包的构建程序读到了包的归档不含的文件——包目录之外的文件，或 HEAD 未跟踪的文件（2026.11.21.1+） |
 | `companion-too-old` | 工具链旁写明的配套载荷（`companions = { binutils = … }`）低于工具链载荷声明的版本（SPEC-006 §2.9） |

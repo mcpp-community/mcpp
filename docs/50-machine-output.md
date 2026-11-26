@@ -670,6 +670,7 @@ a program classifying the outcome reads `reason`:
 | `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
 | `runtime-closure` | an image's `DT_NEEDED` is not answered at load time by the file its link read for it: no file on the image's search path answers it, or another file of that name does (2026.11.27.1+) |
+| `static-tls-image` | a shared image whose exact `exports` say a host loads it by `dlopen` asks for the static TLS block (`DF_STATIC_TLS`) with more than the C library serves to such an image (2026.11.27.1+) |
 | `soname-collision` | two shared libraries of one build are loaded by one name, their file name or a stated `soname` (2026.11.27.1+) |
 | `build-program-unpublished-input` | `mcpp publish`: the package's build program reads a file its archive does not carry -- one outside the package's directory, or one HEAD does not track (2026.11.21.1+) |
 | `companion-too-old` | a companion stated beside the toolchain (`companions = { binutils = … }`) is older than the one the toolchain's payload declares (SPEC-006 §2.9) |

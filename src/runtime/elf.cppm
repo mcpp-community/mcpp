@@ -68,6 +68,12 @@ struct ElfRuntimeFacts {
     // link in the farm, found its `libgcc_s.so.1` in the farm by `$ORIGIN`,
     // while a model that expanded `$ORIGIN` at the link's target refused it.
     std::filesystem::path origin;
+    // The image asks for the static TLS block (`DF_STATIC_TLS` in DT_FLAGS):
+    // its thread-local storage is reached by the initial-exec model, which a
+    // loader serves for an object loaded after the process started only from
+    // the block's surplus (mcpp#907). `tlsSize` is its PT_TLS segment's size.
+    bool          staticTls = false;
+    std::uint64_t tlsSize = 0;
 
     // "Is this an executable" is PT_INTERP, not ET_EXEC: a PIE executable is
     // ET_DYN and therefore indistinguishable from a shared library by type
@@ -337,6 +343,9 @@ constexpr std::uint64_t kDtStrsz = 10;
 constexpr std::uint64_t kDtRpath = 15;
 constexpr std::uint64_t kDtSoname = 14;
 constexpr std::uint64_t kDtRunpath = 29;
+constexpr std::uint64_t kDtFlags = 30;
+constexpr std::uint64_t kDfStaticTls = 0x10;
+constexpr std::uint32_t kPtTls = 7;
 constexpr std::uint64_t kDtVerdef = 0x6ffffffc;
 constexpr std::uint64_t kDtVerdefnum = 0x6ffffffd;
 constexpr std::uint64_t kDtVerneed = 0x6ffffffe;
@@ -1084,6 +1093,8 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
         detail::Segment segment{*ptype, *poff, *pvaddr, *pfilesz};
         segments.push_back(segment);
         if (*ptype == detail::kPtDynamic) dynamic = segment;
+        if (*ptype == detail::kPtTls)
+            if (auto memsz = word(off + (wide ? 0x28 : 0x14))) out.tlsSize = *memsz;
         if (*ptype == detail::kPtInterp) {
             auto value = reader.cstr(*poff, *pfilesz);
             if (!value || value->empty()) return std::unexpected(std::format(
@@ -1112,6 +1123,7 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
             if (candidate == tag) return value;
         return std::nullopt;
     };
+    if (auto flags = first(detail::kDtFlags)) out.staticTls = (*flags & detail::kDfStaticTls) != 0;
     auto strtabAddr = first(detail::kDtStrtab);
     auto strtabSize = first(detail::kDtStrsz);
     if (!strtabAddr || !strtabSize) return std::unexpected(std::format(

@@ -99,6 +99,10 @@ enum class Code {
     // read for it: no file answers it, or another file of that name does
     // (design 2026-11-27 §4.1, mcpp#537).
     RuntimeClosure,
+    // A shared image that asks for the static TLS block holds more than the
+    // C library serves to an image `dlopen` loads, and its exact `exports`
+    // say a host loads it that way (mcpp#907).
+    StaticTlsImage,
     // Two declarations name one xlings package at versions that cannot both
     // hold. Distinct from VersionFloorUnmet, which is about the machine: this
     // one is about two manifests disagreeing over a tool.
@@ -271,6 +275,7 @@ constexpr std::string_view name(Code c) {
         case Code::HostModuleMissing:    return "host-module-missing";
         case Code::SonameCollision:      return "soname-collision";
         case Code::RuntimeClosure:       return "runtime-closure";
+        case Code::StaticTlsImage:       return "static-tls-image";
         case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::SharedLibraryCxxRuntime:
                                          return "shared-library-cxx-runtime";

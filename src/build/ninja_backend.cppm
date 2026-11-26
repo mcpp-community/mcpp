@@ -1054,6 +1054,46 @@ link_inputs(const BuildPlan& plan, const std::string& ninjaProgram,
     return out;
 }
 
+// A SHARED IMAGE THAT ASKS FOR THE STATIC TLS BLOCK (mcpp#907). An object
+// compiled for the initial-exec TLS model marks the library `DF_STATIC_TLS`.
+// Loaded with the program at start-up it works; loaded by `dlopen` later, the
+// loader serves its thread-local storage from the static block's surplus, and
+// a library larger than what is left is refused at that moment ("cannot
+// allocate memory in static TLS block"). Which way the image will be loaded is
+// not known at the link, so it is reported, with its size against glibc's
+// surplus (`glibc.rtld.optional_static_tls`, 512 bytes since 2.32); an image
+// whose exact `exports` say a host enters it by name (a plugin, a Python
+// extension, a JNI library) is one that `dlopen` loads, and is refused
+// (`static-tls-image`).
+std::optional<std::string> refuse_static_tls_image(const BuildPlan& plan) {
+    if (plan.runtimeBinding.platform != "linux" || plan.runtimeBinding.libc.find("glibc") == std::string::npos)
+        return std::nullopt;
+    constexpr std::uint64_t kGlibcSurplus = 512;
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::SharedLibrary) continue;
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.outputDir / lu.output);
+        if (!facts || !facts->staticTls || facts->tlsSize <= kGlibcSurplus) continue;
+        const bool entered = std::ranges::any_of(lu.exportPatterns, [](auto const& p) {
+            return p.find_first_of("*?[") == std::string::npos;
+        });
+        const auto what = std::format(
+            "{} uses the initial-exec TLS model for {} bytes of thread-local storage (DF_STATIC_TLS), and "
+            "glibc serves an image loaded by dlopen from a surplus of {} bytes",
+            lu.output.filename().string(), facts->tlsSize, kGlibcSurplus);
+        const auto help = std::string(
+            "compile its objects with -ftls-model=global-dynamic (the model for code of a shared "
+            "library), or keep less in `thread_local`");
+        if (entered) {
+            mcpp::build::refusal::record(mcpp::build::refusal::Code::StaticTlsImage);
+            return std::format("{}; its `exports` name the symbols a host loads it to call.\n"
+                               "       help: {}", what, help);
+        }
+        mcpp::diag::degraded("build/static-tls", what,
+                             "a program that loads it at start-up runs; dlopen refuses it", help);
+    }
+    return std::nullopt;
+}
+
 void report_unmatched_exact_exports(const BuildPlan& plan) {
     const auto tr = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
     const std::string os = tr ? tr->os : (mcpplibs::os::is_macos ? "macos" : mcpplibs::os::is_windows ? "windows" : "linux");
@@ -5647,6 +5687,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (ok) mcpp::build::advice::report_and_clear(plan.outputDir);
 
     if (ok) report_unmatched_exact_exports(plan);
+    if (ok)
+        if (auto refused = refuse_static_tls_image(plan))
+            return std::unexpected(BuildError{*refused, plan.outputDir / plan.graphFile, {}});
     if (ok) {
         auto runtimeReport =
             mcpp::build::runtime_validation::validate_changed_artifacts(
