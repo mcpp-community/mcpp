@@ -352,6 +352,74 @@ int main() {
         expect(e2e::contains(targets, "x86_64-openkal")) << "the other configuration's target was dropped: " << targets;
         expect(e2e::contains(targets, ",")) << "this configuration's target is missing: " << targets;
     };
+
+    "1166 a component of emit sbom states the package"_test = [] {
+        // mcpp#892, mcpp#891: `mcpp emit sbom` reads the lock and nothing else, so the lock is
+        // written here: no toolchain, no index, no network. A component's name and purl state
+        // the package, not the lock's key for it -- a key may carry the namespace, and marks a
+        // version only build programs hold (`+b<digest>`); a variant stays another component;
+        // a purl percent-encodes `+`; one identity under two spellings is one component. With
+        // no lock the document is the root alone and the narration says nothing is recorded.
+        s::project p{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0+7\"\n"}};
+        const std::string cmdline = "[package.\"mcpplibs.cmdline\"]\nnamespace = \"mcpplibs\"\nversion = \"0.0.1\"\n"
+                                    "source  = \"index+mcpplibs@0.0.1\"\nhash    = \"fnv1a:0000000000000001\"\n";
+        p.write("mcpp.lock", "version = 2\n\n" + cmdline +
+            "\n[package.\"compat.zlib\"]\nnamespace = \"compat\"\nversion = \"1.3.2\"\nsource  = \"index+compat@1.3.2\"\nhash    = \"fnv1a:0000000000000002\"\n"
+            "\n[package.\"compat.zlib+pabcdef012345\"]\nnamespace = \"compat\"\nversion = \"1.3.2\"\nsource  = \"index+compat@1.3.2\"\nhash    = \"fnv1a:0000000000000003\"\n"
+            "variant = \"abcdef0123456789\"\npatches = [\"patches/0001-fix.patch#sha256:00\"]\n"
+            "\n[package.\"compat.zlib+b0123456789ab\"]\nnamespace = \"compat\"\nversion = \"1.3.1\"\nsource  = \"index+compat@1.3.1\"\nhash    = \"fnv1a:0000000000000006\"\n"
+            "programs = [\"build:acme.gen@1.0.0\"]\n"
+            "\n[package.\"fmt\"]\nnamespace = \"mcpplibs\"\nversion = \"11.0.0+7\"\nsource  = \"index+mcpplibs@11.0.0+7\"\nhash    = \"fnv1a:0000000000000004\"\n"
+            "\n[package.\"acme.tool\"]\nversion = \"1.0.0\"\nsource  = \"git+https://example.invalid/acme/tool#tag=v1.0.0\"\nhash    = \"fnv1a:0000000000000005\"\n");
+        auto r = p.mcpp({"emit", "sbom"});
+        expect(fatal(e2e::succeeded(r))) << "mcpp emit sbom: " << s::text(r);
+        const auto d = s::json(r.out);
+        // (group, name, version) -> purl
+        std::map<std::tuple<std::string, std::string, std::string>, std::string> got;
+        for (const auto& c : d["components"]) {
+            expect(fatal(c["bom-ref"] == c["purl"])) << c.dump();
+            got[{c.value("group", std::string{}), c["name"].get<std::string>(), c["version"].get<std::string>()}] = c["purl"].get<std::string>();
+        }
+        const std::map<std::tuple<std::string, std::string, std::string>, std::string> want{
+            {{"mcpplibs", "cmdline", "0.0.1"}, "pkg:mcpp/mcpplibs/cmdline@0.0.1"},
+            {{"compat", "zlib", "1.3.2"}, "pkg:mcpp/compat/zlib@1.3.2"},
+            {{"compat", "zlib+pabcdef012345", "1.3.2"}, "pkg:mcpp/compat/zlib%2Bpabcdef012345@1.3.2"},
+            {{"compat", "zlib", "1.3.1"}, "pkg:mcpp/compat/zlib@1.3.1"},
+            {{"mcpplibs", "fmt", "11.0.0+7"}, "pkg:mcpp/mcpplibs/fmt@11.0.0%2B7"},
+            {{"", "acme.tool", "1.0.0"}, "pkg:mcpp/mcpp/acme.tool@1.0.0"},
+        };
+        expect(fatal(got == want)) << "the components do not state the packages of the lock\n" << r.out;
+        for (const auto& c : d["components"]) {
+            if (c["name"] == "zlib+pabcdef012345") expect(fatal(c.contains("pedigree"))) << "a variant states no pedigree: " << c.dump();
+            // What the key's marker said is said by a property.
+            if (c["version"] == "1.3.1")
+                expect(fatal(c["properties"].dump().find("build:acme.gen@1.0.0") != std::string::npos)) << "a version only build programs hold does not name them: " << c.dump();
+        }
+        const auto& root = d["metadata"]["component"];
+        expect(fatal(root["purl"] == "pkg:mcpp/mcpp/app@0.1.0%2B7")) << root.dump();
+        expect(fatal(root["version"] == "0.1.0+7")) << root.dump();
+
+        // A lock from 2026.9.29.1 to .5 can hold one identity under both spellings.
+        p.write("mcpp.lock", "version = 2\n\n[package.\"cmdline\"]\nnamespace = \"mcpplibs\"\nversion = \"0.0.1\"\n"
+                             "source  = \"index+mcpplibs@0.0.1\"\nhash    = \"fnv1a:0000000000000001\"\n\n" + cmdline);
+        r = p.mcpp({"emit", "sbom"});
+        expect(fatal(e2e::succeeded(r))) << "mcpp emit sbom (two spellings): " << s::text(r);
+        std::vector<std::string> refs;
+        for (const auto& c : s::json(r.out)["components"]) refs.push_back(c["bom-ref"]);
+        expect(fatal(refs == std::vector<std::string>{"pkg:mcpp/mcpplibs/cmdline@0.0.1"})) << r.out;
+
+        // No lock: nothing recorded is said on the narration stream, and the document is valid.
+        p.remove("mcpp.lock");
+        r = p.mcpp({"emit", "sbom"});
+        expect(fatal(e2e::succeeded(r))) << "mcpp emit sbom with no lock: " << s::text(r);
+        expect(fatal(e2e::contains(r.err, "no mcpp.lock"))) << "sbom did not say that nothing was recorded: " << r.err;
+        expect(fatal(s::json(r.out)["components"].empty())) << "sbom with no lock is not a root-only document: " << r.out;
+        // A lock that cannot be read is an error, not a root-only document.
+        p.write("mcpp.lock", "version = 2\n[package\n");
+        r = p.mcpp({"emit", "sbom"});
+        expect(fatal(failed(r))) << "sbom accepted a lock it cannot read: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "could not be read"))) << s::text(r);
+    };
 }};
 
 }  // namespace

@@ -97,7 +97,9 @@ error: --locked was given and this resolution differs from mcpp.lock:
 ```
 
 A release build, an audit or a CI job should pass `--locked`. It disables the
-build fast path, so the assertion always runs.
+build fast path, so the assertion always runs. With no `mcpp.lock` there is no
+record to assert against: `--locked` then fails saying so, rather than naming
+every package as one that moved, and writes none.
 
 The lock does not yet constrain resolution — it records and verifies it.
 Pinning a resolution to the lock as an input is a separate change to the
@@ -112,10 +114,20 @@ resolution:
 mcpp emit sbom -o sbom.json
 ```
 
+A component's `name`, `group` and `purl` state the package, whichever way the
+manifest that declared it spelled it: `cmdline` and `mcpplibs.cmdline` are both
+`pkg:mcpp/mcpplibs/cmdline@<version>`. A variant keeps its digest in the name,
+and a version only build programs hold is the package at that version, with one
+`mcpp:build-program` property for each program. A purl percent-encodes its
+segments, so `+` is written `%2B`.
+
 It reads `mcpp.lock` rather than resolving again, because a document describing
 a different graph from the one that was built is worse than no document. A
 component whose licence mcpp does not know is emitted as `NOASSERTION` rather
-than omitted: an absent field reads as "not examined".
+than omitted: an absent field reads as "not examined". With no `mcpp.lock` the
+document names the root package alone, and a note on standard error says that
+nothing is recorded: that is the whole truth for a project with no dependencies,
+and not for one that has never been built.
 
 ## Default versions (2026.11.21.1+)
 

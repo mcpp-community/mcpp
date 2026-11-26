@@ -81,24 +81,9 @@ namespace mcpp::build {
 // runs, called from it in the same order, and are declared in the `:state`
 // partition (state.cppm) as the phases are.
 
-// The short name of a lock entry. An index entry is written under the map key
-// its declaring manifest used (`mcpplibs.cmdline` under `[dependencies.mcpplibs]`,
-// `cmdline` under a bare key), so the spelled name may carry its namespace as a
-// prefix; the identity is (namespace, short name) whichever way it was spelled.
-// An entry without a namespace (a git entry, keyed by the root's map key) is its
-// own short name.
-static std::string lock_short_name(const mcpp::lockfile::LockedPackage& p) {
-    if (!p.namespace_.empty()) {
-        const std::string prefix = p.namespace_ + ".";
-        if (p.name.size() > prefix.size() && p.name.starts_with(prefix))
-            return p.name.substr(prefix.size());
-    }
-    return p.name;
-}
-
 // The identity two entries of one lock are compared by.
 static std::string lock_identity(const mcpp::lockfile::LockedPackage& p) {
-    return p.namespace_ + "\x1f" + lock_short_name(p);
+    return p.namespace_ + "\x1f" + mcpp::pm::short_name(p);
 }
 
 // THE IDENTITY THIS CONFIGURATION'S REQUEST WAS GIVEN (SPEC-016 §4.5), into
@@ -506,16 +491,21 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // true and useless; which package moved, from which version to
             // which, is what the reader does something about.
             if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") {
-                auto prior = mcpp::lockfile::load(lockPath);
-                if (!prior) {
+                // A lock that is not there is not one that differs: read as an
+                // empty lock it named every package as drift (mcpp#891).
+                auto read = mcpp::pm::load_existing(lockPath);
+                if (!read)
                     return std::unexpected(std::format(
-                        "--locked was given and there is no readable mcpp.lock at {}\n"
-                        "       Run the same command without --locked once to record "
-                        "this resolution, then commit mcpp.lock.",
+                        "--locked was given and mcpp.lock cannot be read: {}", read.error().message));
+                if (!*read)
+                    return std::unexpected(std::format(
+                        "--locked was given and there is no mcpp.lock at {}\n"
+                        "       help: run the same command without --locked once to record "
+                        "this resolution, then commit mcpp.lock",
                         lockPath.string()));
-                }
+                const auto& prior = *read;
                 auto key = [](const mcpp::lockfile::LockedPackage& p) {
-                    const std::string sn = lock_short_name(p);
+                    const std::string sn = mcpp::pm::short_name(p);
                     return p.namespace_.empty() ? sn
                                                 : p.namespace_ + "." + sn;
                 };

@@ -101,6 +101,23 @@ struct LockedToolchain {
     std::string version;
 };
 
+// THE NAME OF AN ENTRY IS A KEY OF THE LOCK, NOT THE PACKAGE'S NAME. An index
+// entry is written under the map key its declaring manifest used
+// (`mcpplibs.cmdline` under `[dependencies.mcpplibs]`, `cmdline` under a bare
+// key), so the spelled name may carry its namespace as a prefix; a variant is
+// `<name>+p<digest>` and a version only build programs hold `<name>+b<digest>`,
+// which keep two entries of one package apart.
+//
+// The short name: the key without the namespace's prefix. Two entries of one
+// lock are one identity when their namespace and short name are equal. An entry
+// without a namespace (a git entry, keyed by the root's map key) is its own
+// short name.
+std::string short_name(const LockedPackage& p);
+// The package's name, as a document outside the lock states it: the short name
+// without `+b<digest>`, which the entry's version says there. A variant keeps
+// `+p<digest>`: a patched library is another library, at the same version.
+std::string package_name(const LockedPackage& p);
+
 struct Lockfile {
     int                                 schemaVersion = 2;
     std::vector<LockedIndex>            indices;
@@ -113,7 +130,14 @@ struct LockError {
     std::string message;
 };
 
+// A file that is not there reads as an empty lock: what a resolution wants,
+// which starts from whatever was recorded.
 std::expected<Lockfile, LockError> load(const std::filesystem::path& path);
+// The lock, or nothing when there is no file: what a command that reports or
+// asserts the record reads. An empty lock answered `--locked` and `emit sbom`
+// for a file that was not there, as one that differs and as a project without
+// dependencies (mcpp#891).
+std::expected<std::optional<Lockfile>, LockError> load_existing(const std::filesystem::path& path);
 // Replaces the file atomically (a temporary name beside it, then a rename);
 // an unchanged lock is not rewritten.
 std::expected<void, LockError>     write(const Lockfile& lock, const std::filesystem::path& path);
@@ -143,10 +167,32 @@ namespace mcpp::pm {
 
 namespace t = mcpp::libs::toml;
 
-std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) {
-        return Lockfile{};      // no lock yet
+std::string short_name(const LockedPackage& p) {
+    if (!p.namespace_.empty()) {
+        const std::string prefix = p.namespace_ + ".";
+        if (p.name.size() > prefix.size() && p.name.starts_with(prefix))
+            return p.name.substr(prefix.size());
     }
+    return p.name;
+}
+
+std::string package_name(const LockedPackage& p) {
+    auto name = short_name(p);
+    // Written last, after any `+p<digest>`, and a digest is hexadecimal: the
+    // last `+b` of an entry that lists its programs is the marker.
+    if (!p.programs.empty())
+        if (const auto at = name.rfind("+b"); at != std::string::npos && at != 0) name.erase(at);
+    return name;
+}
+
+std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
+    return load_existing(path).transform([](std::optional<Lockfile>&& lock) {
+        return std::move(lock).value_or(Lockfile{});      // no lock yet
+    });
+}
+
+std::expected<std::optional<Lockfile>, LockError> load_existing(const std::filesystem::path& path) {
+    if (!std::filesystem::exists(path)) return std::optional<Lockfile>{};
     auto doc = t::parse_file(path);
     if (!doc) return std::unexpected(LockError{
         std::format("{}:{}:{}: {}", path.string(), doc.error().where.line,

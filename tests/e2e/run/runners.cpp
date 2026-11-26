@@ -190,6 +190,16 @@ E2E runners{"runners", s::home_fixture, [] {
         expect(fatal(e2e::contains(s::text(r), "differs from mcpp.lock"))) << "the refusal does not say what is wrong: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "9.9.9 -> 0.0.1"))) << "the refusal does not name which package moved, and to what: " << s::text(r);
         q.write("mcpp.lock", lock);
+        // mcpp#891: a lock that is not there is not a lock that differs. The refusal says to
+        // record one, and a refused --locked writes none for the next run to pass against.
+        q.remove("mcpp.lock");
+        r = q.mcpp({"build", "--locked"});
+        expect(fatal(failed(r))) << "--locked accepted a project with no mcpp.lock";
+        expect(fatal(e2e::contains(s::text(r), "there is no mcpp.lock"))) << "the refusal does not say the lock is missing: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "not in the lock"))) << "the refusal reads a missing lock as one that differs: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "help: run the same command without --locked"))) << "the refusal names no next step: " << s::text(r);
+        expect(fatal(!q.exists("mcpp.lock"))) << "a refused --locked wrote mcpp.lock";
+        q.write("mcpp.lock", lock);
         r = q.mcpp({"emit", "sbom", "-o", "sbom.json"});
         expect(fatal(e2e::succeeded(r))) << "mcpp emit sbom: " << s::text(r);
         auto d = s::json_file(q.at("sbom.json"));
