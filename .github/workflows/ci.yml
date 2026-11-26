@@ -276,6 +276,9 @@ jobs:
       - name: The tests wait for a time no more often than the baseline states
         run: bash .github/tools/check_waits.sh
 
+      - name: Paths are resolved to their canonical form no more often than the baseline states
+        run: bash .github/tools/check_path_identity.sh
+
       - name: Only the adapter and the composition root name the provider
         run: python3 .github/tools/check_provider_boundary.py
 

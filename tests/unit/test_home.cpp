@@ -23,11 +23,18 @@ private:
     mcpp::invocation::ScopedEnv inner_;   // stated for this invocation, as mcpp states its own
 };
 
+// The spelling a home is used under (mcpp#1024): absolute and lexically normal,
+// its links kept. `/tmp` and a macOS temporary directory are links, so a
+// resolved spelling would differ.
+std::filesystem::path given(const std::filesystem::path& p) {
+    return std::filesystem::absolute(p).lexically_normal();
+}
+
 }  // namespace
 
 UTest explicit_mcpp_home_wins{"Home/ExplicitMcppHomeWins", [] {
     ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test");
-    const auto expected = std::filesystem::weakly_canonical(std::filesystem::absolute("/tmp/mcpp-home-test"));
+    const auto expected = given("/tmp/mcpp-home-test");
     expect(eq(mcpp::home::root(), expected));
     expect(eq(mcpp::home::cache_root(), expected / "build-cache" / "v1"));
 }};
@@ -110,7 +117,7 @@ UTest default_original_and_effective_are_identical{"HomeSelection/DefaultOrigina
         ~Case() { TearDown(); }
         void body() {
     const auto selected = mcpp::home::selection();
-    expect(eq(selected.original, std::filesystem::weakly_canonical(original)));
+    expect(eq(selected.original, given(original)));
     expect(eq(selected.original, selected.effective));
     expect(!selected.redirected);
 }
@@ -128,8 +135,8 @@ UTest environment_selects_the_locator_and_only_one_hop_is_read{"HomeSelection/En
     locator(original, target);
     locator(target, third);
     const auto selected = mcpp::home::selection();
-    expect(eq(selected.original, std::filesystem::weakly_canonical(original)));
-    expect(eq(selected.effective, std::filesystem::weakly_canonical(target)));
+    expect(eq(selected.original, given(original)));
+    expect(eq(selected.effective, given(target)));
     expect(eq(mcpp::home::cache_root(), selected.effective / "build-cache" / "v1"));
     expect(bool(selected.redirected));
 }
@@ -164,7 +171,7 @@ UTest force_can_repair_a_malformed_locator{"HomeSelection/ForceCanRepairAMalform
     expect(bool(mcpp::home::save(*selected)));
     const auto restored = mcpp::home::inspect(original);
     if (auto&& failed = expect(fatal(bool(restored))); !failed) failed << restored.error();
-    expect(eq(restored->effective, std::filesystem::weakly_canonical(target)));
+    expect(eq(restored->effective, given(target)));
 }
     } fixture;
     fixture.body();
@@ -186,7 +193,7 @@ UTest existing_home_needs_force_and_changing_it_keeps_both_data_trees{"HomeSelec
     expect(eq(mcpp::invocation::get("MCPP_HOME").value_or(""), mcpp::home::spelling(original)));
     const auto restored = mcpp::home::inspect(original);
     expect(fatal(bool(restored)));
-    expect(eq(restored->previous, std::filesystem::weakly_canonical(original)));
+    expect(eq(restored->previous, given(original)));
 }
     } fixture;
     fixture.body();
@@ -204,7 +211,7 @@ UTest returning_to_original_removes_only_the_locator{"HomeSelection/ReturningToO
     expect(fatal(bool(mcpp::home::save(*selected))));
     expect(!std::filesystem::exists(original / "home.toml"));
     expect(std::filesystem::exists(target / "config.toml"));
-    expect(eq(mcpp::home::root(), std::filesystem::weakly_canonical(original)));
+    expect(eq(mcpp::home::root(), given(original)));
 }
     } fixture;
     fixture.body();
@@ -231,7 +238,7 @@ UTest read_only_configuration_does_not_initialize_or_acquire_a_provider{"HomeSel
     ScopedEnv home("MCPP_HOME", mcpp::home::spelling(cold).c_str());
     const auto config = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
     if (auto&& failed = expect(fatal(bool(config))); !failed) failed << config.error().message;
-    expect(eq(config->mcppHome, std::filesystem::weakly_canonical(cold)));
+    expect(eq(config->mcppHome, given(cold)));
     expect(!std::filesystem::exists(cold));
 }
     } fixture;
@@ -294,9 +301,24 @@ UTest unicode_locator_round_trip_does_not_narrow_the_selected_path{"HomeSelectio
     expect(fatal(bool(mcpp::home::save(*selected))));
     const auto restored = mcpp::home::inspect(original);
     if (auto&& failed = expect(fatal(bool(restored))); !failed) failed << restored.error();
-    expect(eq(restored->effective, std::filesystem::weakly_canonical(unicode)));
+    expect(eq(restored->effective, given(unicode)));
     expect(eq(mcpp::home::from_utf8(mcpp::home::spelling(unicode)), unicode));
 }
     } fixture;
     fixture.body();
+}};
+
+// mcpp#1024: a home given through a link is used under that spelling; whether two spellings are
+// one home is a question of identity, which the selection asks.
+UTest a_home_given_through_a_link_keeps_its_spelling{"Home/AHomeGivenThroughALinkKeepsItsSpelling", [] {
+    if constexpr (mcpplibs::os::is_windows) return;   // a directory link needs a privilege there
+    const auto base = std::filesystem::temp_directory_path() / std::format("mcpp-home-link-{}", std::random_device{}());
+    std::filesystem::create_directories(base / "real");
+    std::filesystem::create_directory_symlink(base / "real", base / "link");
+    {
+        ScopedEnv home("MCPP_HOME", (base / "link" / "home").string().c_str());
+        expect(eq(mcpp::home::root(), given(base / "link" / "home")));
+        expect(eq(mcpp::home::cache_root(), given(base / "link" / "home") / "build-cache" / "v1"));
+    }
+    std::filesystem::remove_all(base);
 }};

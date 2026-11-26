@@ -21,6 +21,7 @@ import mcpplibs.mwrap.libc;
 import mcpp.home;
 import mcpp.modgraph.glob;   // try_narrow: the one UTF-8 spelling of a path
 import mcpp.libs.toml;
+import mcpp.libs.path_identity;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
 import nlohmann.json;
@@ -1287,11 +1288,16 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         if (!std::filesystem::exists(mcpp::provider::open(make_xlings_env(cfg))->config_file(), ec)) return false;
         if (!cfg.xlingsHomeOverride.empty())
             return !std::filesystem::equivalent(cfg.xlingsHomeOverride, cfg.registryDir, ec);
-        const auto real = std::filesystem::canonical(cfg.registryDir, ec);
-        if (ec) return false;
-        const auto home = std::filesystem::canonical(cfg.mcppHome, ec);
-        if (ec) return false;
-        const auto rel = real.lexically_relative(home);
+        const auto real = mcpp::libs::path_identity::identity(cfg.registryDir);
+        const auto home = mcpp::libs::path_identity::identity(cfg.mcppHome);
+        if (!real || !home) {
+            mcpp::diag::degraded("config", std::format(
+                "whether the registry {} is a link to another home's could not be read",
+                mcpp::home::spelling(cfg.registryDir)),
+                "it is taken as this home's own, as its spelling says");
+            return false;
+        }
+        const auto rel = real->lexically_relative(*home);
         return rel.empty() || *rel.begin() == "..";
     }();
     for (auto& r : cfg.indexRepos) {

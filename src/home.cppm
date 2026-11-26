@@ -191,11 +191,15 @@ std::filesystem::path from_utf8(std::string_view value) {
 namespace {
 std::optional<Selection> selected_home;
 
+// THE HOME AS IT IS GIVEN (mcpp#1024): absolute and lexically normal, its links
+// and drive aliases kept. Every path derived from it is opened and handed to a
+// program under that spelling; whether two homes are one is a question of
+// identity (mcpp.libs.path_identity), asked where it is asked.
 std::expected<std::filesystem::path, std::string> absolute_home(const std::filesystem::path& path) {
     std::error_code ec;
-    auto result = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec);
+    auto result = std::filesystem::absolute(path, ec);
     if (ec) return std::unexpected(std::format("cannot resolve home '{}': {}", spelling(path), ec.message()));
-    return result;
+    return result.lexically_normal();
 }
 
 bool contains_path(const std::filesystem::path& parent, const std::filesystem::path& child) {
