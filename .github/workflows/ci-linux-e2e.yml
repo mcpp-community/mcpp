@@ -132,6 +132,13 @@ jobs:
           # the global mirror while mcpp's default remains CN for fresh local
           # sandboxes. E2E tests with their own MCPP_HOME read this variable.
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          # 992 packs one image for every system, so it compiles the openkal
+          # stack once per leg. It took 465.6 s on 2026-11-24 (main, green) and
+          # has passed the 600 s limit on every runner since 2026-11-25, with
+          # and without a warm sandbox (main at 5032751e and 5d5c125c fail it
+          # alike). 900 s keeps the hung-test bound and leaves the shard well
+          # inside this step's 22 minutes.
+          export E2E_TEST_TIMEOUT=900
           "$MCPP" self config
           bash tests/e2e/run_all.sh
 
