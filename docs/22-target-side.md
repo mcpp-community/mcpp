@@ -92,6 +92,24 @@ when the C library is also the payload's. A compiler runtime must belong to the
 compiler's own family, since a build in which the two disagree resolves
 `__udivti3` differently from every other link in the same program.
 
+A graph that supplies the C library and no C++ ABI is refused at planning
+(2026.11.27.1+). When the `c-abi` supplier comes from the graph, no package
+supplies `c++-abi`, a unit imports the standard library module and the
+manifest states no `[build] cxx_runtime`, the plan stops with
+`[layer-requirement]` before anything is compiled:
+
+```
+error: the graph supplies the C library (musl, openkal-musl) and no package supplies the C++ ABI.
+       The standard library module is compiled with the toolchain's C++ library, which is
+       built against another C library.
+       help: add a dependency that provides `mcpp:c++-abi`, or state [build] cxx_runtime = "host-coupled"
+```
+
+The remedy names the capability rather than a package: which package provides
+it is a fact of the index. Before, the standard library module's precompile
+failed inside the toolchain's headers (`features.h` not found under GCC 16.1,
+`__config` under LLVM 23.1), and nothing named the decision (mcpp#898).
+
 ### Cross-Origin Wiring
 
 The engine wires two layers together only when they come from different

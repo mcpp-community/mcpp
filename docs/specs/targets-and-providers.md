@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.9 |
-| 版本 | 1.9 |
-| 最后修改 | 2026-11-23 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1；v1.8 条款 mcpp >= 2026.11.22.1；v1.9 条款 mcpp >= 2026.11.23.1 |
+| 状态 | 评审中 v1.10 |
+| 版本 | 1.10 |
+| 最后修改 | 2026-11-27 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1；v1.8 条款 mcpp >= 2026.11.22.1；v1.9 条款 mcpp >= 2026.11.23.1；v1.10 条款 mcpp >= 2026.11.27.1 |
 | 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md`、`.agents/docs/2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
@@ -37,7 +37,8 @@
 
 行的字段：`triple`（`<arch>-<os>[-<env>]`）、`tier`（verified、preview、planned）、`standard`、`exact`、`march`、`mabi`、
 `code-model`、`multilib`、`flags`、`link-emulation`、`clang-triple`、`object-format`、`family`、`data-model`、`exe-suffix`、
-`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`、`exe-suffix-fixed`、`link-without-main`。
+`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`、`exe-suffix-fixed`、`link-without-main`、
+`dlopen-static-tls`。
 
 - 一个系统可能用到两种以上 C 库时，身份**必须**含 env；env 即 C 库。业界原生标识无 env 段的系统，其原生身份为两段
   （`aarch64-macos`），其余 C 库以 env 区分（`aarch64-macos-musl`）。
@@ -61,6 +62,11 @@
 - `link-without-main` 是该行链接没有程序起点的可执行映像（`main = false`，SPEC-004 §14 第 6 条）时加入的链接词。
   未写时该行的可执行映像有程序起点，`main = false` 被拒绝。内置的 `wasm32-emscripten` 行为 `["--no-entry"]`：
   页面调用模块导出的函数，运行时不调用 `main`。程序形态为共享对象的行（Android 行上的 `app`）不读它（v1.7）。
+- `dlopen-static-tls` 是该行的加载器从静态 TLS 块中为一个以 `dlopen` 加载、其对象使用 initial-exec 模型（`DF_STATIC_TLS`）
+  的映像提供的字节数，正整数。链接之后，TLS 段超过它的共享映像**必须**被报告；其精确 `exports`（SPEC-004 §11 第 7 条）
+  表明宿主按名字进入它时**必须**被拒绝（`static-tls-image`）。未写时不检查。内置的 glibc 行（`x86_64-linux-gnu`、
+  `aarch64-linux-gnu`、`i686-linux-gnu`）为 512，即 glibc 2.32 起 `glibc.rtld.optional_static_tls` 的缺省值。引擎不按
+  C 库或系统的名字判断（v1.10）。
 - `object-format`、`exe-suffix`、`shared-suffix` 按三级读取，先陈述者生效：行，行的系统（§2.3），对象格式的约定（v1.5）。
   内置行与平台定义的行同一读法；引擎不按系统名判断，宿主的命名不为任何行作答。
 
@@ -279,4 +285,5 @@
 | 1.6 | 2026-11-19 | mcpp 2026.11.19.1（mcpp#957）：§6 执行可达性的谓词之前没有按系统的分支；Apple 的行由同一个谓词判定；系统名检查的词表含三元组的系统谓词 |
 | 1.7 | 2026-11-20 | mcpp 2026.11.20.1（mcpp#981）：行的 `link-without-main`，没有程序起点的可执行映像的链接词；内置 `wasm32-emscripten` 行为 `--no-entry` |
 | 1.8 | 2026-11-22 | mcpp 2026.11.22.1（设计 2026-11-22 §4）：`i686-windows-msvc` 为 preview 行；执行关系表中 `windows-x86_64` 执行 `i686`（§2.4）。 |
+| 1.10 | 2026-11-27 | mcpp 2026.11.27.1（mcpp#907）：行的 `dlopen-static-tls`；内置 glibc 行为 512 |
 | 1.9 | 2026-11-23 | mcpp 2026.11.23.1（设计 2026-11-22 §3.4、§3.17）：系统表的 `kernel-abi`（测量、载荷布局、包）与 `interfaces`；`MCPP_KERNEL_ABI_INTERFACES` 在系统供给该层时取系统表的 `interfaces`；裸机行的 `--target` 取 `clang-triple`，平台定义的裸机行不写机器描述时也给出目标（mcpp#1006）；平台定义的行取其提供者的 `linkage` |

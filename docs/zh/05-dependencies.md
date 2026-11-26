@@ -308,6 +308,14 @@ asio = "1.38.1"
 第三种写法会明确报错，指出实际尝试过的 `(mcpplibs, asio)` 身份；该短名若存在
 于别处，错误信息会给出一个可直接复制的显式选择器。
 
+**`mcpp add` 写出的形式（2026.11.27.1+）。** 它按表中该命名空间已有的形式写入：已有 `[dependencies.<ns>]` 表头时，
+写为该节中的短键；否则写为 `[dependencies]` 中的点号键 `<ns>.<名>`；缺省命名空间的包写裸键。`--dev` 写入
+`[dev-dependencies]`，`--build` 写入 `[build-dependencies]`；`mcpp remove` 接受同样的旗标，不带时从
+`[dependencies]` 移除。点号键已经定义了一个表之后又用表头重新打开它——`[dependencies]` 下有 `compat.libpng`，
+其后又写 `[dependencies.compat]`——是同一个表定义了两次，TOML 1.0 与每个严格的读者（toml++、Python 的
+`tomllib`）都拒绝。mcpp 把两者合并读取，并报告弃用项 `reopened-dotted-table`（[docs/51](51-supported-versions.md)）；
+下一次对该表执行 `mcpp add` 时，表头下的条目被改写为点号键。
+
 #### 裸名过渡期（`2026.8.10.1` 起，`2026.9` 移除）
 
 索引里每一个已发布的 `compat.*` 包，以及精确身份出现之前写下的每一份
@@ -479,6 +487,11 @@ gtest = "1.15.2"
 tomlplusplus = "3.4.0"                                    # build.mcpp 导入的库
 protobuf     = { version = "35.1", tools = ["protoc"] }   # 构建期间运行的程序
 ```
+
+`mcpp add --build <包>@<版本>` 在这里写入一条依赖（2026.11.27.1+）。一个包是不是构建插件由它的源文件回答——它的库
+导入 `mcpp.core`——而 `mcpp add` 手里只有包的描述符，因此它不猜：不带 `--build` 时写入 `[dependencies]`，写在那里的
+插件在第一次构建时被指出（下文的 `host-module-in-dependencies`），并给出移动它的两条命令 `mcpp remove <包>` 与
+`mcpp add --build <包>@<版本>`。
 
 一条依赖由两条轴描述（mcpp 2026.10.11.1+，SPEC-004 §12），每条轴在清单中有自己的位置。
 

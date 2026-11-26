@@ -61,7 +61,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
-- [陈述的闭包、单一读者与六项功能:十四项缺陷的收敛设计](2026-11-27-stated-closure-single-reader-and-feature-designs.md) — active
+- [陈述的闭包、单一读者与六项功能:十四项缺陷的收敛设计](2026-11-27-stated-closure-single-reader-and-feature-designs.md) — landed
 - [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active
 - [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
@@ -217,7 +217,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
-- [陈述的闭包、单一读者与六项功能:十四项缺陷的收敛设计](2026-11-27-stated-closure-single-reader-and-feature-designs.md) — active
+- [陈述的闭包、单一读者与六项功能:十四项缺陷的收敛设计](2026-11-27-stated-closure-single-reader-and-feature-designs.md) — landed
 - [clang BMI 的截断与私有模块片段判定的收窄](2026-11-26-clang-bmi-cutoff-and-private-fragment-refinement-design.md) — active
 - [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
 - [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active

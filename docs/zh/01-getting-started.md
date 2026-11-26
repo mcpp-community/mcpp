@@ -70,6 +70,23 @@ mcpp --version
 > 命令安装，重启 PowerShell 而不是执行 `source`，并用
 > `Get-Command mcpp.exe` 确认当前生效的命令。
 
+### Shell 补全（2026.11.27.1+）
+
+`mcpp self completion` 把一种 shell 的补全脚本——`bash`、`zsh`、`fish` 或 `powershell`，由参数指名、取自
+`SHELL`，或在 `SHELL` 未设置而 `PSModulePath` 已设置时为 `powershell`——写到 `<home>/config/shell/`，并打印加载它的那一行。这一行写进 shell 自己的配置文件，mcpp 不修改该文件：
+
+```
+$ mcpp self completion bash
+       Wrote /home/user/.mcpp/config/shell/mcpp.bash
+source '/home/user/.mcpp/config/shell/mcpp.bash'   # in ~/.bashrc
+```
+
+脚本中没有 mcpp 的任何命令：它把光标之前的词交给 `mcpp __complete`，由 mcpp 按自己的命令树回答，因此之后的版本
+新增的命令或选项用同一个脚本即可补全。除子命令与选项之外，回答还包括当前目录清单中的 profile 与成员、`mcpp remove`
+可接受的依赖、mcpp 有其行的目标、home 中已安装的工具链（`gcc@16.1.0`）以及本地索引副本中的包；包按依赖键的写法给出：
+缺省命名空间的包给出裸名，所补全的词以 `mcpplibs.` 开头时给出限定名。补全只读取磁盘上已有的内容：不初始化 home，
+不写入任何文件，也不下载任何东西。`--print` 把脚本写到标准输出而不是 home。
+
 ## 创建项目
 
 ```bash

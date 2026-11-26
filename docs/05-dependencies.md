@@ -376,6 +376,19 @@ The third form fails with an error that names the exact `(mcpplibs, asio)`
 identity that was tried and, when the short name exists elsewhere, gives a
 copyable explicit selector.
 
+**What `mcpp add` writes (2026.11.27.1+).** It writes into the form the table
+already uses for the namespace: the short key under a `[dependencies.<ns>]`
+header when there is one, and otherwise the dotted key `<ns>.<name>` in
+`[dependencies]`; a package of the default namespace is a bare key. `--dev`
+writes `[dev-dependencies]` and `--build` writes `[build-dependencies]`;
+`mcpp remove` takes the same flags and removes from `[dependencies]` without
+them. A header that reopens a table dotted keys already defined — `compat.libpng`
+under `[dependencies]`, then `[dependencies.compat]` — is a table defined twice,
+which TOML 1.0 and every strict reader (toml++, Python's `tomllib`) refuse.
+mcpp reads it as the union of the two and reports the deprecation
+`reopened-dotted-table` ([docs/51](51-supported-versions.md)); the next `mcpp add`
+to that table writes the header's entries as dotted keys.
+
 #### Migration window for bare names (`2026.8.10.1` → removed in `2026.9`)
 
 Every published `compat.*` package and every manifest written before exact
@@ -563,6 +576,14 @@ library without a cycle of packages.
 tomlplusplus = "3.4.0"                                    # a library build.mcpp imports
 protobuf     = { version = "35.1", tools = ["protoc"] }   # a program the build runs
 ```
+
+`mcpp add --build <package>@<version>` writes an entry here (2026.11.27.1+).
+Whether a package is a build plugin is answered by its sources — its library
+imports `mcpp.core` — so `mcpp add`, which has only the package's descriptor,
+does not guess: without `--build` it writes `[dependencies]`, and the first
+build of a plugin written there says so (`host-module-in-dependencies`, below)
+with the two commands that move it, `mcpp remove <package>` and
+`mcpp add --build <package>@<version>`.
 
 A dependency is described on two axes (mcpp 2026.10.11.1+, SPEC-004 §12), and
 each axis has its own place in the manifest.

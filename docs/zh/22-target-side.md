@@ -80,6 +80,20 @@ C 库、平台接口与 C++ 运行时是互斥的选择，不是可叠加的贡�
 编译器运行时必须属于编译器自身所在的族，因为如果两者不一致，这次构建解析
 `__udivti3` 的方式，会与同一程序中其它每一次链接不同。
 
+依赖图提供 C 库而没有提供 C++ ABI 时，规划拒绝（2026.11.27.1+）。`c-abi` 的供给者来自依赖图、没有包提供
+`c++-abi`、有单元导入标准库模块、清单又没有陈述 `[build] cxx_runtime` 时，计划在任何编译之前以
+`[layer-requirement]` 停止：
+
+```
+error: the graph supplies the C library (musl, openkal-musl) and no package supplies the C++ ABI.
+       The standard library module is compiled with the toolchain's C++ library, which is
+       built against another C library.
+       help: add a dependency that provides `mcpp:c++-abi`, or state [build] cxx_runtime = "host-coupled"
+```
+
+补救指名能力而不指名包：哪个包提供它是索引的事实。此前标准库模块的预编译在工具链的头文件中失败（GCC 16.1 下
+找不到 `features.h`，LLVM 23.1 下找不到 `__config`），没有任何信息指出是哪个决定造成的（mcpp#898）。
+
 ### 跨来源接线
 
 引擎只在两层来自不同来源时才为它们接线。

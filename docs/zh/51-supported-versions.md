@@ -72,6 +72,9 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 | `no-universal-flag`：`mcpp pack --no-universal`，单目标打包不再需要它（与目标集合同用时拒绝） | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>`（一条腿） |
 | `quoted-dotted-dependency-key`：带点的加引号依赖键（`"mcpplibs.cmdline" = "0.0.2"`），即一个 TOML 键，按其中的点所拼写的选择器读取；它是一个包与其父包或子包并列时的唯一写法时除外（docs/05） | 2026.11.8.1 | 2027.2 | 不加引号的选择器 `mcpplibs.cmdline = "0.0.2"` |
 | `ambiguous-contract-name`：构建程序以一个名字提问（`dep_dir`、`dep_linkage`、`dep_bin`、`xpkg_dir`），该名字的契约变量由多个依赖或载荷回答，回答为其中的第一个 | 2026.11.21.1 | 2027.2 | 精确的拼写：限定名，或 `xpkg_dir("<ns>", "<name>")`；没有可区分的拼写时，改名其中一个包 |
+| `reopened-dotted-table`：点号键定义了一个表之后，又由 `[表头]` 重新打开它（`[dependencies]` 下写了 `compat.libpng = ...` 之后又写 `[dependencies.compat]`），TOML 1.0 不允许 | 2026.11.27.1 | 2027.3 | 把表头下的条目写成它所扩展的表中的点号键，`compat.zlib = ...`；下一次对该表执行 `mcpp add` 时即如此改写 |
+| `implicit-default-environment`：未陈述环境的工程使用机器缺省环境中已安装内容的并集：其库进入运行期搜索路径与链接期的 `--sysroot`，其 `bin` 进入测试子进程的 PATH（Windows 除外） | 2026.11.27.1 | 2027.3 | 依赖提供该库或工具的包，或写 `[xlings] subos = "default"` 陈述使用共享环境 |
+| `unmatched-exact-export`：`exports` 中不含通配符、却指名共享镜像未定义之符号的条目，被无声地从发布集合中去掉 | 2026.11.27.1 | 2027.3 | 镜像所定义的名字（C++ 名字写修饰后的形式，或以 `extern "C"` 声明该函数），或把该条目写到定义它的 `[target.<selector>]` 下 |
 
 ## 复现一次构建
 

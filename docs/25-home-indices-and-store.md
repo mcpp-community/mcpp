@@ -98,6 +98,21 @@ For a redirected home it names the effective target before resetting it.
 `--system self init --home` is refused. The exact selection and persistence
 rules are in [SPEC-010](specs/home-initialization.md).
 
+**The home keeps the spelling it is given (2026.11.27.1+).** A home named
+through a symbolic link is used under that name: mcpp makes the path absolute
+and lexically normal, and opens files and starts programs under it, so `mcpp
+self env` and every path handed to a tool show the directory the user named.
+The physical path decides only whether two paths are one object -- a home
+borrowed from an upstream, a project inside the home. When that cannot be
+decided, because a parent directory is not accessible, the comparison falls
+back to the spelling and the build reports it as degraded, naming the
+decision. A key built from a path (a cache entry's user, a plan's work
+directory) uses the spelling too: two spellings of one tree make two keys,
+which costs one more entry and gives no wrong result. Before, the home was
+resolved to its physical path when it was read (mcpp#1024). A check in CI holds
+the number of physical-path calls outside the one identity function to a
+baseline that only shrinks.
+
 ### Initialization and network diagnosis (2026.10.19.1+)
 
 `self env`, `self config`, `self doctor` and `toolchain list` read local state

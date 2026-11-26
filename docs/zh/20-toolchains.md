@@ -1724,18 +1724,13 @@ rpath——所以在 ELF 上，这类产物仍可能优先找到工具链自己�
 `-D<x>`，同时作用于 C 与 C++ 两条编译通道。它覆盖包内每一个翻译
 单元——包括模块接口单元——因此也会进入编译器自己的 P1689 模块扫描。
 
-> **但它不会让被宏保护的 `import` 变得可用。** mcpp 会在编译器看到文件
-> 之前先跑自己的词法预扫描，而那个扫描器对**任何** `#if` / `#ifdef`
-> 块内的 `import` 一律拒绝，不会对条件求值：
->
-> ```
-> error: import statement inside conditional preprocessor block (forbidden in M1)
-> ```
->
-> 所以即使 `FOO` 写在 `defines` 里，`#ifdef FOO` / `import bar;` 这一对
-> 仍然会失败。替代写法是把条件放在全局模块片段里的一个 `#include` 上。
-> 跟踪于 mcpp-community/mcpp#421。汇编单元同样会拿到它。它是一个普通的
-构建输入，所以 `[target.'cfg(...)'.build]` 也能承载它：
+> **被宏保护的 `import` 随其条件生效（2026.11.27.1+）。** mcpp 的词法预扫描把 `import` 位于 `#if` / `#ifdef`
+> 块内的单元标记出来，这个单元的导入取自编译器的依赖扫描，扫描使用该单元自己的编译词，包括 `defines`。因此
+> `#ifdef FOO` / `import bar;` 这一对恰在 `FOO` 被定义时导入 `bar`（GCC 上如此，Clang 上经 `clang-scan-deps`；
+> MSVC 没有规划期的扫描，这样的单元被拒绝）。头单元仍被拒绝。2026.11.27.1 之前，预扫描拒绝每一个这样的单元
+> （mcpp#421、mcpp#1026）。
+
+汇编单元同样会拿到 `defines`。它是一个普通的构建输入，所以 `[target.'cfg(...)'.build]` 也能承载它：
 
 ```toml
 [build]
