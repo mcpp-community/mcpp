@@ -95,6 +95,10 @@ enum class Code {
     // name or a stated `soname`): the loader loads the first it finds for
     // both (mcpp#975).
     SonameCollision,
+    // An image's `DT_NEEDED` is not answered at load time by the file its link
+    // read for it: no file answers it, or another file of that name does
+    // (design 2026-11-27 §4.1, mcpp#537).
+    RuntimeClosure,
     // Two declarations name one xlings package at versions that cannot both
     // hold. Distinct from VersionFloorUnmet, which is about the machine: this
     // one is about two manifests disagreeing over a tool.
@@ -266,6 +270,7 @@ constexpr std::string_view name(Code c) {
                                          return "device-source-unconsumed";
         case Code::HostModuleMissing:    return "host-module-missing";
         case Code::SonameCollision:      return "soname-collision";
+        case Code::RuntimeClosure:       return "runtime-closure";
         case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::SharedLibraryCxxRuntime:
                                          return "shared-library-cxx-runtime";

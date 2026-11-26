@@ -34,6 +34,7 @@ import mcpp.diag;
 import mcpp.build.advice;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
+import mcpp.build.refusal;
 import mcpp.pm.compat.registry;
 import mcpp.modgraph.p1689;
 import mcpp.toolchain.model;
@@ -1016,6 +1017,43 @@ std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bo
 // COMPAT(unmatched-exact-export): such a name was dropped without a word
 // before 2026.11.27.1. Until the row's floor it is reported, and from the floor
 // it fails the build.
+// WHAT EACH LINK READ (SPEC-004 §8.1), as ninja keeps it: the link's dependency
+// file is read into `.ninja_deps` and removed, so it is asked of ninja, once,
+// for the artifacts a build is about to validate. An artifact whose link
+// reports nothing is absent.
+mcpp::build::runtime_validation::LinkInputs
+link_inputs(const BuildPlan& plan, const std::string& ninjaProgram,
+            const mcpp::build::runtime_validation::ArtifactSnapshot& artifacts) {
+    mcpp::build::runtime_validation::LinkInputs out;
+    if (artifacts.empty() || ninjaProgram.empty()) return out;
+    std::vector<std::string> argv{ninjaProgram, "-C", plan.outputDir.string(), "-t", "deps"};
+    for (auto const& [artifact, _] : artifacts) {
+        std::error_code ec;
+        auto rel = std::filesystem::relative(artifact, plan.outputDir, ec);
+        if (!ec && !rel.empty()) argv.push_back(rel.generic_string());
+    }
+    if (argv.size() == 5) return out;
+    auto r = mcpp::run::capture_stdout(argv);
+    if (r.exit_code != 0) return out;
+    // `<target>: #deps N, deps mtime T (VALID)` and then the inputs, indented.
+    std::vector<std::filesystem::path>* at = nullptr;
+    for (auto const lineRange : std::views::split(std::string_view(r.output), '\n')) {
+        std::string_view line(lineRange);
+        if (line.empty()) { at = nullptr; continue; }
+        if (line.front() != ' ') {
+            const auto colon = line.find(": #deps");
+            at = colon == std::string_view::npos ? nullptr
+               : &out[(plan.outputDir / std::string(line.substr(0, colon))).lexically_normal()];
+            continue;
+        }
+        if (!at) continue;
+        while (!line.empty() && line.front() == ' ') line.remove_prefix(1);
+        std::filesystem::path p{std::string(line)};
+        at->push_back(p.is_absolute() ? p : plan.outputDir / p);
+    }
+    return out;
+}
+
 void report_unmatched_exact_exports(const BuildPlan& plan) {
     const auto tr = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
     const std::string os = tr ? tr->os : (mcpplibs::os::is_macos ? "macos" : mcpplibs::os::is_windows ? "windows" : "linux");
@@ -5612,7 +5650,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (ok) {
         auto runtimeReport =
             mcpp::build::runtime_validation::validate_changed_artifacts(
-                plan, runtimeBefore);
+                plan, runtimeBefore, link_inputs(plan, ninjaProgram, runtimeBefore));
         stage("runtime-validate");
         std::string runtimeFailure;
         std::filesystem::path runtimeFailureArtifact;
@@ -5623,6 +5661,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             // and a DT_NEEDED the artifact's own loader will never find are
             // both "this artifact is known bad", and enumerating them here is
             // how one of them gets forgotten.
+            // A `DT_NEEDED` nothing answers is the closure's refusal as much
+            // as one another file answers (design 2026-11-27 §4.1).
+            if (checked.verdict.status == Status::Unresolvable)
+                mcpp::build::refusal::record(mcpp::build::refusal::Code::RuntimeClosure);
             if (checked.verdict.blocking()) {
                 if (runtimeFailure.empty()) {
                     runtimeFailureArtifact = checked.artifact;
