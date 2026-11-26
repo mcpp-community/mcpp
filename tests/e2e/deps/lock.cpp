@@ -77,6 +77,8 @@ E2E lock{"lock", s::home_fixture, [] {
         mk_pkg("im", "{ [\"1.92.8\"] = { url = \"u\", sha256 = \"0\" },\n              [\"1.92.8-docking\"] = { url = \"u\", sha256 = \"0\" } }");
         mk_pkg("jdk", "{ [\"latest\"] = { ref = \"25.0.4.7.1\" },\n              [\"25.0.4\"] = { ref = \"25.0.4.7.1\" },\n              [\"25.0.4.7.1\"] = { url = \"u\", sha256 = \"0\" } }");
         mk_pkg("kh", "{ [\"latest\"] = { ref = \"pre-v0.0.5\" },\n              [\"pre-v0.0.5\"] = { url = \"u\", sha256 = \"0\" } }");
+        // compat.glad's shape: the only key is a pre-release (mcpp#370).
+        mk_pkg("pre", "{ [\"0.0.0-651a425\"] = { url = \"u\", sha256 = \"0\" } }");
         mk_pkg("tie", "{ [\"1.0.0+a\"] = { url = \"u\", sha256 = \"0\" },\n              [\"1.0.0+b\"] = { url = \"u\", sha256 = \"0\" } }");
         mk_pkg("dv", "{ [\"1.0.0\"] = { url = \"u\", sha256 = \"0\" } }", "devkit");
         // Payloads seeded so that only the right key can install.
@@ -119,6 +121,17 @@ E2E lock{"lock", s::home_fixture, [] {
         auto b5b = build();
         expect(failed(b5b)) << "expected the unseeded payload to fail";
         expect(s::no_line(s::text(b5b), "invalid version constraint|not ordered versions")) << "'=<unorderable key>' must resolve to that key";
+        // mcpp#370: no range reaches a package whose one key is a pre-release; the refusal
+        // states that and its help line is the pin, which resolves.
+        use_dep("pre", "*");
+        auto b5c = build();
+        expect(failed(b5c)) << "'*' must not reach a pre-release";
+        expect(e2e::contains(s::text(b5c), "0.0.0-651a425 is a pre-release")) << "the refusal does not say why '*' matches none: " << s::text(b5c);
+        expect(e2e::contains(s::text(b5c), "help: pin it exactly: acme.pre = \"0.0.0-651a425\"")) << "the refusal does not name the pin: " << s::text(b5c);
+        use_dep("pre", "0.0.0-651a425");
+        auto b5d = build();
+        expect(failed(b5d)) << "expected the unseeded payload to fail";
+        expect(s::lacks(s::text(b5d), "matches none of")) << "the pin the refusal names must resolve: " << s::text(b5d);
         use_dep("tie", "^1.0");
         auto b6 = build();
         expect(failed(b6)) << "a tie must not silently pick one";

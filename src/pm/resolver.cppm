@@ -245,6 +245,27 @@ resolve_semver(std::string_view ns, std::string_view shortName,
         if (!unorderable.empty())
             msg += std::format("\n  (also published, but not orderable: [{}]){}",
                                join(unorderable), pin_hint(unorderable));
+        // A PRE-RELEASE OF A VERSION THE RANGE ADMITS (mcpp#370). A range
+        // reaches a pre-release only when it names one of the same version
+        // (version_req), so no `*` and no `^0.0` reaches a package whose one
+        // key is `0.0.0-651a425`, and the list above then shows a key that
+        // reads as if it had to match. The cause is stated for the highest
+        // such key, with the pin that reaches it. A key the range sees and
+        // excludes, or one whose release it excludes as well, is an ordinary
+        // miss and gets no line.
+        std::optional<std::size_t> held;
+        for (std::size_t i = 0; i < parsed.size(); ++i) {
+            if (!parsed[i].isPrerelease() || vr::prerelease_visible(*req, parsed[i])) continue;
+            auto release = parsed[i];
+            release.prerelease.clear();
+            if (vr::matches(*req, release) && (!held || parsed[*held] < parsed[i])) held = i;
+        }
+        if (held)
+            msg += std::format(
+                "\n  {0} is a pre-release, which a range matches only when it names "
+                "a pre-release of the same version"
+                "\n  help: pin it exactly: {1} = \"{0}\"",
+                literals[*held], qname);
         return std::unexpected(msg);
     }
     if (best.size() > 1) {
