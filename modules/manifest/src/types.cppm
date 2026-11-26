@@ -2795,6 +2795,13 @@ struct Manifest {
     // --strict, escalates them to errors — mirroring the feature/platform path.
     std::vector<std::string>    schemaWarnings;
 
+    // The tables the text defines by a `[header]` and by dotted keys both
+    // (`[dependencies.compat]` after `compat.libpng = ...` under
+    // `[dependencies]`), as dotted paths. TOML 1.0 refuses the file; mcpp reads
+    // it, which an older `mcpp add` relied on (mcpp#964), and reports it as
+    // COMPAT(reopened-dotted-table).
+    std::vector<std::string>    reopenedTables;
+
     // `[package.metadata]`, as a JSON object text; empty when the manifest has
     // none (#647 E1).
     //

@@ -329,13 +329,19 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `mcpp add` and scaffold injection share one structured, source-preserving
     // editor. Default identities go under [dependencies]; foreign/nested
     // identities use [dependencies.<namespace>] with the short key.
-    const bool dev = parsed.is_flag_set("dev");
-    const std::string table = dev ? "dev-dependencies" : "dependencies";
+    if (parsed.is_flag_set("dev") && parsed.is_flag_set("build")) {
+        mcpp::ui::error("--dev and --build name two tables; give one");
+        return 2;
+    }
+    const auto tableKind = parsed.is_flag_set("build") ? mcpp::manifest::DependencyTableKind::Build
+                         : parsed.is_flag_set("dev")   ? mcpp::manifest::DependencyTableKind::Dev
+                                                       : mcpp::manifest::DependencyTableKind::Normal;
+    const std::string table(mcpp::manifest::dependency_table_name(tableKind));
     auto edited = mcpp::manifest::upsert_dependency_text(ss.str(), {
         .namespace_ = ns,
         .shortName = shortName,
         .version = version,
-        .dev = dev,
+        .table = tableKind,
     });
     if (!edited) {
         mcpp::ui::error(edited.error());
@@ -420,121 +426,30 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
             name, canonicalSelector));
     }
 
-    bool changed = false;
-    // The entry's whole value goes: an inline table written over several
-    // lines (TOML 1.1) ends where its braces close, not at the first newline.
-    auto erase_line_at = [&](std::size_t p) {
-        auto bol = text.rfind('\n', p);
-        if (bol == std::string::npos) bol = 0; else ++bol;
-        const auto eol = mcpp::manifest::assignment_end(text, bol);
-        text.erase(bol, (eol - bol) + (eol < text.size() ? 1 : 0));
-        changed = true;
-    };
-
-    // Try the flat form first: a bare default key or a retained quoted dotted
-    // key from an older manifest. Search only the exact [dependencies] body;
-    // a global line match can otherwise delete a same-name dev/build dep that
-    // happens to appear earlier in the file.
-    if (auto headerPos = text.find("[dependencies]");
-        headerPos != std::string::npos) {
-        auto bodyStart = text.find('\n', headerPos);
-        if (bodyStart == std::string::npos) bodyStart = text.size();
-        auto sectionEnd = text.find("\n[", bodyStart);
-        if (sectionEnd == std::string::npos) sectionEnd = text.size();
-        for (const auto& needle : {
-                 std::format("\n{} = ", singleTableKey),
-                 std::format("\n\"{}\" = ", singleTableKey),
-             }) {
-            auto p = text.find(needle, bodyStart);
-            if (p == std::string::npos || p >= sectionEnd) continue;
-            erase_line_at(p + 1);
-            break;
-        }
+    // The editor that `mcpp add` writes through, and the table the flags name.
+    if (parsed.is_flag_set("dev") && parsed.is_flag_set("build")) {
+        mcpp::ui::error("--dev and --build name two tables; give one");
+        return 2;
     }
-
-    auto erase_from_subtable = [&](const std::string& tableNs,
-                                   const std::string& tableShort) {
-        auto sectHeader = std::format("[dependencies.{}]", tableNs);
-        if (auto sp = text.find(sectHeader); sp != std::string::npos) {
-            auto bodyStart = text.find('\n', sp);
-            if (bodyStart == std::string::npos) bodyStart = text.size();
-            auto sectEnd = text.find("\n[", bodyStart);
-            if (sectEnd == std::string::npos) sectEnd = text.size();
-            std::string section = text.substr(bodyStart, sectEnd - bodyStart);
-            for (const auto& needle : {
-                std::format("\n{} = ", tableShort),
-                std::format("\n\"{}\" = ", tableShort),
-            }) {
-                if (auto p = section.find(needle); p != std::string::npos) {
-                    auto absStart = bodyStart + p + 1;
-                    erase_line_at(absStart);
-                    break;
-                }
-            }
-            // If the subtable now contains no `name = ...` lines, drop it.
-            auto headerPos = text.find(sectHeader);
-            if (changed && headerPos != std::string::npos) {
-                auto bodyAfter = text.find('\n', headerPos);
-                auto endAfter  = text.find("\n[", bodyAfter == std::string::npos ? headerPos : bodyAfter);
-                if (endAfter == std::string::npos) endAfter = text.size();
-                std::string body = text.substr(bodyAfter == std::string::npos ? headerPos : bodyAfter,
-                                                endAfter - (bodyAfter == std::string::npos ? headerPos : bodyAfter));
-                bool hasEntry = false;
-                std::size_t i = 0;
-                while (i < body.size()) {
-                    auto j = body.find('\n', i);
-                    auto line = body.substr(i, (j == std::string::npos ? body.size() : j) - i);
-                    auto first = line.find_first_not_of(" \t");
-                    if (first != std::string::npos
-                        && line[first] != '#' && line[first] != '\n'
-                        && line[first] != '[') {
-                        hasEntry = true; break;
-                    }
-                    if (j == std::string::npos) break;
-                    i = j + 1;
-                }
-                if (!hasEntry) {
-                    auto headerLineStart = text.rfind('\n', headerPos);
-                    if (headerLineStart == std::string::npos) headerLineStart = 0;
-                    text.erase(headerLineStart, endAfter - headerLineStart);
-                }
-            }
-        }
-    };
-
-    // Try the namespaced subtable form `[dependencies.<ns>] <short> = `.
-    // After deleting the dep line, prune the `[dependencies.<ns>]` header
-    // if no entries remain under it.
-    if (!isDefaultNs) {
-        erase_from_subtable(ns, shortName);
+    const auto table = parsed.is_flag_set("build") ? mcpp::manifest::DependencyTableKind::Build
+                     : parsed.is_flag_set("dev")   ? mcpp::manifest::DependencyTableKind::Dev
+                                                   : mcpp::manifest::DependencyTableKind::Normal;
+    const auto tableName = mcpp::manifest::dependency_table_name(table);
+    auto removed = mcpp::manifest::remove_dependency_text(text, ns, shortName, table);
+    if (!removed) {
+        mcpp::ui::error(removed.error());
+        return 2;
     }
-
-    // Legacy: `[dependencies.<name>] ...` — pre-namespace inline-spec subtable
-    // shape (e.g. when path/git deps were authored as their own subtable). We
-    // only honour this for the default-ns input form to avoid colliding with
-    // the new `[dependencies.<ns>]` namespacing semantics.
-    if (!changed && isDefaultNs) {
-        auto block = std::format("[dependencies.{}]", shortName);
-        if (auto p = text.find(block); p != std::string::npos) {
-            auto bol = text.rfind('\n', p);
-            if (bol == std::string::npos) bol = 0; else ++bol;
-            auto end = text.find("\n[", p + block.size());
-            if (end == std::string::npos) end = text.size();
-            else                          end += 1;
-            text.erase(bol, end - bol);
-            changed = true;
-        }
-    }
-
-    if (!changed) {
+    if (!*removed) {
         mcpp::ui::error(std::format(
-            "no dependency '{}' in mcpp.toml", canonicalSelector));
+            "no dependency '{}' in [{}] of mcpp.toml", canonicalSelector, tableName));
         return 1;
     }
+    text = std::move(**removed);
     std::ofstream os(manifestPath);
     os << text;
     mcpp::ui::status("Removing", std::format(
-        "{} from dependencies", canonicalSelector));
+        "{} from {}", canonicalSelector, tableName));
     // Also clean lockfile entry if present
     auto lockPath = *root / "mcpp.lock";
     if (std::filesystem::exists(lockPath)) {

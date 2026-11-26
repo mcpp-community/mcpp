@@ -110,6 +110,14 @@ inline constexpr Deprecation kDeprecations[] = {
         "build-program/deprecated", "docs/30-build-mcpp.md",
     },
     {
+        "reopened-dotted-table", "2026.11.27.1", "2027.3",
+        "a table that a `[header]` reopens after dotted keys defined it (`[dependencies.compat]` "
+        "after `compat.libpng = ...` under `[dependencies]`), which TOML 1.0 refuses",
+        "the header's entries as dotted keys of the table they extend, `compat.zlib = ...`; "
+        "the next `mcpp add` to that table writes them so",
+        "manifest/deprecated", "docs/05-dependencies.md",
+    },
+    {
         "no-universal-flag", "2026.10.30.1", kRemovalFloor,
         "`mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a "
         "target set)",

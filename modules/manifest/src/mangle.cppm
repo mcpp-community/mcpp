@@ -20,6 +20,7 @@
 export module mcpp.pm.mangle;
 
 import std;
+import mcpp.libs.code_text;
 
 export namespace mcpp::pm {
 
@@ -36,7 +37,9 @@ std::string mangle_name(std::string_view base, std::string_view version);
 
 // Primary module roots declared by source text, in first-seen order. Partition
 // declarations return their owning root; imports, global module fragments and
-// bare partition declarations are ignored.
+// bare partition declarations are ignored. The text is read as code
+// (mcpp.libs.code_text): `export module x;` inside a raw string or a comment
+// declares nothing, as it declares nothing to the compiler (mcpp#963).
 std::vector<std::string> declared_module_roots(std::string_view source);
 
 // The module names a source IMPORTS, in order of appearance, deduplicated.
@@ -45,16 +48,14 @@ std::vector<std::string> declared_module_roots(std::string_view source);
 // imports (`import :P;`) yield nothing, because none of them names a module
 // another package could provide.
 //
-// Same line-based matcher as `declared_module_roots`, and the same limits:
-// the keyword must open a logical line, so a declaration quoted inside a
-// comment whose line starts with `import` is read as one. That is acceptable
-// for its one caller -- a diagnostic that suggests a package, and suggests
-// nothing when the name matches none.
+// The same matcher as `declared_module_roots`, over the same code text: the
+// keyword opens a line of code, so an `import` inside a comment or a literal is
+// not one.
 std::vector<std::string> imported_module_names(std::string_view source);
 
 // The headers a source includes, as written with their delimiters (`<cstdio>`, `"emit.hpp"`), in
-// order of appearance, deduplicated. The same line-based matcher: `#include` must open a logical
-// line, so one behind `//` is not read; `#include MACRO` names nothing and yields nothing.
+// order of appearance, deduplicated. The same matcher: `#include` opens a line of code, so one in
+// a comment or a raw string is not read; `#include MACRO` names nothing and yields nothing.
 std::vector<std::string> included_headers(std::string_view source);
 
 // Rewrite a single .cppm file's module / import declarations:
@@ -68,10 +69,10 @@ std::vector<std::string> included_headers(std::string_view source);
 // (`module ;`) are also left intact — they don't name the enclosing
 // module so they need no rewriting.
 //
-// Single-line comments and string literals are not parsed: the
-// matcher requires the keyword (`module` / `import`) to be at the
-// start of a logical line (whitespace-only prefix). That covers
-// every real-world declaration site without needing a full lexer.
+// The keyword (`module` / `import`) opens a line of the code text
+// (mcpp.libs.code_text), so a declaration spelled inside a comment or
+// a literal is copied as it stands. What is written is the source: a
+// comment before the keyword on its line is kept.
 std::string rewrite_module_decls(
     std::string_view source,
     const std::map<std::string, std::string>& rename);
@@ -129,7 +130,9 @@ read_name(std::string_view s, std::size_t i)
 
 } // namespace
 
-std::vector<std::string> declared_module_roots(std::string_view source) {
+std::vector<std::string> declared_module_roots(std::string_view text) {
+    const std::string code = mcpp::libs::code_text::read(text).text;
+    const std::string_view source = code;
     std::vector<std::string> roots;
     std::size_t lineStart = 0;
     while (lineStart < source.size()) {
@@ -159,7 +162,9 @@ std::vector<std::string> declared_module_roots(std::string_view source) {
     return roots;
 }
 
-std::vector<std::string> imported_module_names(std::string_view source) {
+std::vector<std::string> imported_module_names(std::string_view text) {
+    const std::string code = mcpp::libs::code_text::read(text).text;
+    const std::string_view source = code;
     std::vector<std::string> names;
     std::size_t lineStart = 0;
     while (lineStart < source.size()) {
@@ -188,16 +193,21 @@ std::vector<std::string> imported_module_names(std::string_view source) {
 }
 
 std::vector<std::string> included_headers(std::string_view source) {
+    // The directive is matched in the code text, whose rest of an `#include`
+    // line is blanked (a header name is not tokens); the name is read from the
+    // source at the same offsets.
+    const std::string code = mcpp::libs::code_text::read(source).text;
     std::vector<std::string> out;
     std::size_t lineStart = 0;
     while (lineStart < source.size()) {
         auto eol = source.find('\n', lineStart);
         if (eol == std::string_view::npos) eol = source.size();
         auto line = source.substr(lineStart, eol - lineStart);
-        auto cur = skip_ws(line, 0);
-        if (cur < line.size() && line[cur] == '#') {
-            cur = skip_ws(line, cur + 1);
-            if (auto p = consume_keyword(line, cur, "include"); p != std::string::npos) {
+        const auto codeLine = std::string_view(code).substr(lineStart, eol - lineStart);
+        auto cur = skip_ws(codeLine, 0);
+        if (cur < codeLine.size() && codeLine[cur] == '#') {
+            cur = skip_ws(codeLine, cur + 1);
+            if (auto p = consume_keyword(codeLine, cur, "include"); p != std::string::npos) {
                 cur = skip_ws(line, p);
                 const char close = cur < line.size() ? (line[cur] == '<' ? '>' : line[cur] == '"' ? '"' : 0) : 0;
                 if (const auto end = close ? line.find(close, cur + 1) : std::string_view::npos;
@@ -219,6 +229,11 @@ std::string rewrite_module_decls(
 {
     if (rename.empty()) return std::string(source);
 
+    // Matched in the code text, written from the source: the two have the same
+    // offsets.
+    const std::string codeText = mcpp::libs::code_text::read(source).text;
+    const std::string_view code = codeText;
+
     std::string out;
     out.reserve(source.size());
 
@@ -226,21 +241,21 @@ std::string rewrite_module_decls(
     while (i < source.size()) {
         // We're at the start of a logical line. Capture leading whitespace.
         std::size_t lineStart = i;
-        std::size_t afterWs   = skip_ws(source, i);
+        std::size_t afterWs   = skip_ws(code, i);
 
         // Try to recognize `(export )?(module|import) NAME[:PART][; or ws]`.
         // On any deviation, copy the line verbatim.
         std::size_t cur = afterWs;
         bool hasExport = false;
-        if (auto p = consume_keyword(source, cur, "export"); p != std::string::npos) {
+        if (auto p = consume_keyword(code, cur, "export"); p != std::string::npos) {
             hasExport = true;
-            cur = skip_ws(source, p);
+            cur = skip_ws(code, p);
         }
 
         std::string_view kw;
-        if (auto p = consume_keyword(source, cur, "module"); p != std::string::npos) {
+        if (auto p = consume_keyword(code, cur, "module"); p != std::string::npos) {
             kw = "module"; cur = p;
-        } else if (auto p = consume_keyword(source, cur, "import"); p != std::string::npos) {
+        } else if (auto p = consume_keyword(code, cur, "import"); p != std::string::npos) {
             kw = "import"; cur = p;
         } else {
             // Not a module/import line — emit the rest of the physical line.
@@ -252,11 +267,11 @@ std::string rewrite_module_decls(
             continue;
         }
 
-        std::size_t afterKw = skip_ws(source, cur);
+        std::size_t afterKw = skip_ws(code, cur);
 
         // Bare partition import / global module fragment: `import :P;` /
         // `module ;` — no name to rename, copy verbatim.
-        if (afterKw < source.size() && (source[afterKw] == ':' || source[afterKw] == ';')) {
+        if (afterKw < code.size() && (code[afterKw] == ':' || code[afterKw] == ';')) {
             std::size_t eol = source.find('\n', lineStart);
             if (eol == std::string_view::npos) eol = source.size();
             else                                ++eol;
@@ -265,7 +280,7 @@ std::string rewrite_module_decls(
             continue;
         }
 
-        auto [nameEnd, name] = read_name(source, afterKw);
+        auto [nameEnd, name] = read_name(code, afterKw);
         if (nameEnd == std::string::npos) {
             // Not a recognized declaration. Verbatim.
             std::size_t eol = source.find('\n', lineStart);

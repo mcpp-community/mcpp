@@ -67,12 +67,25 @@ private:
     std::shared_ptr<Table>          tab_;
 };
 
+// A table defined twice: once by a `[header]` and once by a dotted key
+// (`a.b = 1` under `[t]` defines `t.a`). TOML 1.0 allows neither order; this
+// reader took both, and the file it accepted is refused by every other reader
+// (mcpp#964). It is recorded rather than refused here: what a caller does with
+// it -- a deprecation for a manifest that an older `mcpp add` wrote, a refusal
+// for the text an edit is about to write -- is the caller's.
+struct TableRedefinition {
+    std::string path;      // the table's dotted path
+    Position    header;    // where its `[header]` is
+    Position    dotted;    // where the first dotted key that defines it is
+};
+
 class Document {
 public:
     explicit Document(Table root, std::set<std::string, std::less<>> explicitTables = {},
-                      std::map<std::string, Position, std::less<>> headers = {})
+                      std::map<std::string, Position, std::less<>> headers = {},
+                      std::vector<TableRedefinition> redefinitions = {})
         : root_(std::move(root)), explicitTables_(std::move(explicitTables)),
-          headers_(std::move(headers)) {}
+          headers_(std::move(headers)), redefinitions_(std::move(redefinitions)) {}
 
     const Table& root() const { return root_; }
     Table&       root()       { return root_; }
@@ -108,10 +121,14 @@ public:
         return std::nullopt;
     }
 
+    // The tables a header and a dotted key both define, in the order met.
+    const std::vector<TableRedefinition>& redefinitions() const { return redefinitions_; }
+
 private:
     Table root_;
     std::set<std::string, std::less<>> explicitTables_;
     std::map<std::string, Position, std::less<>> headers_;
+    std::vector<TableRedefinition> redefinitions_;
 };
 
 std::expected<Document, ParseError> parse(std::string_view src);
@@ -600,6 +617,16 @@ std::expected<Document, ParseError> parse(std::string_view src) {
     std::set<std::string, std::less<>> explicitTables;
     std::map<std::string, Position, std::less<>> headers;
     Table* current_table = &root;
+    // The table the next `key = value` lands in, as its dotted path; nullopt
+    // inside an array of tables, whose elements share one path and are each a
+    // table of their own. `dottedTables` holds the tables dotted keys defined.
+    std::optional<std::string> currentPath = std::string{};
+    std::map<std::string, Position, std::less<>> dottedTables;
+    std::vector<TableRedefinition> redefinitions;
+    auto redefined = [&](const std::string& path, Position header, Position dotted) {
+        if (std::ranges::none_of(redefinitions, [&](auto const& r) { return r.path == path; }))
+            redefinitions.push_back({path, header, dotted});
+    };
 
     while (true) {
         L.skip_whitespace_and_comments();
@@ -627,6 +654,7 @@ std::expected<Document, ParseError> parse(std::string_view src) {
                 explicitTables.insert(join_path(*path));
                 headers.emplace(join_path(*path), headerAt);
                 current_table = *t;
+                currentPath.reset();
                 continue;
             }
             auto path = read_dotted_key(L);
@@ -644,8 +672,12 @@ std::expected<Document, ParseError> parse(std::string_view src) {
             explicitTables.insert(join_path(*path));
             headers.emplace(join_path(*path), headerAt);
             current_table = t;
+            currentPath = join_path(*path);
+            if (auto d = dottedTables.find(*currentPath); d != dottedTables.end())
+                redefined(*currentPath, headerAt, d->second);
         } else {
             // key = value
+            const auto keyAt = L.position();
             auto path = read_dotted_key(L);
             if (!path) return std::unexpected(path.error());
             L.skip_inline_whitespace();
@@ -662,12 +694,21 @@ std::expected<Document, ParseError> parse(std::string_view src) {
                 auto* t = dive(*current_table, parents);
                 if (!t) return std::unexpected(ParseError{"key path conflict", L.position()});
                 target = t;
+                // Every table the key passes through is defined by it.
+                std::string defined = currentPath.value_or(std::string{});
+                for (std::size_t i = 0; currentPath && i < parents.size(); ++i) {
+                    defined += (defined.empty() ? "" : ".") + parents[i];
+                    dottedTables.emplace(defined, keyAt);
+                    if (auto h = headers.find(defined); h != headers.end() && explicitTables.contains(defined))
+                        redefined(defined, h->second, keyAt);
+                }
             }
             (*target)[path->back()] = std::move(*v);
         }
     }
 
-    return Document{std::move(root), std::move(explicitTables), std::move(headers)};
+    return Document{std::move(root), std::move(explicitTables), std::move(headers),
+                    std::move(redefinitions)};
 }
 
 std::expected<Document, ParseError> parse_file(const std::filesystem::path& p) {

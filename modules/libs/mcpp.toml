@@ -1,10 +1,13 @@
-# libs — text-format parsers written for mcpp: `toml`. It imports nothing from
-# mcpp. JSON is nlohmann.json from the index (2026.11.7.1): no third-party
-# source is copied into this tree.
+# libs — the readers and small primitives every other package of mcpp may
+# import: the TOML parser (`toml`) and what of a C++ source is code
+# (`code_text`). It imports nothing from mcpp. JSON is nlohmann.json from the
+# index (2026.11.7.1): no third-party source is copied into this tree.
 [package]
 name        = "libs"
 namespace   = "mcpp"
 version     = "0.1.0"
-description = "The TOML parser of mcpp, as a module"
+description = "Readers and primitives below every other package of mcpp"
 license     = "Apache-2.0"
 
+[dev-dependencies]
+mcpplibs.mtest = "0.11.3"

@@ -76,8 +76,18 @@ void recordDependencyEdge(
         if (!buildTable && !state.overrides.build_program_graph
             && ((spec.hostModuleDeclared && spec.hostModule) || ruleFeature)) {
             buildTable = true;
-            state.reportCompatUse("host-module-in-dependencies", consumerPackageIndex,
-                                  std::format("[dependencies] {}", writtenKey));
+            // The remedy is the two commands that move it (#993): the entry is
+            // the user's, and `mcpp add` cannot tell a build plugin from its
+            // descriptor, so it is told which table to write.
+            const auto spelling = spec.namespace_.empty() || spec.namespace_ == mcpp::pm::kDefaultNamespace
+                ? spec.shortName.empty() ? writtenKey : spec.shortName
+                : std::format("{}.{}", spec.namespace_, spec.shortName);
+            state.reportCompatUseInstead("host-module-in-dependencies", consumerPackageIndex,
+                                         std::format("[dependencies] {}", writtenKey),
+                                         spec.isVersion()
+                                             ? std::format("it in [build-dependencies]: `mcpp remove {0}`, then "
+                                                           "`mcpp add --build {0}@{1}`", spelling, spec.version)
+                                             : std::string("the same entry in [build-dependencies]"));
         }
         const bool wantsLibrary = buildTable
             && (ruleFeature

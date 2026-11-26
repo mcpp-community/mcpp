@@ -1041,10 +1041,14 @@ int run(int argc, char** argv) {
                 .required())
             .option(cl::Option("dev").help(
                 "Add to [dev-dependencies] (test-only, e.g. compat.gtest)"))
+            .option(cl::Option("build").help(
+                "Add to [build-dependencies] (a build plugin or a tool the build runs)"))
             .action(mcpp::pm::commands::cmd_add))
         .subcommand(cl::App("remove")
             .description("Remove a dependency from mcpp.toml")
             .arg(cl::Arg("pkg").help("Exact package selector [ns.]name").required())
+            .option(cl::Option("dev").help("Remove from [dev-dependencies]"))
+            .option(cl::Option("build").help("Remove from [build-dependencies]"))
             .action(mcpp::pm::commands::cmd_remove))
         .subcommand(cl::App("update")
             .description("Re-resolve dependencies and rewrite mcpp.lock")

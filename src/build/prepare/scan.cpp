@@ -1385,7 +1385,17 @@ step11_cxx_compiler_gate(PrepareState& state) {
     return {};
 }
 
+// COMPAT(reopened-dotted-table): a manifest whose `[header]` reopens a table
+// dotted keys defined is read as the union of the two (mcpp#964); reported where
+// the manifest can be edited, until the row's floor.
+static void report_reopened_tables(PrepareState& state) {
+    for (std::size_t i = 0; i < state.packages.size(); ++i)
+        for (auto const& path : state.packages[i].manifest.reopenedTables)
+            state.reportCompatUse("reopened-dotted-table", i, std::format("[{}]", path));
+}
+
 std::expected<void, std::string> phase11_scan(PrepareState& state) {
+    report_reopened_tables(state);
     auto needsStdModule = step11_scan_sources(state);
     if (!needsStdModule) return std::unexpected(needsStdModule.error());
     if (auto r = refuse_plugin_units_in_target(state); !r) return std::unexpected(r.error());

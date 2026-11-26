@@ -435,7 +435,8 @@ widget = "1.0.0"
         .features = {"gui", "vulkan"},
     });
     if (auto&& failed = expect(fatal(edited.has_value())); !failed) failed << edited.error();
-    expect(ne(edited->find("[dependencies.acme]\nwidget = { version = \"2.0.0\", features = [\"gui\", \"vulkan\"] }"), std::string::npos));
+    // Neither a `[dependencies.acme]` header nor an `acme.` key: the dotted key.
+    expect(ne(edited->find("[dependencies]\nacme.widget = { version = \"2.0.0\", features = [\"gui\", \"vulkan\"] }"), std::string::npos));
     auto parsed = mcpp::manifest::parse_string(*edited);
     if (auto&& failed = expect(fatal(parsed.has_value())); !failed) failed << parsed.error().format();
     expect(fatal(eq(parsed->dependencies.size(), 2u)));
@@ -473,6 +474,106 @@ widget = "1.0.0"
         });
     expect(fatal(!invalid.has_value()));
     expect(ne(invalid.error().find("invalid manifest"), std::string::npos));
+}};
+
+// mcpp#964: a namespace already written as dotted keys under `[dependencies]`
+// gets one more dotted key there. A `[dependencies.<ns>]` header after them is a
+// table defined twice, which TOML 1.0 and every reader but mcpp's refused.
+UTest writes_a_dotted_key_beside_dotted_keys{"ManifestEditor/WritesADottedKeyBesideDottedKeys", [] {
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+compat.libpng = "1.6.43"
+)";
+    auto edited = mcpp::manifest::upsert_dependency_text(source, {
+        .namespace_ = "compat", .shortName = "zlib", .version = "1.3.2",
+    });
+    if (auto&& failed = expect(fatal(edited.has_value())); !failed) failed << edited.error();
+    expect(ne(edited->find("[dependencies]\ncompat.zlib = \"1.3.2\"\ncompat.libpng = \"1.6.43\"\n"),
+              std::string::npos)) << *edited;
+    expect(edited->find("[dependencies.compat]") == std::string::npos);
+    expect(mcpp::manifest::reopened_dotted_tables(*edited).empty());
+}};
+
+// A manifest an older `mcpp add` wrote: the reader takes it and names the
+// table; the next edit of that table writes the header's entries as dotted keys.
+UTest repairs_a_header_that_reopens_dotted_keys{"ManifestEditor/RepairsAHeaderThatReopensDottedKeys", [] {
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+compat.libpng = "1.6.43"
+
+[dependencies.compat]
+# the codec
+zlib = "1.3.2"
+)";
+    auto parsed = mcpp::manifest::parse_string(source);
+    if (auto&& failed = expect(fatal(parsed.has_value())); !failed) failed << parsed.error().format();
+    expect(eq(parsed->reopenedTables, std::vector<std::string>{"dependencies.compat"}));
+    expect(eq(parsed->dependencies.size(), 2u));
+
+    auto edited = mcpp::manifest::upsert_dependency_text(source, {
+        .namespace_ = "compat", .shortName = "zstd", .version = "1.5.7",
+    });
+    if (auto&& failed = expect(fatal(edited.has_value())); !failed) failed << edited.error();
+    expect(edited->find("[dependencies.compat]") == std::string::npos) << *edited;
+    expect(ne(edited->find("compat.zlib = \"1.3.2\""), std::string::npos)) << *edited;
+    expect(ne(edited->find("# the codec"), std::string::npos)) << *edited;
+    expect(mcpp::manifest::reopened_dotted_tables(*edited).empty()) << *edited;
+    auto reparsed = mcpp::manifest::parse_string(*edited);
+    if (auto&& failed = expect(fatal(reparsed.has_value())); !failed) failed << reparsed.error().format();
+    expect(eq(reparsed->dependencies.size(), 3u));
+}};
+
+// `mcpp add --build` and `mcpp remove --build`: the same editor, the table named.
+UTest edits_the_table_it_is_given{"ManifestEditor/EditsTheTableItIsGiven", [] {
+    using mcpp::manifest::DependencyTableKind;
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+acme.rules = "1.0.0"
+)";
+    auto added = mcpp::manifest::upsert_dependency_text(source, {
+        .namespace_ = "acme", .shortName = "rules", .version = "1.0.0", .table = DependencyTableKind::Build,
+    });
+    if (auto&& failed = expect(fatal(added.has_value())); !failed) failed << added.error();
+    expect(ne(added->find("[build-dependencies]\nacme.rules = \"1.0.0\""), std::string::npos)) << *added;
+
+    auto removed = mcpp::manifest::remove_dependency_text(*added, "acme", "rules");
+    if (auto&& failed = expect(fatal(removed.has_value() && removed->has_value())); !failed)
+        failed << (removed ? std::string("nothing removed") : removed.error());
+    auto parsed = mcpp::manifest::parse_string(**removed);
+    if (auto&& failed = expect(fatal(parsed.has_value())); !failed) failed << parsed.error().format();
+    expect(parsed->dependencies.empty());
+    expect(eq(parsed->buildDependencies.size(), 1u));
+
+    auto none = mcpp::manifest::remove_dependency_text(**removed, "acme", "rules", DependencyTableKind::Dev);
+    expect(fatal(none.has_value()));
+    expect(!none->has_value());
+}};
+
+// The header form, emptied by a removal, goes with its last entry.
+UTest removes_an_emptied_namespace_header{"ManifestEditor/RemovesAnEmptiedNamespaceHeader", [] {
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies.acme]
+widget = "1.0.0"
+
+[build]
+cxxflags = []
+)";
+    auto removed = mcpp::manifest::remove_dependency_text(source, "acme", "widget");
+    if (auto&& failed = expect(fatal(removed.has_value() && removed->has_value())); !failed)
+        failed << (removed ? std::string("nothing removed") : removed.error());
+    expect(eq(**removed, std::string("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[build]\ncxxflags = []\n")));
 }};
 
 // An entry written as an inline table over several lines (TOML 1.1) is

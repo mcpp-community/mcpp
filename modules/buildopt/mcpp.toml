@@ -17,6 +17,7 @@ license     = "Apache-2.0"
 
 [dependencies]
 mcpp.invocation      = { path = "../invocation" }
+mcpp.libs            = { path = "../libs" }
 mcpp.manifest        = { path = "../manifest" }
 mcpp.toolchain-model = { path = "../toolchain-model" }
 

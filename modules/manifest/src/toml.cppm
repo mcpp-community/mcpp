@@ -4,6 +4,7 @@ export module mcpp.manifest.toml;
 
 import mcpp.manifest.types;
 import mcpp.manifest.key_registry;
+import mcpp.manifest.dependency_tables;
 import mcpp.manifest.cfg_selector;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
@@ -621,19 +622,41 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
 std::string default_template(std::string_view packageName);
 
 // Shared source-preserving editor used by both `mcpp add` and scaffold
-// self-dependency injection. Identity is structured; formatting is emitted in
-// the canonical default table / namespace-subtable form.
+// self-dependency injection. Identity is structured; the entry is written in
+// the form the table already uses for its namespace (SPEC-004 §9):
+//
+//   a `[<table>.<ns>]` header exists      the short key in that section
+//   otherwise                             the dotted key `<ns>.<name>` in `[<table>]`
+//
+// A header that reopens a table dotted keys defined (TOML 1.0 forbids it; an
+// older `mcpp add` wrote it, mcpp#964) is rewritten by the edit of that table
+// as the dotted keys it holds.
 struct DependencyTextEdit {
     std::string              namespace_;
     std::string              shortName;
     std::string              version;
     std::vector<std::string> features;
-    bool                     dev = false;
+    DependencyTableKind      table = DependencyTableKind::Normal;   // not Feature
 };
 
 std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit);
+
+// The removal `mcpp remove` makes: the entry of the exact PackageId in the one
+// table `table` names, in each spelling the reader takes for it (a bare key of
+// the default namespace, the dotted key, its quoted form, the short key under
+// `[<table>.<ns>]`, an older `[<table>.<name>]` block); a namespace header left
+// with no entry goes with it. nullopt: the table holds no such entry.
+std::expected<std::optional<std::string>, std::string>
+remove_dependency_text(std::string_view source, std::string_view namespace_,
+                       std::string_view shortName, DependencyTableKind table = DependencyTableKind::Normal);
+
+// The tables a header and a dotted key both define, as the deprecation
+// `reopened-dotted-table` names them: `[dependencies.compat]`, with the
+// dotted spelling that replaces it. Read from the text, so a manifest whose
+// other keys fail still says it.
+std::vector<std::string> reopened_dotted_tables(std::string_view text);
 
 // Where the `key = value` line that begins at `lineStart` ends: the newline
 // after its value, or the end of `text`. An inline table or an array may
@@ -1127,7 +1150,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     auto m = parse_document(*doc, origin, ctx);
     if (!m && m.error().line == 0) locate_named_key(m.error(), *doc);
     if (m) record_declared_keys(*doc);
+    if (m)
+        for (auto const& r : doc->redefinitions()) m->reopenedTables.push_back(r.path);
     return m;
+}
+
+std::vector<std::string> reopened_dotted_tables(std::string_view text) {
+    std::vector<std::string> out;
+    if (auto doc = t::parse(text))
+        for (auto const& r : doc->redefinitions()) out.push_back(r.path);
+    return out;
 }
 
 namespace {
@@ -3108,30 +3140,20 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             });
         }
     };
-    auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
-        -> std::expected<void, ManifestError>
-    {
-        auto* tt = doc->get_table(section);
-        if (!tt) return {};
-        auto r = load_deps_table(section, *tt, out);
-        if (r) mark_required_quoting(out);
-        return r;
-    };
-    if (auto r = load_deps("dependencies",       m.dependencies);       !r) return std::unexpected(r.error());
-    if (auto r = load_deps("dev-dependencies",   m.devDependencies);    !r) return std::unexpected(r.error());
-    if (auto r = load_deps("build-dependencies", m.buildDependencies);  !r) return std::unexpected(r.error());
-
-    // [feature-deps.<feature>] — optional dependencies activated by a feature
-    // (Stage 2a). Each sub-table is loaded with the same dependency loader as
-    // [dependencies], keyed by the feature name.
-    if (auto* fdeps = doc->get_table("feature-deps")) {
-        for (auto& [fname, fval] : *fdeps) {
-            if (!fval.is_table()) continue;
-            if (auto r = load_deps("feature-deps." + std::string(fname),
-                                   m.featureDeps[fname]); !r)
-                return std::unexpected(r.error());
-            m.featuresMap.try_emplace(fname, std::vector<std::string>{}); // register
-        }
+    // Every unconditional table of dependencies, in the one enumeration the
+    // editor and the publish normalisation also walk
+    // (mcpp.manifest.dependency_tables). A `[feature-deps.<feature>]` table is
+    // loaded by the loader of `[dependencies]` and registers its feature
+    // (Stage 2a).
+    for (auto const& t : dependency_tables_in(std::as_const(doc->root()))) {
+        const bool feature = t.kind == DependencyTableKind::Feature;
+        auto& out = feature                              ? m.featureDeps[t.feature]
+                  : t.kind == DependencyTableKind::Dev   ? m.devDependencies
+                  : t.kind == DependencyTableKind::Build ? m.buildDependencies
+                                                         : m.dependencies;
+        if (auto r = load_deps_table(t.section(), *t.table, out); !r) return std::unexpected(r.error());
+        mark_required_quoting(out);
+        if (feature) m.featuresMap.try_emplace(t.feature, std::vector<std::string>{}); // register
     }
 
     // [toolchain] — platform → "pkg@version" map (docs/21)
@@ -5113,18 +5135,6 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // as the global [dependencies]) into the deferred config, under the
             // table's full name so that a message and the resolution record
             // name the conditional table rather than the unconditional one.
-            auto read_deps = [&](const char* key, std::map<std::string, DependencySpec>& out)
-                -> std::expected<void, ManifestError>
-            {
-                if (auto f = body.find(key); f != body.end() && f->second.is_table()) {
-                    auto r = load_deps_table(
-                        std::format("target.{}.{}", toml_header_key(triple), key),
-                        f->second.as_table(), out, key);
-                    if (r) mark_required_quoting(out);
-                    return r;
-                }
-                return {};
-            };
             // [target.<predicate>.test] (mcpp#942): the test programs of the
             // targets the predicate selects, appended to `[test] discover`.
             // Only `discover`: the other `[test]` keys shape the test build
@@ -5159,30 +5169,35 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     for (auto& e : tv.as_array()) cc.testDiscover.push_back(e.as_string());
                 }
             }
-            if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
-            if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
-            if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
+            // The conditional tables of dependencies, by the same enumeration
+            // as the unconditional ones.
+            //
             // [target.<predicate>.feature-deps.<feature>] (#359). The feature
             // itself is registered UNCONDITIONALLY: whether the platform
             // matches decides what the feature pulls in, not whether the
             // feature exists. Otherwise requesting it on a non-matching
-            // platform would trip the unknown-feature diagnostic.
-            if (auto f = body.find("feature-deps");
-                f != body.end() && f->second.is_table()) {
-                for (auto& [fname, fval] : f->second.as_table()) {
-                    if (!fval.is_table()) continue;
-                    // The lookup keeps the spelling this table has always
-                    // been resolved against; only the name a reader sees
-                    // changes, which used to arrive in double brackets.
-                    if (auto r = load_deps_table(
-                            std::format("target.{}.feature-deps.{}",
-                                        toml_header_key(triple), fname),
-                            fval.as_table(), cc.featureDeps[std::string(fname)],
-                            std::format("[target.{}.feature-deps.{}]", triple, fname)); !r)
+            // platform would trip the unknown-feature diagnostic. Its lookup
+            // keeps the spelling this table has always been resolved against;
+            // only the name a reader sees changes, which used to arrive in
+            // double brackets.
+            for (auto const& t : dependency_tables_in(std::as_const(body), triple)) {
+                const auto name = dependency_table_name(t.kind);
+                if (t.kind != DependencyTableKind::Feature) {
+                    auto& out = t.kind == DependencyTableKind::Dev   ? cc.devDependencies
+                              : t.kind == DependencyTableKind::Build ? cc.buildDependencies
+                                                                     : cc.dependencies;
+                    if (auto r = load_deps_table(std::format("target.{}.{}", toml_header_key(triple), name),
+                                                 *t.table, out, name); !r)
                         return std::unexpected(r.error());
-                    m.featuresMap.try_emplace(std::string(fname),
-                                              std::vector<std::string>{});
+                    mark_required_quoting(out);
+                    continue;
                 }
+                if (auto r = load_deps_table(
+                        std::format("target.{}.feature-deps.{}", toml_header_key(triple), t.feature),
+                        *t.table, cc.featureDeps[t.feature],
+                        std::format("[target.{}.feature-deps.{}]", triple, t.feature)); !r)
+                    return std::unexpected(r.error());
+                m.featuresMap.try_emplace(t.feature, std::vector<std::string>{});
             }
             // `[target.<sel>.xlings.workspace]` and
             // `[target.<sel>.feature-xlings.<f>]` — the TARGET axis of the tool
@@ -6092,6 +6107,101 @@ std::size_t assignment_end(std::string_view text, std::size_t lineStart) {
     return text.size();
 }
 
+namespace {
+
+// The text editor's view of a manifest: a section is a `[header]` line and
+// the lines up to the next header; an entry is the `key = value` that begins a
+// line of it and ends where its value closes (`assignment_end`).
+struct SectionSpan {
+    std::size_t headerStart;
+    std::size_t headerEnd;
+    std::size_t bodyStart;
+    std::size_t sectionEnd;
+};
+
+std::string_view trim_line(std::string_view line) {
+    while (!line.empty()
+           && (line.front() == ' ' || line.front() == '\t')) {
+        line.remove_prefix(1);
+    }
+    while (!line.empty()
+           && (line.back() == ' ' || line.back() == '\t'
+               || line.back() == '\r')) {
+        line.remove_suffix(1);
+    }
+    return line;
+}
+
+bool section_header_matches(std::string_view line, std::string_view header) {
+    line = trim_line(line);
+    if (!line.starts_with(header)) return false;
+    line.remove_prefix(header.size());
+    line = trim_line(line);
+    return line.empty() || line.front() == '#';
+}
+
+std::optional<SectionSpan> find_section(std::string_view text, std::string_view header) {
+    std::optional<SectionSpan> result;
+    std::size_t lineStart = 0;
+    while (lineStart <= text.size()) {
+        auto newline = text.find('\n', lineStart);
+        auto lineEnd = newline == std::string_view::npos
+            ? text.size() : newline;
+        auto line = text.substr(lineStart, lineEnd - lineStart);
+        if (!result && section_header_matches(line, header)) {
+            result = SectionSpan{
+                .headerStart = lineStart,
+                .headerEnd = lineEnd,
+                .bodyStart = newline == std::string_view::npos
+                    ? lineEnd : lineEnd + 1,
+                .sectionEnd = text.size(),
+            };
+        } else if (result) {
+            auto stripped = trim_line(line);
+            if (!stripped.empty() && stripped.front() == '[') {
+                result->sectionEnd = lineStart;
+                break;
+            }
+        }
+        if (newline == std::string_view::npos) break;
+        lineStart = newline + 1;
+    }
+    return result;
+}
+
+std::optional<std::pair<std::size_t, std::size_t>>
+key_line_span(std::string_view text, const SectionSpan& section, std::string_view key) {
+    const auto quotedKey = std::format("\"{}\"", key);
+    std::size_t lineStart = section.bodyStart;
+    while (lineStart < section.sectionEnd) {
+        auto newline = text.find('\n', lineStart);
+        auto lineEnd = newline == std::string_view::npos
+            ? text.size() : newline;
+        if (lineEnd > section.sectionEnd) lineEnd = section.sectionEnd;
+        auto line = trim_line(text.substr(lineStart, lineEnd - lineStart));
+        auto assignment_for = [&](std::string_view candidate) {
+            if (!line.starts_with(candidate)) return false;
+            auto rest = line.substr(candidate.size());
+            while (!rest.empty()
+                   && (rest.front() == ' ' || rest.front() == '\t')) {
+                rest.remove_prefix(1);
+            }
+            return !rest.empty() && rest.front() == '=';
+        };
+        if (!line.starts_with('#')
+            && (assignment_for(key) || assignment_for(quotedKey))) {
+            return std::pair{lineStart, assignment_end(text, lineStart)};
+        }
+        if (newline == std::string_view::npos
+            || newline >= section.sectionEnd) break;
+        lineStart = newline + 1;
+    }
+    return std::nullopt;
+}
+
+
+} // namespace
+
 std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit) {
@@ -6151,138 +6261,93 @@ upsert_dependency_text(std::string_view source,
                             quoted_list(edit.features));
     }
 
-    struct SectionSpan {
-        std::size_t headerStart;
-        std::size_t headerEnd;
-        std::size_t bodyStart;
-        std::size_t sectionEnd;
-    };
-
-    auto trim = [](std::string_view line) {
-        while (!line.empty()
-               && (line.front() == ' ' || line.front() == '\t')) {
-            line.remove_prefix(1);
-        }
-        while (!line.empty()
-               && (line.back() == ' ' || line.back() == '\t'
-                   || line.back() == '\r')) {
-            line.remove_suffix(1);
-        }
-        return line;
-    };
-
-    auto section_header_matches = [&](std::string_view line,
-                                      std::string_view header) {
-        line = trim(line);
-        if (!line.starts_with(header)) return false;
-        line.remove_prefix(header.size());
-        line = trim(line);
-        return line.empty() || line.front() == '#';
-    };
-
-    auto find_section = [&](std::string_view text,
-                            std::string_view header)
-        -> std::optional<SectionSpan> {
-        std::optional<SectionSpan> result;
-        std::size_t lineStart = 0;
-        while (lineStart <= text.size()) {
-            auto newline = text.find('\n', lineStart);
-            auto lineEnd = newline == std::string_view::npos
-                ? text.size() : newline;
-            auto line = text.substr(lineStart, lineEnd - lineStart);
-            if (!result && section_header_matches(line, header)) {
-                result = SectionSpan{
-                    .headerStart = lineStart,
-                    .headerEnd = lineEnd,
-                    .bodyStart = newline == std::string_view::npos
-                        ? lineEnd : lineEnd + 1,
-                    .sectionEnd = text.size(),
-                };
-            } else if (result) {
-                auto stripped = trim(line);
-                if (!stripped.empty() && stripped.front() == '[') {
-                    result->sectionEnd = lineStart;
-                    break;
-                }
-            }
-            if (newline == std::string_view::npos) break;
-            lineStart = newline + 1;
-        }
-        return result;
-    };
-
-    auto key_line_span = [&](std::string_view text,
-                             const SectionSpan& section,
-                             std::string_view key)
-        -> std::optional<std::pair<std::size_t, std::size_t>> {
-        const auto quotedKey = std::format("\"{}\"", key);
-        std::size_t lineStart = section.bodyStart;
-        while (lineStart < section.sectionEnd) {
-            auto newline = text.find('\n', lineStart);
-            auto lineEnd = newline == std::string_view::npos
-                ? text.size() : newline;
-            if (lineEnd > section.sectionEnd) lineEnd = section.sectionEnd;
-            auto line = trim(text.substr(lineStart, lineEnd - lineStart));
-            auto assignment_for = [&](std::string_view candidate) {
-                if (!line.starts_with(candidate)) return false;
-                auto rest = line.substr(candidate.size());
-                while (!rest.empty()
-                       && (rest.front() == ' ' || rest.front() == '\t')) {
-                    rest.remove_prefix(1);
-                }
-                return !rest.empty() && rest.front() == '=';
-            };
-            if (!line.starts_with('#')
-                && (assignment_for(key) || assignment_for(quotedKey))) {
-                return std::pair{lineStart, assignment_end(text, lineStart)};
-            }
-            if (newline == std::string_view::npos
-                || newline >= section.sectionEnd) break;
-            lineStart = newline + 1;
-        }
-        return std::nullopt;
-    };
-
+    if (edit.table == DependencyTableKind::Feature)
+        return std::unexpected("dependency edit names a feature table, which `mcpp add` does not write");
     std::string text(source);
-    const std::string table = edit.dev
-        ? "dev-dependencies" : "dependencies";
+    const std::string table(dependency_table_name(edit.table));
     const std::string baseHeader = std::format("[{}]", table);
     const bool defaultNamespace = edit.namespace_ == kDefaultNamespace;
+    const std::string subHeader = std::format("[{}.{}]", table, edit.namespace_);
+    const std::string dotted = std::format("{}.{}", edit.namespace_, edit.shortName);
 
-    // Retained flat dotted spellings are removed before canonical namespace
-    // subtable emission. The parsed identity gate above ensures this edits the
-    // exact PackageId, not a short-name substring match.
-    // The default namespace's dotted spelling (`mcpplibs.cmdline = ...`) is
-    // the same package as the bare one and is removed as well.
-    {
-        const std::string dotted = defaultNamespace
-            ? std::format("{}.{}", edit.namespace_, edit.shortName) : spelling;
-        if (auto base = find_section(text, baseHeader)) {
-            if (auto legacy = key_line_span(text, *base, dotted)) {
-                auto eraseEnd = legacy->second;
-                if (eraseEnd < text.size() && text[eraseEnd] == '\n')
-                    ++eraseEnd;
-                text.erase(legacy->first, eraseEnd - legacy->first);
+    auto erase_span = [&](std::pair<std::size_t, std::size_t> span) {
+        auto end = span.second;
+        if (end < text.size() && text[end] == '\n') ++end;
+        text.erase(span.first, end - span.first);
+    };
+    auto insert_in = [&](const SectionSpan& section, const std::string& entry) {
+        if (section.bodyStart == section.headerEnd) text.insert(section.bodyStart, "\n" + entry);
+        else                                         text.insert(section.bodyStart, entry + "\n");
+    };
+
+    // A HEADER THAT REOPENS THE DOTTED TABLE (mcpp#964). The entries of
+    // `[<table>.<ns>]` move into `[<table>]` as dotted keys, comments with them,
+    // and the header goes: the one form both TOML and this file then hold.
+    if (!defaultNamespace) {
+        auto doc = mcpp::libs::toml::parse(source);
+        const auto path = std::format("{}.{}", table, edit.namespace_);
+        if (doc && std::ranges::any_of(doc->redefinitions(), [&](auto const& r) { return r.path == path; }))
+            if (auto sub = find_section(text, subHeader)) {
+                std::string moved;
+                std::size_t at = sub->bodyStart;
+                while (at < sub->sectionEnd) {
+                    const auto stripped = trim_line(std::string_view(text).substr(at, text.find('\n', at) - at));
+                    const auto end = std::min(stripped.empty() || stripped.front() == '#'
+                                                  ? std::min(text.find('\n', at), text.size())
+                                                  : assignment_end(text, at),
+                                              sub->sectionEnd);
+                    auto line = std::string(text.substr(at, end - at));
+                    if (!stripped.empty() && stripped.front() != '#') {
+                        const auto lead = line.find_first_not_of(" \t");
+                        line = std::format("{}.{}", edit.namespace_, line.substr(lead));
+                    }
+                    if (!trim_line(line).empty()) moved += line + "\n";
+                    at = end < text.size() ? end + 1 : end;
+                }
+                text.erase(sub->headerStart, sub->sectionEnd - sub->headerStart);
+                while (text.ends_with("\n\n")) text.pop_back();
+                if (auto base = find_section(text, baseHeader)) {
+                    if (!moved.empty() && moved.back() == '\n') moved.pop_back();
+                    insert_in(*base, moved);
+                }
             }
-        }
     }
 
-    const std::string sectionHeader = defaultNamespace
-        ? baseHeader
-        : std::format("[{}.{}]", table, edit.namespace_);
-    const std::string line = std::format("{} = {}", edit.shortName, value);
-    if (auto section = find_section(text, sectionHeader)) {
-        if (auto existing = key_line_span(text, *section, edit.shortName)) {
-            text.replace(existing->first, existing->second - existing->first,
-                         line);
-        } else if (section->bodyStart == section->headerEnd) {
-            text.insert(section->bodyStart, "\n" + line);
+    // The default namespace's dotted spelling (`mcpplibs.cmdline = ...`) is the
+    // same package as the bare one: it is replaced by the bare key.
+    const std::string line = std::format("{} = {}", defaultNamespace ? edit.shortName : dotted, value);
+    const std::string shortLine = std::format("{} = {}", edit.shortName, value);
+    if (defaultNamespace) {
+        auto base = find_section(text, baseHeader);
+        if (base)
+            if (auto legacy = key_line_span(text, *base, dotted)) erase_span(*legacy);
+        base = find_section(text, baseHeader);
+        if (!base) {
+            if (!text.empty() && text.back() != '\n') text += '\n';
+            text += std::format("\n{}\n{}\n", baseHeader, line);
+        } else if (auto existing = key_line_span(text, *base, edit.shortName)) {
+            text.replace(existing->first, existing->second - existing->first, line);
         } else {
-            text.insert(section->bodyStart, line + "\n");
+            insert_in(*base, line);
+        }
+    } else if (auto sub = find_section(text, subHeader)) {
+        // The namespace's own header: the short key there, and no dotted twin.
+        if (auto existing = key_line_span(text, *sub, edit.shortName)) {
+            text.replace(existing->first, existing->second - existing->first, shortLine);
+        } else {
+            insert_in(*sub, shortLine);
+        }
+        if (auto base = find_section(text, baseHeader))
+            if (auto twin = key_line_span(text, *base, dotted)) erase_span(*twin);
+    } else if (auto base = find_section(text, baseHeader)) {
+        if (auto existing = key_line_span(text, *base, dotted)) {
+            text.replace(existing->first, existing->second - existing->first, line);
+        } else {
+            insert_in(*base, line);
         }
     } else {
         if (!text.empty() && text.back() != '\n') text += '\n';
-        text += std::format("\n{}\n{}\n", sectionHeader, line);
+        text += std::format("\n{}\n{}\n", baseHeader, line);
     }
 
     auto reparsed = parse_string(text);
@@ -6291,8 +6356,13 @@ upsert_dependency_text(std::string_view source,
             "dependency edit produced invalid manifest: {}",
             reparsed.error().format()));
     }
-    auto const& dependencies = edit.dev
-        ? reparsed->devDependencies : reparsed->dependencies;
+    auto const& dependencies = edit.table == DependencyTableKind::Dev   ? reparsed->devDependencies
+                             : edit.table == DependencyTableKind::Build ? reparsed->buildDependencies
+                                                                        : reparsed->dependencies;
+    if (auto doc = mcpp::libs::toml::parse(text); doc && !doc->redefinitions().empty())
+        return std::unexpected(std::format(
+            "dependency edit would write the table '{}' twice, by a header and by dotted keys",
+            doc->redefinitions().front().path));
     auto exact = std::ranges::find_if(
         dependencies, [&](auto const& item) {
             auto const& dep = item.second;
@@ -6309,6 +6379,76 @@ upsert_dependency_text(std::string_view source,
     return text;
 }
 
+
+std::expected<std::optional<std::string>, std::string>
+remove_dependency_text(std::string_view source, std::string_view namespace_,
+                       std::string_view shortName, DependencyTableKind table) {
+    auto original = parse_string(source);
+    if (!original)
+        return std::unexpected(std::format("invalid manifest before dependency edit: {}",
+                                           original.error().format()));
+    if (table == DependencyTableKind::Feature)
+        return std::unexpected("dependency edit names a feature table, which `mcpp remove` does not edit");
+    std::string text(source);
+    const std::string name(dependency_table_name(table));
+    const bool defaultNamespace = namespace_ == kDefaultNamespace;
+    const auto dotted = std::format("{}.{}", namespace_, shortName);
+    bool changed = false;
+    auto erase_span = [&](std::pair<std::size_t, std::size_t> span) {
+        auto end = span.second;
+        if (end < text.size() && text[end] == '\n') ++end;
+        text.erase(span.first, end - span.first);
+        changed = true;
+    };
+    // A section with no entry left: only comments and blank lines.
+    auto empty_section = [&](const SectionSpan& sec) {
+        for (std::size_t at = sec.bodyStart; at < sec.sectionEnd;) {
+            const auto nl = std::min(text.find('\n', at), sec.sectionEnd);
+            const auto line = trim_line(std::string_view(text).substr(at, nl - at));
+            if (!line.empty() && line.front() != '#') return false;
+            at = nl + 1;
+        }
+        return true;
+    };
+
+    if (auto base = find_section(text, std::format("[{}]", name))) {
+        if (auto span = key_line_span(text, *base, defaultNamespace ? std::string(shortName) : dotted))
+            erase_span(*span);
+        else if (defaultNamespace)
+            if (auto legacy = key_line_span(text, *base, dotted)) erase_span(*legacy);
+    }
+    if (!defaultNamespace)
+        if (auto sub = find_section(text, std::format("[{}.{}]", name, namespace_)))
+            if (auto span = key_line_span(text, *sub, shortName)) {
+                erase_span(*span);
+                if (auto after = find_section(text, std::format("[{}.{}]", name, namespace_));
+                    after && empty_section(*after))
+                    text.erase(after->headerStart, after->sectionEnd - after->headerStart);
+            }
+    // An older shape: the default namespace's package as a block of its own,
+    // `[<table>.<name>]` holding its source.
+    if (!changed && defaultNamespace)
+        if (auto block = find_section(text, std::format("[{}.{}]", name, shortName))) {
+            text.erase(block->headerStart, block->sectionEnd - block->headerStart);
+            changed = true;
+        }
+    if (!changed) return std::optional<std::string>{};
+    while (text.ends_with("\n\n")) text.pop_back();
+
+    auto reparsed = parse_string(text);
+    if (!reparsed)
+        return std::unexpected(std::format("dependency edit produced invalid manifest: {}",
+                                           reparsed.error().format()));
+    auto const& family = table == DependencyTableKind::Dev   ? reparsed->devDependencies
+                       : table == DependencyTableKind::Build ? reparsed->buildDependencies
+                                                             : reparsed->dependencies;
+    if (std::ranges::any_of(family, [&](auto const& item) {
+            return item.second.namespace_ == namespace_ && item.second.shortName == shortName;
+        }))
+        return std::unexpected(std::format(
+            "dependency edit left the exact PackageId ({}, {}) in [{}]", namespace_, shortName, name));
+    return std::optional<std::string>{std::move(text)};
+}
 
 // ── the lib root that actually exists ────────────────────────────────────
 //
