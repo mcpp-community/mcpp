@@ -13,9 +13,9 @@
 // two places, each a copy of the other.
 //
 // THE RECORD IS A SET, ONE FILE PER TREE. `users/<digest of the tree>` holds the
-// tree's path. A tree that hits or writes the entry adds its file; a tree built
-// under another digest removes its file from the entries it used before; an
-// entry whose `users/` is then empty is removed. Each step is the creation or
+// tree's path. A tree that hits or writes an entry adds its file there and
+// removes it from the entries of the package's other digests it used before;
+// an entry whose `users/` is then empty is removed. Each step is the creation or
 // removal of one file, so two processes acting at once lose nothing: there is
 // no file that both read and rewrite.
 //
@@ -44,9 +44,9 @@ std::vector<std::string> users(const std::filesystem::path& entry);
 // `tree` recorded as a user of `entry`; nothing is written when it is one.
 void add(const std::filesystem::path& entry, const std::filesystem::path& tree);
 
-// `entry` was written for `tree`, which no longer uses the entries it was built
-// into under another digest: `tree` is added to `entry` and taken from every
-// sibling, and a sibling left with no user is removed.
+// `tree` uses `entry` (it wrote it or hit it), and no longer the entries of its
+// package under another digest: `tree` is added to `entry` and taken from
+// every sibling, and a sibling left with no user is removed.
 //
 // The siblings are the entries `<store>/<package>@<version>+path.<digest>/<key>/`
 // of the same package and version whose digest differs, the layout both stores

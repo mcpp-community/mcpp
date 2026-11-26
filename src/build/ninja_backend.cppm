@@ -1057,29 +1057,31 @@ link_inputs(const BuildPlan& plan, const std::string& ninjaProgram,
 // A SHARED IMAGE THAT ASKS FOR THE STATIC TLS BLOCK (mcpp#907). An object
 // compiled for the initial-exec TLS model marks the library `DF_STATIC_TLS`.
 // Loaded with the program at start-up it works; loaded by `dlopen` later, the
-// loader serves its thread-local storage from the static block's surplus, and
-// a library larger than what is left is refused at that moment ("cannot
-// allocate memory in static TLS block"). Which way the image will be loaded is
-// not known at the link, so it is reported, with its size against glibc's
-// surplus (`glibc.rtld.optional_static_tls`, 512 bytes since 2.32); an image
-// whose exact `exports` say a host enters it by name (a plugin, a Python
+// loader serves its thread-local storage from what is left of the static
+// block, and a library larger than that is refused at that moment ("cannot
+// allocate memory in static TLS block"). How much is left is the row's loader's
+// fact (`dlopen-static-tls`); a row that states none is not checked. Which way
+// the image will be loaded is not known at the link, so it is reported; an
+// image whose exact `exports` say a host enters it by name (a plugin, a Python
 // extension, a JNI library) is one that `dlopen` loads, and is refused
 // (`static-tls-image`).
 std::optional<std::string> refuse_static_tls_image(const BuildPlan& plan) {
-    if (plan.runtimeBinding.platform != "linux" || plan.runtimeBinding.libc.find("glibc") == std::string::npos)
-        return std::nullopt;
-    constexpr std::uint64_t kGlibcSurplus = 512;
+    std::uint64_t surplus = 0;
+    if (auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
+        if (auto const* row = mcpp::toolchain::target::find_row(t->str()); row && row->dlopenStaticTls > 0)
+            surplus = static_cast<std::uint64_t>(row->dlopenStaticTls);
+    if (surplus == 0) return std::nullopt;
     for (auto const& lu : plan.linkUnits) {
         if (lu.kind != LinkUnit::SharedLibrary) continue;
         auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.outputDir / lu.output);
-        if (!facts || !facts->staticTls || facts->tlsSize <= kGlibcSurplus) continue;
+        if (!facts || !facts->staticTls || facts->tlsSize <= surplus) continue;
         const bool entered = std::ranges::any_of(lu.exportPatterns, [](auto const& p) {
             return p.find_first_of("*?[") == std::string::npos;
         });
         const auto what = std::format(
             "{} uses the initial-exec TLS model for {} bytes of thread-local storage (DF_STATIC_TLS), and "
-            "glibc serves an image loaded by dlopen from a surplus of {} bytes",
-            lu.output.filename().string(), facts->tlsSize, kGlibcSurplus);
+            "the loader of {} serves an image loaded by dlopen {} bytes of it",
+            lu.output.filename().string(), facts->tlsSize, plan.toolchain.targetTriple, surplus);
         const auto help = std::string(
             "compile its objects with -ftls-model=global-dynamic (the model for code of a shared "
             "library), or keep less in `thread_local`");
@@ -1094,10 +1096,10 @@ std::optional<std::string> refuse_static_tls_image(const BuildPlan& plan) {
     return std::nullopt;
 }
 
+// An exact `exports` name the image does not define (mcpp#982), read from the
+// image's dynamic symbol table. The reader reads ELF; another container gives
+// no table, and nothing is claimed about it (ld64 refuses such a name itself).
 void report_unmatched_exact_exports(const BuildPlan& plan) {
-    const auto tr = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-    const std::string os = tr ? tr->os : (mcpplibs::os::is_macos ? "macos" : mcpplibs::os::is_windows ? "windows" : "linux");
-    if (os == "macos" || os == "ios" || os == "windows") return;
     auto const* d = mcpp::pm::compat::find_deprecation("unmatched-exact-export");
     for (auto const& lu : plan.linkUnits) {
         if (lu.kind != LinkUnit::SharedLibrary) continue;
@@ -3148,6 +3150,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // (ninja trims trailing whitespace in variable values, hence the space
 //  lives in the rule's command string, not here)
     static constexpr std::string_view kHeldOpenVerify = "  verify = --verify size\n";
+    // A BMI IS ONE NODE IN BOTH ITS SPELLINGS (mcpp#1015). A compiler that
+    // finds BMIs through an absolute directory (`-fprebuilt-module-path=
+    // <build dir>/pcm.cache`, absolute for compile_commands.json, flags.cppm)
+    // names every BMI an importer read by that path in the depfile ninja keeps,
+    // while the graph names the BMI below the build directory. ninja holds the
+    // two spellings as two files, and the absolute one had no edge: it was read
+    // when the build began and not again, so an importer of an importer whose
+    // BMI the edit changed was compiled by the next build, which had no edit
+    // (measured with clang 23.1.3: `c` edited, `b` kept its BMI, `main` was
+    // compiled one build later). The edge that writes a BMI states the
+    // absolute spelling as an implicit output too: ninja then knows one edge
+    // writes both, and restat judges both by one file.
+    auto also_absolute = [&](const std::filesystem::path& bmi) -> std::string {
+        if (!traits.needsPrebuiltModulePath || bmi.empty() || bmi.is_absolute()) return {};
+        return " " + escape_ninja_path((plan.outputDir / bmi).lexically_normal());
+    };
+    auto with_absolute = [&](const std::filesystem::path& bmi) -> std::string {
+        const auto alias = also_absolute(bmi);
+        return alias.empty() ? std::string{} : " |" + alias;
+    };
     auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
     auto std_o_dst = std::filesystem::path("obj")
                    / std::format("std{}", dial.objExt);
@@ -3259,8 +3281,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // The standard library module is a dependency of the build: `std`.
     attribute("std");
     if (has_std_artifacts) {
-        append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
-                           escape_ninja_path(plan.stdBmiPath)));
+        append(std::format("build {}{} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
+                           with_absolute(std_bmi_dst), escape_ninja_path(plan.stdBmiPath)));
         append(std::string(kHeldOpenVerify));
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_o_dst),
                            escape_ninja_path(plan.stdObjectPath)));
@@ -3279,8 +3301,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (has_std_compat) {
         // std.compat.pcm depends on std.pcm — ensure std.pcm is staged first
         // so clang can resolve the transitive dependency when loading std.compat.pcm.
-        append(std::format("build {} : stage_file {} | {}\n", escape_ninja_path(compat_bmi_dst),
-                           escape_ninja_path(plan.stdCompatBmiPath),
+        append(std::format("build {}{} : stage_file {} | {}\n", escape_ninja_path(compat_bmi_dst),
+                           with_absolute(compat_bmi_dst), escape_ninja_path(plan.stdCompatBmiPath),
                            escape_ninja_path(std_bmi_dst)));
         append(std::string(kHeldOpenVerify));
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(compat_o_dst),
@@ -3453,7 +3475,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 for (auto& imp : cu.imports)
                     if (auto const* p = provider_of(cu, imp); p && after_a_compile(*p))
                         waitsFor += " " + import_bmi(cu, imp);
-                append(std::format("build {} : stage_file {}{}\n", bmi,
+                append(std::format("build {}{} : stage_file {}{}\n", bmi, with_absolute(bmi),
                                    escape_ninja_path(cu.cachedBmi),
                                    waitsFor.empty() ? "" : " ||" + waitsFor));
                 append("  verify = --verify size\n");
@@ -3723,8 +3745,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                                       .string() + ".ddi";
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
-                    std::string e = std::format("build {} : cxx_module_bmi {} | {}",
-                                                bmi, escape_ninja_path(cu.source),
+                    std::string e = std::format("build {}{} : cxx_module_bmi {} | {}",
+                                                bmi, with_absolute(bmi), escape_ninja_path(cu.source),
                                                 it->second);
                     e += order_only_for(cu);
                     e += "\n  dyndep = " + it->second + "\n";
@@ -3804,7 +3826,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                             e += "  unit_cxxflags =" + fl + "\n";
                         append(std::move(e));
                     };
-                    edge("cxx_precompile",    bmi);
+                    edge("cxx_precompile",    bmi + with_absolute(bmi));
                     edge("cxx_module_object", obj);
                     continue;
                 }
@@ -3812,7 +3834,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (!cu.providesModule.empty()) {
-                out_line += " | " + unit_bmi(cu);
+                out_line += " | " + unit_bmi(cu) + also_absolute(unit_bmi(cu));
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!is_scan_exempt(cu)) {
@@ -3880,7 +3902,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             if (!cu.providesModule.empty()) {
                 // Use implicit output (|) so $out only contains the .o file.
                 // GCC writes BMI implicitly; Clang uses -fmodule-output=$bmi_out.
-                out_line += " | " + unit_bmi(cu);
+                out_line += " | " + unit_bmi(cu) + also_absolute(unit_bmi(cu));
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())

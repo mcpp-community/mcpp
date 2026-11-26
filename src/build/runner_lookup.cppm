@@ -228,19 +228,17 @@ inline std::optional<ScriptInterpreter> parse_script_interpreter(std::string_vie
     return std::nullopt;
 }
 
-// The artefact's own `#!` line; none on Windows, which does not read one.
+// The artefact's own `#!` line. Read on every host: where the system starts no
+// file by it, the artefact is not started either, and the remedy -- a toolchain
+// descriptor that names the runner -- is the same.
 inline std::optional<ScriptInterpreter> script_interpreter(const std::filesystem::path& artifact) {
-    if constexpr (mcpplibs::os::is_windows) {
-        return std::nullopt;
-    } else {
-        std::ifstream in(artifact, std::ios::binary);
-        if (!in) return std::nullopt;
-        // The kernel reads no more of the line than this (BINPRM_BUF_SIZE).
-        std::string head(256, '\0');
-        in.read(head.data(), static_cast<std::streamsize>(head.size()));
-        head.resize(static_cast<std::size_t>(in.gcount()));
-        return parse_script_interpreter(head);
-    }
+    std::ifstream in(artifact, std::ios::binary);
+    if (!in) return std::nullopt;
+    // The kernel reads no more of the line than this (BINPRM_BUF_SIZE).
+    std::string head(256, '\0');
+    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(in.gcount()));
+    return parse_script_interpreter(head);
 }
 
 // What `mcpp run` and `mcpp test` say before they execute `artifact` directly

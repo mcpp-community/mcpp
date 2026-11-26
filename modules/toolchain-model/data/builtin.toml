@@ -53,6 +53,12 @@
 #                   the row's executable suffix is part of loading its
 #                   programs: a name template (`artifact_name`, `link.exe`)
 #                   decides what precedes it, and the name ends in it once
+#   dlopen-static-tls
+#                   the bytes of the static TLS block the row's loader serves
+#                   an image loaded by `dlopen` whose objects use the
+#                   initial-exec model (`DF_STATIC_TLS`); a shared image above
+#                   it is reported after the link, and refused when its exact
+#                   `exports` say a host loads it by name. Unstated: not checked
 #
 # Provider keys
 #   name            the provider's name; `builtin:<name>` selects it
@@ -135,11 +141,15 @@
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
+# glibc serves a library loaded by `dlopen` 512 bytes of static TLS, the
+# default of its `glibc.rtld.optional_static_tls` since 2.32; above it,
+# `dlopen` fails with "cannot allocate memory in static TLS block" (mcpp#907).
 [[platform.define]]
 triple   = "x86_64-linux-gnu"
 loader   = "/lib64/ld-linux-x86-64.so.2"
 tier     = "verified"
 standard = true
+dlopen-static-tls = 512
 
 [[platform.define]]
 triple   = "x86_64-linux-musl"
@@ -156,6 +166,7 @@ triple   = "aarch64-linux-gnu"
 loader   = "/lib/ld-linux-aarch64.so.1"
 tier     = "preview"
 standard = true
+dlopen-static-tls = 512
 
 [[platform.define]]
 triple   = "aarch64-linux-musl"
@@ -246,6 +257,7 @@ triple   = "i686-linux-gnu"
 loader   = "/lib/ld-linux.so.2"
 tier     = "planned"
 standard = true
+dlopen-static-tls = 512
 
 [[platform.define]]
 triple   = "i686-openkal"

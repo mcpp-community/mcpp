@@ -18,6 +18,10 @@ import std;
 import mcpp.manifest;
 import mcpp.project;
 import mcpp.home;
+import mcpp.config;
+import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.toolchain.payloads;
 import mcpp.toolchain.target_rows;
 
 export namespace mcpp::cli::complete {
@@ -61,6 +65,16 @@ std::optional<fs::path> existing_home() {
     return std::nullopt;
 }
 
+// The home's configuration, read as every command reads it and with nothing
+// written (`Initialization::ReadOnly`): where its provider's stores and its
+// index copies are is the configuration's answer, not a spelling of this file.
+std::optional<mcpp::config::GlobalConfig> existing_config() {
+    if (!existing_home()) return std::nullopt;
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/true, {}, {}, mcpp::config::Initialization::ReadOnly);
+    if (!cfg) return std::nullopt;
+    return std::move(*cfg);
+}
+
 } // namespace
 
 std::vector<std::string> profiles(std::string_view prefix) {
@@ -94,39 +108,43 @@ std::vector<std::string> targets(std::string_view prefix) {
 
 std::vector<std::string> toolchains(std::string_view prefix) {
     std::vector<std::string> out;
-    auto home = existing_home();
-    if (!home) return out;
-    std::error_code ec;
-    // `<home>/registry/data/xpkgs/xim-x-<family>/<version>`: what
-    // `mcpp toolchain install` installed.
-    for (auto family : {"gcc", "llvm", "msvc", "emsdk"})
-        for (auto const& v : fs::directory_iterator(*home / "registry" / "data" / "xpkgs" / std::format("xim-x-{}", family), ec))
-            if (v.is_directory(ec)) keep(out, std::format("{}@{}", family, v.path().filename().string()), prefix);
+    auto cfg = existing_config();
+    if (!cfg) return out;
+    // What `mcpp toolchain install` installed: the entries of the stores of the
+    // home's provider that a request may name (the payload table,
+    // mcpp.toolchain.payloads), as `<payload>@<version>`.
+    for (auto const& store : mcpp::provider::open(mcpp::config::make_xlings_env(*cfg))->stores())
+        for (auto const& entry : mcpp::provider::layout().entries(store))
+            if (mcpp::toolchain::payloads::named(entry.name))
+                keep(out, std::format("{}@{}", entry.name, entry.version), prefix);
     return out;
 }
 
 std::vector<std::string> index_packages(std::string_view prefix) {
     std::vector<std::string> out;
-    auto home = existing_home();
-    if (!home) return out;
+    auto cfg = existing_config();
+    if (!cfg) return out;
     std::error_code ec;
-    // `<home>/indices/<index>/pkgs/<letter>/<name>.lua`, named `<namespace>.<name>`
-    // when the descriptor states a namespace other than the default one.
+    // The descriptors of the home's index copies (`<index>/pkgs/`), each named as
+    // a dependency key spells it: the package's identity, read by the reader
+    // `mcpp add` uses. A package of the default namespace is offered by its bare
+    // name, and by its qualified one once the word names the namespace.
     std::vector<fs::path> descriptors;
-    for (auto const& index : fs::directory_iterator(*home / "indices", ec))
-        for (auto const& d : fs::recursive_directory_iterator(index.path() / "pkgs", ec))
-            if (d.path().extension() == ".lua") descriptors.push_back(d.path());
+    for (auto const& index : cfg->indexRepos) {
+        if (index.dir.empty()) continue;
+        for (auto it = fs::recursive_directory_iterator(index.dir / "pkgs", ec);
+             !ec && it != fs::recursive_directory_iterator{}; it.increment(ec))
+            if (it->path().extension() == ".lua") descriptors.push_back(it->path());
+    }
+    const std::string qualified = std::format("{}.", mcpp::manifest::kDefaultNamespace);
     for (auto const& file : descriptors) {
-        std::ifstream in(file);
-        std::string text(4096, '\0');
-        in.read(text.data(), static_cast<std::streamsize>(text.size()));
-        text.resize(static_cast<std::size_t>(in.gcount()));
-        std::string ns;
-        if (auto at = text.find("namespace"); at != std::string::npos)
-            if (auto q = text.find('"', at); q != std::string::npos)
-                if (auto e = text.find('"', q + 1); e != std::string::npos) ns = text.substr(q + 1, e - q - 1);
-        const auto name = file.stem().string();
-        keep(out, ns.empty() || ns == "mcpplibs" ? name : std::format("{}.{}", ns, name), prefix);
+        std::ifstream in(file, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(in), {}};
+        const auto id = mcpp::manifest::canonical_xpkg_identity_from_lua(text);
+        if (id.name.empty()) continue;
+        const std::string ns = id.ns.empty() ? std::string(mcpp::manifest::kDefaultNamespace) : id.ns;
+        const bool bare = ns == mcpp::manifest::kDefaultNamespace && !prefix.starts_with(qualified);
+        keep(out, bare ? id.name : std::format("{}.{}", ns, id.name), prefix);
     }
     return out;
 }

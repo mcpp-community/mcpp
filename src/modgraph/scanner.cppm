@@ -981,7 +981,11 @@ SourceUnit scan_entry_file(const std::filesystem::path& file,
                            const std::string&           packageName,
                            const mcpp::ExtensionTable&  extTable)
 {
-    if (auto scanned = scan_file(file, packageName, extTable)) return std::move(*scanned);
+    // A unit whose imports are the compiler's to answer (mcpp#1026) has only a
+    // partial reading here, as a refused one has none: both keep their
+    // line-leading imports, and their form is not decided.
+    if (auto scanned = scan_file(file, packageName, extTable); scanned && !scanned->importsFromCompiler)
+        return std::move(*scanned);
 
     SourceUnit u;
     u.path        = file;

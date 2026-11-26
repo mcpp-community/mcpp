@@ -150,7 +150,8 @@ void write_entry(const std::filesystem::path& entryDir, const Key& k,
 // record's time is that use (the record's content is the key, compared
 // field by field, and does not change).
 // A hit of the entry for the `path` package at `source`: the tree becomes one
-// of its users (mcpp.libs.entry_users). Nothing for an index package.
+// of its users and leaves the entries of its earlier contents
+// (mcpp.libs.entry_users). Nothing for an index package.
 void add_user(const std::filesystem::path& entryDir, const Key& k,
               const std::filesystem::path& source);
 
@@ -296,8 +297,13 @@ void write_entry(const fs::path& entryDir, const Key& k, const fs::path& source)
 }
 
 void add_user(const fs::path& entryDir, const Key& k, const fs::path& source) {
-    if (source.empty() || k.version.find("+path.") == std::string::npos) return;
-    mcpp::libs::entry_users::add(entryDir, source);
+    const auto plus = k.version.find("+path.");
+    if (source.empty() || plus == std::string::npos) return;
+    // A hit under another digest than the tree's last one moves the tree as a
+    // write does: a tree edited to the content another checkout stored hits
+    // that entry, and the entry of its previous content goes once no tree uses it.
+    mcpp::libs::entry_users::supersede(
+        entryDir, std::format("{}@{}", k.packageName, k.version.substr(0, plus + 6)), source);
 }
 
 // The rule of mcpp::home::mark_used, which this module cannot import: the

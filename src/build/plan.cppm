@@ -3033,15 +3033,22 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // A DEPENDENCY'S SHARED LIBRARY IS NAMED BY ITS PACKAGE (mcpp#975),
             // by the function that names its object directory: `compat.sdl3`
             // and `mcpplibs.mwrap.sdl3` both made `libsdl3.so` from a target
-            // named `sdl3`, and the plan wrote two rules for one file. A
-            // target named otherwise than its package keeps its name after the
-            // package's (`libcompat_sdl3_extra.so`). A selected member's
-            // library is the build's own product and keeps its target's name;
-            // a stated `soname` is the name it is loaded by either way.
+            // named `sdl3`, and the plan wrote two rules for one file. The
+            // package is spelled as a dependency key spells it: a package of
+            // the default namespace by its bare name, which is the name its
+            // library always had (`libdepShared.so`), another by its namespace
+            // and name (`libcompat_sdl3.so`). A target named otherwise than its
+            // package keeps its name after the package's
+            // (`libcompat_sdl3_extra.so`). A selected member's library is the
+            // build's own product and keeps its target's name; a stated
+            // `soname` is the name it is loaded by either way.
             auto named = t;
-            if (!p.selectedMember)
+            if (!p.selectedMember) {
+                const auto& spelled = p.manifest.package.namespace_ == mcpp::manifest::kDefaultNamespace
+                    ? p.manifest.package.name : qname;
                 named.name = t.name == p.manifest.package.name || t.name == qname
-                    ? sanitize(qname) : std::format("{}_{}", sanitize(qname), t.name);
+                    ? sanitize(spelled) : std::format("{}_{}", sanitize(spelled), t.name);
+            }
             sharedDepTargets.push_back(SharedDepTarget{
                 .packageIndex = i,
                 .packageName = qname,

@@ -320,6 +320,20 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
     return out;
 }
 
+// AN EDITED TREE'S PREVIOUS ENTRY IS RELEASED (mcpp#974, mcpp#1025), as a
+// `path` host tool's is: every edit of a `path` dependency is a new key, and
+// none would be collected before `[cache] unused_days`. The entry records the
+// trees that use it, and the tree that writes or hits this one is taken from
+// the entries of the same package it used under other digests; an entry no
+// tree uses is removed (mcpp.libs.entry_users). Another checkout of the
+// package keeps the entries it uses.
+static void supersede_tree_entries(const mcpp::bmi_cache::CacheKey& key, const std::filesystem::path& tree) {
+    const auto plus = key.version.find("+path.");
+    if (plus == std::string::npos) return;
+    mcpp::libs::entry_users::supersede(key.dir(),
+        std::format("{}@{}", key.packageName, key.version.substr(0, plus + 6)), tree);
+}
+
 // Why a package was not served, said once (design 2026-11-20 §5.4): kept for
 // the build record and printed under --verbose.
 static void not_served(BuildContext& ctx, const mcpp::modgraph::PackageRoot& pkg,
@@ -505,11 +519,14 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
         }
         mcpp::bmi_cache::touch_accessed(key);
         // The tree this build reads it for uses it, so an edit of another
-        // checkout of the package does not remove it (mcpp#1025).
+        // checkout of the package does not remove it, and no longer uses the
+        // entries of its earlier contents (mcpp#1025): a tree edited to the
+        // content another checkout already stored hits that entry, and the
+        // entry of its previous content goes once no other tree uses it.
         if (depIdent->sourceKind == "path")
-            mcpp::libs::entry_users::add(key.dir(), depIdent->sourceRef.empty()
-                                                        ? pkgRoot.root
-                                                        : std::filesystem::path(depIdent->sourceRef));
+            supersede_tree_entries(key, depIdent->sourceRef.empty()
+                                            ? pkgRoot.root
+                                            : std::filesystem::path(depIdent->sourceRef));
         sup.of[i] = Supply::Served;
         sup.digest[i] = probe.bmiDigest;
         sup.key[i] = key;
@@ -600,20 +617,6 @@ std::expected<void, std::string> step13_dependency_cache(PrepareState& state, Bu
     for (auto i : keys->order)
         if (i != 0) serve_or_fill(state, ctx, i, *keys, sup);
     return {};
-}
-
-// AN EDITED TREE'S PREVIOUS ENTRY IS RELEASED (mcpp#974, mcpp#1025), as a
-// `path` host tool's is: every edit of a `path` dependency is a new key, and
-// none would be collected before `[cache] unused_days`. The entry records the
-// trees that use it, and the tree that wrote this one is taken from the
-// entries of the same package it used under other digests; an entry no tree
-// uses is removed (mcpp.libs.entry_users). Another checkout of the package
-// keeps the entries it uses.
-static void supersede_tree_entries(const mcpp::bmi_cache::CacheKey& key, const std::filesystem::path& tree) {
-    const auto plus = key.version.find("+path.");
-    if (plus == std::string::npos) return;
-    mcpp::libs::entry_users::supersede(key.dir(),
-        std::format("{}@{}", key.packageName, key.version.substr(0, plus + 6)), tree);
 }
 
 void populate_dependency_cache(BuildContext& ctx) {

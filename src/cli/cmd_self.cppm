@@ -171,7 +171,10 @@ export int cmd_self_completion(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (name.empty())
         if (auto sh = mcpp::invocation::get("SHELL"); sh && !sh->empty())
             name = std::filesystem::path(*sh).filename().string();
-    if (name.empty() && mcpplibs::os::is_windows) name = "powershell";
+    // Without `SHELL`, PowerShell is known by its module path: every session it
+    // starts states one, and Windows states one in every process.
+    if (name.empty())
+        if (auto ps = mcpp::invocation::get("PSModulePath"); ps && !ps->empty()) name = "powershell";
     if (name == "pwsh") name = "powershell";
     auto shell = mcpplibs::cmdline::shell_from_string(name);
     if (!shell) {
