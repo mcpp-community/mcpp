@@ -547,4 +547,62 @@ E2E entries{"entries", s::home_fixture, [] {
             expect(fatal(s::lacks(s::text(r), "were not registered"))) << "build " << build << ": " << s::text(r);
         }
     };
+
+    "1165 the work directories of plans are cache entries"_test = [] {
+        // mcpp#969: the directories `emit build-database`, `pack --list-formats` and `publish`
+        // plan in are listed by `cache list` with the project their record names, collected by
+        // `cache prune --older-than`, `cache gc --older-than` and `gc --max-size` by their
+        // record's time (a directory from before the record by its own). `cache clean --all`
+        // removes them with every other kind of entry; a bare `cache clean` leaves them.
+        const s::options home{.where = s::home::fresh};
+        const auto cache = s::case_home(s::home::fresh) / "cache";
+        const auto nowhere = s::case_dir();
+        const auto old = cache / "build-database" / "old";
+        const auto fresh = cache / "pack-formats" / "fresh";
+        const auto legacy = cache / "publish-plan" / "legacy";
+        const auto seed = [&](const fs::path& d, int days, bool record) {
+            fs::create_directories(d / "target");
+            std::ofstream(d / "target" / "build.ninja") << "# planned\n";
+            if (record) std::ofstream(d / ".mcpp-plan", std::ios::binary) << "/projects/" << d.filename().generic_string() << "\n";
+            age(d, std::chrono::hours{24 * days});
+        };
+        const auto seed_all = [&] {
+            fs::remove_all(cache);
+            seed(old, 3, true);
+            seed(fresh, 0, true);
+            seed(legacy, 3, false);
+        };
+
+        seed_all();
+        auto r = s::mcpp({"cache", "list", "--json"}, nowhere, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        std::map<std::string, std::string> labels;
+        for (const auto& e : s::json(r.out)["entries"])
+            if (e["kind"] == "work") labels[e["key"].get<std::string>()] = e["label"].get<std::string>();
+        expect(fatal(labels.size() == 3u)) << "cache list does not list the three work directories\n" << r.out;
+        expect(fatal(labels["old"] == "emit build-database (work directory of /projects/old)")) << labels["old"];
+        expect(fatal(labels["fresh"] == "pack --list-formats (work directory of /projects/fresh)")) << labels["fresh"];
+        expect(fatal(labels["legacy"] == "publish (work directory)")) << labels["legacy"];
+
+        const std::vector<std::vector<std::string>> by_age{{"cache", "prune", "--older-than", "1d"}, {"cache", "gc", "--older-than", "1d"}};
+        for (const auto& cmd : by_age) {
+            seed_all();
+            r = s::mcpp(cmd, nowhere, home);
+            expect(fatal(e2e::succeeded(r))) << r.line << "\n" << s::text(r);
+            expect(fatal(!fs::exists(old))) << r.line << " kept a work directory unused for 3 days\n" << s::text(r);
+            expect(fatal(!fs::exists(legacy))) << r.line << " kept a work directory without a record, 3 days old\n" << s::text(r);
+            expect(fatal(fs::exists(fresh))) << r.line << " removed a work directory used now\n" << s::text(r);
+        }
+        r = s::mcpp({"cache", "gc", "--max-size", "1B"}, nowhere, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(!fs::exists(fresh))) << "a size budget kept a work directory\n" << s::text(r);
+
+        seed_all();
+        r = s::mcpp({"cache", "clean"}, nowhere, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(fs::exists(old) && fs::exists(fresh) && fs::exists(legacy))) << "a bare cache clean removed work directories\n" << s::text(r);
+        r = s::mcpp({"cache", "clean", "--all"}, nowhere, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(!fs::exists(old) && !fs::exists(fresh) && !fs::exists(legacy))) << "clean --all left a work directory\n" << s::text(r);
+    };
 }};

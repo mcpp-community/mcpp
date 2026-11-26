@@ -295,3 +295,58 @@ UTest a_build_programs_version_names_its_programs{"PmLockIo/ABuildProgramsVersio
     expect(eq(back->packages[1].programs, second.programs));
     expect(eq(back->packages[1].version, "0.4.1"));
 }};
+
+// mcpp#892: an entry's name is the lock's key. The short name is the same whichever way
+// the declaring manifest spelled the package, and the package's name drops the marker of
+// a version only build programs hold, which the entry's version tells apart.
+UTest an_entrys_key_is_not_the_packages_name{"PmLockIo/AnEntrysKeyIsNotThePackagesName", [] {
+    auto entry = [](std::string name, std::string ns, std::vector<std::string> programs = {}) {
+        mcpp::pm::LockedPackage p;
+        p.name = std::move(name);
+        p.namespace_ = std::move(ns);
+        p.programs = std::move(programs);
+        return p;
+    };
+    expect(eq(mcpp::pm::short_name(entry("mcpplibs.cmdline", "mcpplibs")), "cmdline"));
+    expect(eq(mcpp::pm::short_name(entry("cmdline", "mcpplibs")), "cmdline"));
+    expect(eq(mcpp::pm::short_name(entry("compat.zlib+pabcdef012345", "compat")), "zlib+pabcdef012345"));
+    // No namespace (a git entry): the name whole, dots included.
+    expect(eq(mcpp::pm::short_name(entry("acme.tool", "")), "acme.tool"));
+    // A name that is its namespace and nothing more is not a prefix to cut.
+    expect(eq(mcpp::pm::short_name(entry("compat.", "compat")), "compat."));
+
+    const std::vector<std::string> programs{"build:acme.gen@1.0.0"};
+    expect(eq(mcpp::pm::short_name(entry("compat.zlib+b0123456789ab", "compat", programs)), "zlib+b0123456789ab"));
+    expect(eq(mcpp::pm::package_name(entry("compat.zlib+b0123456789ab", "compat", programs)), "zlib"));
+    expect(eq(mcpp::pm::package_name(entry("compat.zlib+pabcdef012345+b0123456789ab", "compat", programs)), "zlib+pabcdef012345"));
+    // Without programs `+b` is the package's own spelling.
+    expect(eq(mcpp::pm::package_name(entry("a+b", "")), "a+b"));
+    expect(eq(mcpp::pm::package_name(entry("mcpplibs.cmdline", "mcpplibs")), "cmdline"));
+}};
+
+// mcpp#891: `load` reads a file that is not there as an empty lock; `load_existing` says
+// that it is not there, and both report a file that cannot be read.
+UTest a_lock_that_is_not_there_is_not_an_empty_lock{"PmLockIo/ALockThatIsNotThereIsNotAnEmptyLock", [] {
+    const auto dir = std::filesystem::temp_directory_path() / "mcpp-lock-io-existing";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "mcpp.lock";
+
+    auto absent = mcpp::pm::load_existing(path);
+    expect(fatal(absent.has_value()));
+    expect(!absent->has_value());
+    auto read_as_empty = mcpp::pm::load(path);
+    expect(fatal(read_as_empty.has_value()));
+    expect(read_as_empty->packages.empty());
+
+    std::ofstream(path) << "version = 2\n";
+    auto empty = mcpp::pm::load_existing(path);
+    expect(fatal(empty.has_value()));
+    expect(fatal(empty->has_value()));
+    expect((*empty)->packages.empty());
+
+    std::ofstream(path) << "version = 2\n[package\n";
+    expect(!mcpp::pm::load_existing(path).has_value());
+    expect(!mcpp::pm::load(path).has_value());
+    std::filesystem::remove_all(dir);
+}};

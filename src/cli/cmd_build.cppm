@@ -14,7 +14,7 @@ import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
 import mcpp.build.ninja;          // write_module_maps
-import mcpp.bmi_cache.maintenance;   // parse_duration, for `clean --stale --older-than`
+import mcpp.bmi_cache.maintenance;   // parse_duration, for `clean --stale --older-than`; plan_work_dir
 import mcpp.build.directives;      // the device-slot table
 import mcpp.build.configure;
 import mcpp.build.coff_exports;
@@ -762,12 +762,15 @@ namespace {
 
 // One work directory per project root and member, under the mcpp home: the
 // planning pass writes its lock, its build programs' artifacts and its output
-// directory there, never inside the project.
+// directory there, never inside the project. The cache collects it once no
+// plan has used it for a while (mcpp#969).
 std::filesystem::path build_database_work_dir(const std::filesystem::path& root,
                                               std::string_view member) {
-    return mcpp::home::root() / "cache" / "build-database"
-         / mcpp::toolchain::hash_string(root.lexically_normal().generic_string()
-                                        + "\x1f" + std::string(member));
+    return mcpp::bmi_cache::plan_work_dir(
+        mcpp::bmi_cache::PlanArea::BuildDatabase,
+        mcpp::toolchain::hash_string(root.lexically_normal().generic_string()
+                                     + "\x1f" + std::string(member)),
+        root);
 }
 
 std::optional<std::string> read_whole_file(const std::filesystem::path& p) {

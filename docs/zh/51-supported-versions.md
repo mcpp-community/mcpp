@@ -84,7 +84,8 @@ error: --locked was given and this resolution differs from mcpp.lock:
 ```
 
 发布构建、审计或 CI 作业应当传入 `--locked`。它会关闭构建快路径，因此该断言
-总会执行。
+总会执行。没有 `mcpp.lock` 时没有可供断言的记录：此时 `--locked` 失败并说明这一点，
+而不是把每个包都报成发生了变化，也不写出 lock。
 
 锁尚不约束解析——它只记录并校验解析结果。把锁作为解析的输入来钉住结果，是对
 解析器的另一项改动。
@@ -97,9 +98,15 @@ error: --locked was given and this resolution differs from mcpp.lock:
 mcpp emit sbom -o sbom.json
 ```
 
+组件的 `name`、`group` 与 `purl` 陈述的是包本身，与声明它的清单如何拼写无关：`cmdline` 与
+`mcpplibs.cmdline` 都是 `pkg:mcpp/mcpplibs/cmdline@<版本>`。变体在名字中保留其摘要；只被构建程序
+持有的版本就是该版本的这个包，并为每个构建程序带一条 `mcpp:build-program` 属性。purl 对各段做
+百分号编码，因此 `+` 写作 `%2B`。
+
 它读取 `mcpp.lock` 而不是重新解析，因为一份描述了与实际构建不同的依赖图的
 文档，比没有文档更糟。许可证 mcpp 无法识别的组件会被写成 `NOASSERTION` 而不是
-省略：缺失的字段读起来像「未检查」。
+省略：缺失的字段读起来像「未检查」。没有 `mcpp.lock` 时，文档只列出根包，并在标准
+错误上提示没有任何记录：这对没有依赖的工程是全部事实，对从未构建过的工程则不是。
 
 ## 缺省版本（2026.11.21.1 起）
 
