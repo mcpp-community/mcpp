@@ -34,6 +34,7 @@ import mcpp.diag;
 import mcpp.build.advice;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
+import mcpp.modgraph.p1689;
 import mcpp.toolchain.model;
 import mcpp.modgraph.glob;
 import mcpp.toolchain.dialect;
@@ -2991,11 +2992,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // nothing failed -- and the compile then had no previous object
             // to find its output equal to (mcpp#946 O5). What the dyndep file
             // names is `-fdeps-target`.
-            append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
-                   "-fdeps-format=p1689r5 "
-                   "-fdeps-file=$out -fdeps-target=$deps_target "
-                   "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan\n",
-                   scanPrefix, rsp_ref(scanPayload)));
+            append(std::format("  command = {}\n", mcpp::modgraph::p1689::scan_command({
+                .prefix = scanPrefix, .driver = "$cxx_driver" + rsp_ref(scanPayload),
+                .flags = "$cxxflags $unit_cxxflags", .lang = "$unit_lang", .in = "$in", .out = "$out",
+                .depsTarget = "$deps_target", .depFile = "$out.dep", .scratch = "$out.scan"})));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -3004,11 +3004,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // line at 8191 chars — a quarter of the 32767 ninja gets from
             // CreateProcess — which any package with a large include-dir list
             // overruns (#261: 48 -I entries at a deep consumer path).
-            append(std::format(
-                   "  command = {}$scan_deps -format=p1689 -o $out -- "
-                   "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
-                   "-o $compile_target\n",
-                   scanPrefix, rsp_ref(scanPayload)));
+            append(std::format("  command = {}\n", mcpp::modgraph::p1689::scan_command({
+                .prefix = scanPrefix, .driver = "$cxx_driver" + rsp_ref(scanPayload),
+                .scanDeps = "$scan_deps", .flags = "$cxxflags $unit_cxxflags", .lang = "$unit_lang",
+                .in = "$in", .out = "$out", .compileTarget = "$compile_target"})));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");

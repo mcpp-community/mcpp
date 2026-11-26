@@ -28,6 +28,8 @@ import mcpp.toolchain.model;      // is_msvc_target — the MSVC-ABI default (#7
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.clang;
+import mcpp.modgraph.p1689;
 // For `resolve_version_match` / `list_installed_versions`: a bare compiler
 // family named by the dependency graph resolves to a concrete version through
 // exactly the path `mcpp toolchain default <family>` uses.
@@ -157,6 +159,55 @@ static void build_private_fragments_as_units(PrepareState& state,
         units[i] = std::move(*interfaceUnit);
         units.push_back(std::move(*implementation));
     }
+}
+
+// THE COMPILER'S ANSWER FOR A UNIT WHOSE IMPORTS STAND INSIDE A PREPROCESSOR
+// CONDITION (mcpp#1026). The unit's declaration and imports under its compile:
+// the standard and the graph's dialect words, the target's compile side, its
+// package's include directories and words (defines, features, the conditional
+// sections already merged). The scan command is the one the build's scan edge
+// runs (p1689::scan_command); MSVC's `/scanDependencies` is not asked here, and
+// such a unit is refused under it with that reason.
+static std::expected<mcpp::modgraph::SourceUnit, std::string>
+compiler_scan(PrepareState& state, const std::vector<mcpp::modgraph::PackageRoot>& packages,
+              const mcpp::modgraph::SourceUnit& u) {
+    const auto& tc = *state.tc;
+    if (tc.compiler == mcpp::toolchain::CompilerId::MSVC)
+        return std::unexpected(std::format(
+            "an import or a module declaration stands inside a preprocessor condition, which mcpp reads with "
+            "the compiler's dependency scan; {} is not asked for one while the graph is planned.\n"
+            "       help: state the unit's modules in [build] scan_overrides, or move the condition out of "
+            "the import", tc.label()));
+    std::filesystem::path scanDeps;
+    if (mcpp::toolchain::is_clang(tc)) {
+        auto sd = mcpp::toolchain::clang::find_scan_deps(tc);
+        if (!sd)
+            return std::unexpected(std::format(
+                "an import or a module declaration stands inside a preprocessor condition, which mcpp reads "
+                "with the compiler's dependency scan, and {} has no clang-scan-deps", tc.label()));
+        scanDeps = *sd;
+    }
+    const mcpp::manifest::Manifest* owner = nullptr;
+    for (auto const& p : packages)
+        if (p.manifest.package.name == u.packageName) { owner = &p.manifest; break; }
+    const auto extTable = owner
+        ? mcpp::extension_table_for(owner->buildConfig.moduleExtensions, owner->buildConfig.deviceExtensions)
+        : mcpp::extension_table_for({}, {});
+    std::vector<std::string> words = state.m->buildConfig.dialectCxxflags;
+    for (auto const& d : u.localIncludeDirsAfter) {
+        words.push_back("-idirafter");
+        words.push_back(d.string());
+    }
+    words.insert(words.end(), u.packageCxxflags.begin(), u.packageCxxflags.end());
+    // The scan's records are read once, here; a directory of this process's own.
+    static const auto tmp = std::filesystem::temp_directory_path()
+                          / std::format("mcpp-scan-{:x}", std::random_device{}());
+    auto scanned = mcpp::modgraph::p1689::scan_file(u.path, u.packageName, tc, tmp, u.localIncludeDirs,
+                                                    state.stdFlagAndDialect, extTable, words, scanDeps);
+    if (!scanned) return std::unexpected(scanned.error());
+    mcpp::log::info("scan", std::format("{}: imports read by the compiler's scan ({} module(s))",
+                                        u.path.generic_string(), scanned->requires_.size()));
+    return scanned;
 }
 
 static std::expected<bool, std::string> step11_scan_sources(PrepareState& state) {
@@ -345,7 +396,10 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
             return mcpp::modgraph::scan_packages_p1689(scannedPackages, *state.tc, tmp,
                                                        state.stdFlagAndDialect, closures);
         }
-        return mcpp::modgraph::scan_packages(scannedPackages, closures);
+        return mcpp::modgraph::scan_packages(scannedPackages, closures,
+                                             [&](const mcpp::modgraph::SourceUnit& u) {
+            return compiler_scan(state, scannedPackages, u);
+        });
     }();
     // A `sources` entry that names a file which is not there (#938) stops a
     // build of the tree it is written in, and is a warning in a package

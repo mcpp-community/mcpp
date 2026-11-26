@@ -48,8 +48,31 @@ struct DdiRule {
 // Tolerates the slightly unstable GCC formatting (variable whitespace).
 std::expected<DdiRule, std::string> parse_ddi(std::string_view body);
 
-// Run g++ on `source` and return the populated SourceUnit.
-//   tmpDir : per-build scratch dir for .ddi/.dep/.o byproducts.
+// THE DEPENDENCY SCAN OF ONE UNIT, AS A COMMAND, CONSTRUCTED IN ONE PLACE for
+// the two times it runs: the build's scan edge (each word a ninja variable,
+// `$in`, `$out`) and the plan, which asks the compiler for a unit whose
+// imports stand inside a preprocessor condition (each word a path). GCC scans
+// with the compiler itself; Clang with clang-scan-deps, given the compile.
+struct ScanWords {
+    std::string prefix;          // before the first word (a launcher), with its space
+    std::string driver;          // the compiler, as a word
+    std::string scanDeps;        // clang-scan-deps, as a word; empty: the compiler scans
+    std::string flags;           // the unit's compile words
+    std::string lang;            // the language flag of a module interface; may be empty
+    std::string in;              // the source
+    std::string out;             // the P1689 record written
+    std::string depsTarget;      // GCC: the target the record names
+    std::string depFile;         // GCC: the make-style list of the files the scan read
+    std::string scratch;         // GCC: the `-o` the driver creates, which nothing reads
+    std::string compileTarget;   // Clang: the object the compile it is given would write
+};
+std::string scan_command(const ScanWords& w);
+
+// Run the compiler's scan on `source` and return the populated SourceUnit.
+//   tmpDir   : per-build scratch dir for .ddi/.dep/.o byproducts.
+//   flags    : the unit's own compile words, after the standard and the
+//              include directories (its package's, the graph's dialect words)
+//   scanDeps : clang-scan-deps for a Clang toolchain; empty for GCC
 std::expected<SourceUnit, std::string>
 scan_file(const std::filesystem::path&        source,
           const std::string&                  packageName,
@@ -57,7 +80,9 @@ scan_file(const std::filesystem::path&        source,
           const std::filesystem::path&        tmpDir,
           const std::vector<std::filesystem::path>& includeDirs,
           std::string_view                    cppStandardFlag,
-          const mcpp::ExtensionTable&         extTable);
+          const mcpp::ExtensionTable&         extTable,
+          const std::vector<std::string>&     flags = {},
+          const std::filesystem::path&        scanDeps = {});
 
 } // namespace mcpp::modgraph::p1689
 
@@ -322,7 +347,20 @@ std::string shell_escape(const std::filesystem::path& p) {
     return out;
 }
 
+std::string shell_word(std::string_view w) { return shell_escape(std::filesystem::path(std::string(w))); }
+
 } // namespace
+
+std::string scan_command(const ScanWords& w) {
+    auto lang = w.lang.empty() ? std::string{} : " " + w.lang;
+    if (w.scanDeps.empty())
+        return std::format("{}{} {} -fmodules -fdeps-format=p1689r5 -fdeps-file={} -fdeps-target={} "
+                           "-M -MM -MF {}{} -E {} -o {}",
+                           w.prefix, w.driver, w.flags, w.out, w.depsTarget, w.depFile, lang, w.in,
+                           w.scratch);
+    return std::format("{}{} -format=p1689 -o {} -- {} {}{} -c {} -o {}",
+                       w.prefix, w.scanDeps, w.out, w.driver, w.flags, lang, w.in, w.compileTarget);
+}
 
 std::expected<SourceUnit, std::string>
 scan_file(const std::filesystem::path&        source,
@@ -331,7 +369,9 @@ scan_file(const std::filesystem::path&        source,
           const std::filesystem::path&        tmpDir,
           const std::vector<std::filesystem::path>& includeDirs,
           std::string_view                    cppStandardFlag,
-          const mcpp::ExtensionTable&         extTable)
+          const mcpp::ExtensionTable&         extTable,
+          const std::vector<std::string>&     flags,
+          const std::filesystem::path&        scanDeps)
 {
     std::error_code ec;
     std::filesystem::create_directories(tmpDir, ec);
@@ -378,23 +418,21 @@ scan_file(const std::filesystem::path&        source,
     if (mcpp::produces_bmi(mcpp::classify(source, extTable)))
         lang_flag = std::string(mcpp::toolchain::bmi_traits(tc).moduleInterfaceLangFlag);
 
-    std::string cmd = std::format(
-        "{} {} -fmodules{}{}{}"
-        " -fdeps-format=p1689r5"
-        " -fdeps-file={}"
-        " -fdeps-target={}"
-        " -M -MM -MF {}"
-        " -E {} -o {} 2>&1",
-        shell_escape(tc.binaryPath),
-        std_flag,
-        sysroot_flag,
-        include_flags,
-        lang_flag,
-        shell_escape(ddi),
-        shell_escape(obj),
-        shell_escape(dep),
-        shell_escape(source),
-        shell_escape(obj));
+    std::string words = std_flag + sysroot_flag + include_flags;
+    for (auto const& f : flags) words += " " + shell_word(f);
+    auto scratch = base; scratch += ".scan";
+    const std::string cmd = scan_command({
+        .driver = shell_escape(tc.binaryPath),
+        .scanDeps = scanDeps.empty() ? std::string{} : shell_escape(scanDeps),
+        .flags = words,
+        .lang = lang_flag.empty() ? std::string{} : std::string(lang_flag).substr(lang_flag.front() == ' ' ? 1 : 0),
+        .in = shell_escape(source),
+        .out = shell_escape(ddi),
+        .depsTarget = shell_escape(obj),
+        .depFile = shell_escape(dep),
+        .scratch = shell_escape(scratch),
+        .compileTarget = shell_escape(obj),
+    }) + " 2>&1";
 
     std::string output;
     bool ok = run_capturing(cmd, output);

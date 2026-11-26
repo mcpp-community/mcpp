@@ -1,9 +1,11 @@
 // mcpp.modgraph.scanner — regex-based scan of .cppm/.cpp for module statements.
 //
 // Hard constraints (per docs/01 §4.2):
-//   not supported: #if/#ifdef-guarded import
 //   not supported: header units (import "h" / import <h>)
 //   not supported: files outside [modules].sources glob
+// An import or a module declaration inside a preprocessor condition marks the
+// unit, whose declarations and imports are then the compiler's dependency
+// scan's (`scan_packages`' `answer`, mcpp#1026).
 //
 // Returns a Graph or a list of detailed errors.
 
@@ -187,10 +189,19 @@ struct PackageRoot {
     bool                            selectedMember = false;
     std::string                     memberProducts;
 };
+// The compiler's answer for a unit the text scanner marked
+// (`importsFromCompiler`): the unit with its declaration and imports as the
+// compiler's dependency scan reads them under the unit's compile, or why it
+// could not be scanned.
+using CompilerAnswer = std::function<std::expected<SourceUnit, std::string>(const SourceUnit&)>;
+
 // `closures` states each compiled package's closure (mcpp#732); a module name
-// is then unique per closure, and without them in the whole graph.
+// is then unique per closure, and without them in the whole graph. `answer`
+// scans the units whose imports stand inside a preprocessor condition; without
+// one, such a unit is an error naming it.
 ScanResult scan_packages(const std::vector<PackageRoot>& packages,
-                         const Closures& closures = {});
+                         const Closures& closures = {},
+                         const CompilerAnswer& answer = {});
 
 // Drop-in replacement that delegates per-file scanning to GCC's P1689r5
 // (.ddi) output instead of regex parsing. Same ScanResult shape — used by
@@ -785,6 +796,13 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             if (r.empty() || r == ";") {
                 continue;  // global module fragment marker (`module;`)
             }
+            // A declaration inside a condition is the unit's only under the
+            // compile that takes the branch: the compiler's scan says which
+            // (mcpp#1026).
+            if (if_depth > 0) {
+                u.importsFromCompiler = true;
+                continue;
+            }
             // `module : private;` — the private module fragment
             // ([module.private.frag]), and a THIRD production, not a spelling
             // of the two below.
@@ -912,12 +930,10 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             (r.size() == 6 || r[6] == ' ' || r[6] == '\t' ||
              r[6] == '<' || r[6] == '"' || r[6] == ':'))
         {
-            if (if_depth > 0) {
-                return std::unexpected(ScanError{file, lineno,
-                    "import statement inside conditional preprocessor block (forbidden in M1)"});
-            }
             r = trim(r.substr(6));
             if (r.empty()) continue;
+            // A HEADER UNIT is refused wherever it stands, a condition or not:
+            // mcpp builds no header unit (SPEC-008).
             if (r[0] == '<' || r[0] == '"') {
                 return std::unexpected(ScanError{file, lineno,
                     "header units (import \"h\" / import <h>) are forbidden in M1"});
@@ -929,6 +945,17 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                 ++i;
             }
             if (name.empty()) continue;
+            // AN IMPORT INSIDE A PREPROCESSOR CONDITION (mcpp#1026) is the
+            // unit's under the compile that takes the branch, and which branch
+            // that is depends on the toolchain's predefined macros, the target,
+            // the defines and the headers the unit includes. The compiler's
+            // dependency scan answers it with the unit's compile; this reader
+            // would be a third, partial preprocessor. The unit is marked, and
+            // its imports are the scan's.
+            if (if_depth > 0) {
+                u.importsFromCompiler = true;
+                continue;
+            }
             // Partition import within the same module: prepend the *base*
             // module name. If the current TU itself owns a partition (e.g.
             // its `export module foo:http;`), `u.provides->logicalName`
@@ -1470,6 +1497,36 @@ void resolve_graph(ScanResult& result) {
 
 } // namespace
 
+// The units the text scanner marked, given the compiler's declaration and
+// imports (mcpp#1026). The text scanner's own reading of a marked unit is
+// partial by construction, so a unit no answer covers is an error, not that
+// reading.
+void answer_from_compiler(ScanResult& result, const CompilerAnswer& answer) {
+    for (auto& u : result.graph.units) {
+        if (!u.importsFromCompiler) continue;
+        if (!answer) {
+            result.errors.push_back(ScanError{u.path, 0,
+                "an import or a module declaration stands inside a preprocessor condition; the "
+                "compiler's dependency scan reads it, and this reading of the sources runs none"});
+            continue;
+        }
+        auto scanned = answer(u);
+        if (!scanned) {
+            result.errors.push_back(ScanError{u.path, 0, scanned.error()});
+            continue;
+        }
+        u.provides          = scanned->provides;
+        u.providesInterface = scanned->providesInterface;
+        u.declaration       = scanned->declaration;
+        // A partition import is named by its module in a record (`m:part`);
+        // a re-export the text read stays one only where the scan imports it.
+        u.requires_         = scanned->requires_;
+        std::erase_if(u.reexports, [&](const ModuleId& r) {
+            return std::ranges::none_of(u.requires_, [&](auto const& q) { return q.logicalName == r.logicalName; });
+        });
+    }
+}
+
 ScanResult scan_package(const std::filesystem::path& root,
                         const mcpp::manifest::Manifest& manifest)
 {
@@ -1478,12 +1535,14 @@ ScanResult scan_package(const std::filesystem::path& root,
     auto localIncludeDirsAfter = local_include_dirs_after_for(root, manifest);
     scan_one_into(result, root, manifest, localIncludeDirs, localIncludeDirsAfter,
                   manifest.buildConfig.cflags, manifest.buildConfig.cxxflags);
+    answer_from_compiler(result, {});
     resolve_graph(result);
     return result;
 }
 
 ScanResult scan_packages(const std::vector<PackageRoot>& packages,
-                         const Closures& closures) {
+                         const Closures& closures,
+                         const CompilerAnswer& answer) {
     ScanResult result;
     result.graph.closures = closures;
     for (auto const& p : packages) {
@@ -1515,6 +1574,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages,
                       localIncludeDirsAfter, packageCflags, packageCxxflags,
                       packageAsmflags);
     }
+    answer_from_compiler(result, answer);
     resolve_graph(result);
     return result;
 }
