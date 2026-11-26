@@ -1338,8 +1338,6 @@ int run(int argc, char** argv) {
                 .option(cl::Option("deps").help("Drop package entries (default)"))
                 .option(cl::Option("std").help("Drop std module entries"))
                 .option(cl::Option("tools").help("Drop host tool entries"))
-                .option(cl::Option("work").help(
-                    "Drop the work directories of emit build-database, pack --list-formats and publish"))
                 .option(cl::Option("all").help("Drop every kind of entry"))
                 .option(cl::Option("legacy")
                     .help("Remove the unused pre-v1 cache at $MCPP_HOME/bmi"))

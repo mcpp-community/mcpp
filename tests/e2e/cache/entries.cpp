@@ -552,8 +552,8 @@ E2E entries{"entries", s::home_fixture, [] {
         // mcpp#969: the directories `emit build-database`, `pack --list-formats` and `publish`
         // plan in are listed by `cache list` with the project their record names, collected by
         // `cache prune --older-than`, `cache gc --older-than` and `gc --max-size` by their
-        // record's time (a directory from before the record by its own), and emptied by
-        // `cache clean --work` and `--all`, not by a bare `cache clean`.
+        // record's time (a directory from before the record by its own). `cache clean --all`
+        // removes them with every other kind of entry; a bare `cache clean` leaves them.
         const s::options home{.where = s::home::fresh};
         const auto cache = s::case_home(s::home::fresh) / "cache";
         const auto nowhere = s::case_dir();
@@ -601,11 +601,6 @@ E2E entries{"entries", s::home_fixture, [] {
         r = s::mcpp({"cache", "clean"}, nowhere, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(fs::exists(old) && fs::exists(fresh) && fs::exists(legacy))) << "a bare cache clean removed work directories\n" << s::text(r);
-        r = s::mcpp({"cache", "clean", "--work"}, nowhere, home);
-        expect(fatal(e2e::succeeded(r))) << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "Cleaned work directories of plans"))) << s::text(r);
-        expect(fatal(!fs::exists(cache / "build-database") && !fs::exists(cache / "pack-formats") && !fs::exists(cache / "publish-plan"))) << "clean --work left a work directory\n" << s::text(r);
-        seed_all();
         r = s::mcpp({"cache", "clean", "--all"}, nowhere, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(!fs::exists(old) && !fs::exists(fresh) && !fs::exists(legacy))) << "clean --all left a work directory\n" << s::text(r);

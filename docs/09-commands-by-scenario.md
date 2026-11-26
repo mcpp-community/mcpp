@@ -32,7 +32,7 @@ them. Confusing them costs a full rebuild.
 |---|---|---|---|
 | `target/<triple>/<fingerprint>/`, `target/.build-mcpp/{out,host}/` | one project | a configuration fingerprint changes and opens a new directory; a build program's outputs and the build programs are kept per configuration | `mcpp clean`, `mcpp clean --stale` |
 | the build cache (`mcpp cache dir`) | the whole machine | any project compiles a dependency or a `std` module, or builds a host tool, or compiles the `mcpp` module its build program imports | collected after a build when unused for `[cache] unused_days`; `mcpp cache gc`, `mcpp cache prune`, `mcpp cache clean` |
-| the work directories of plans (`<home>/cache/{build-database,pack-formats,publish-plan}/`) | the whole machine, one per project | `mcpp emit build-database`, `mcpp pack --list-formats` or `mcpp publish` plans a project | collected with the build cache's entries; `mcpp cache clean --work` |
+| the work directories of plans (`<home>/cache/{build-database,pack-formats,publish-plan}/`) | the whole machine, one per project | `mcpp emit build-database`, `mcpp pack --list-formats` or `mcpp publish` plans a project | collected with the build cache's entries, by last use; `mcpp cache clean --all` |
 
 `mcpp clean` removes `target/` entirely, and the next build recompiles
 everything. `mcpp clean --stale` removes only the fingerprint directories that
@@ -137,9 +137,11 @@ per project: `<home>/cache/build-database/`, `cache/pack-formats/` and
 whose one line is the project root. `mcpp cache list` shows each directory as
 an entry of kind `work`, named by the command and that project; the
 collection after a build, `mcpp cache prune`, `mcpp cache gc --older-than` and
-`gc --max-size` collect it by last use, as they collect a package entry; and
-`mcpp cache clean --work` (or `--all`) empties all three areas. A directory
-written before the record is dated by its own time. Removing one costs the
+`gc --max-size` collect it by last use, as they collect a package entry.
+`mcpp cache clean --all` removes every entry of the cache, these and the
+outputs of build programs, the units and the patched variants included; the
+flags `--deps`, `--std` and `--tools` each remove one kind and leave them. A
+directory written before the record is dated by its own time. Removing one costs the
 next plan of that project nothing but writing it again (mcpp#969).
 
 ## The versions a package publishes

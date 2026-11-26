@@ -439,7 +439,8 @@ std::vector<Entry> walk_program_out_entries() {
 
 // The work directories of plans that describe (plan_work_dir): one per
 // project and area, each last used when a plan last ran in it. Collected as
-// the cache's entries are, and emptied by `cache clean --work`.
+// the cache's entries are; like a build program's outputs and the units, the
+// one flag of `cache clean` that removes them is `--all`.
 std::vector<Entry> walk_plan_entries() {
     std::vector<Entry> out;
     for (const auto& area : kPlanAreas) {
@@ -829,10 +830,10 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     return 0;
 }
 
-// `mcpp cache clean [--deps] [--std] [--tools] [--work] [--all] [--legacy]`.
-export int cache_clean(bool deps, bool stds, bool tools, bool work, bool all, bool legacy) {
-    if (all) { deps = true; stds = true; tools = true; work = true; }
-    if (!deps && !stds && !tools && !work && !legacy) deps = true;   // bare `clean` = dep entries
+// `mcpp cache clean [--deps] [--std] [--all] [--legacy]`.
+export int cache_clean(bool deps, bool stds, bool tools, bool all, bool legacy) {
+    if (all) { deps = true; stds = true; tools = true; }
+    if (!deps && !stds && !tools && !legacy) deps = true;   // bare `clean` = dep entries
 
     std::error_code ec;
     if (deps) {
@@ -850,13 +851,14 @@ export int cache_clean(bool deps, bool stds, bool tools, bool work, bool all, bo
         std::filesystem::remove_all(tool_root(), ec);
         std::println("Cleaned host tool entries ({})", human_bytes(n));
     }
-    if (work) {
+    if (all) {
+        // `--all` is every kind `cache list` shows. The three roots above are
+        // gone; what is left are the kinds no flag names: patched variants, the
+        // outputs of build programs, the units and the work directories of
+        // plans (mcpp#969). Before, `--all` left them and stated nothing.
         std::uintmax_t n = 0;
-        for (const auto& area : kPlanAreas) {
-            n += dir_size(plan_area_root(area));
-            std::filesystem::remove_all(plan_area_root(area), ec);
-        }
-        std::println("Cleaned work directories of plans ({})", human_bytes(n));
+        for (const auto& e : walk_collectable()) n += remove_entry(e);
+        std::println("Cleaned the entries of every other kind ({})", human_bytes(n));
     }
     if (legacy) {
         auto legacyRoot = mcpp::home::legacy_bmi_root();
