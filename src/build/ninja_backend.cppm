@@ -34,6 +34,7 @@ import mcpp.diag;
 import mcpp.build.advice;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
+import mcpp.pm.compat.registry;
 import mcpp.modgraph.p1689;
 import mcpp.toolchain.model;
 import mcpp.modgraph.glob;
@@ -998,6 +999,48 @@ std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bo
     if (gui) out.push_back("-mwindows");
     if (fn == "wmain" || fn == "wWinMain") out.push_back("-municode");
     return out;
+}
+
+// THE NAMES A HOST ENTERS AN IMAGE BY (mcpp#982). An `exports` entry without a
+// wildcard is an exact name: the host (a Java process, a loader asking for
+// `PyInit_x`, a plugin host) looks it up by that name, and an image that does
+// not define it fails when it is looked up, after the build. A pattern narrows
+// what is published and may match nothing; an exact name that matches nothing
+// is a missing definition.
+//
+// Read from the image's dynamic symbol table after the link, on the object
+// format whose linker takes a version script without asking whether its
+// names exist (ELF; ld64 refuses an exported name nothing defines, and the PE
+// `.def` is written from the symbols the objects define).
+//
+// COMPAT(unmatched-exact-export): such a name was dropped without a word
+// before 2026.11.27.1. Until the row's floor it is reported, and from the floor
+// it fails the build.
+void report_unmatched_exact_exports(const BuildPlan& plan) {
+    const auto tr = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    const std::string os = tr ? tr->os : (mcpplibs::os::is_macos ? "macos" : mcpplibs::os::is_windows ? "windows" : "linux");
+    if (os == "macos" || os == "ios" || os == "windows") return;
+    auto const* d = mcpp::pm::compat::find_deprecation("unmatched-exact-export");
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::SharedLibrary) continue;
+        std::vector<std::string> exact;
+        for (auto const& p : lu.exportPatterns)
+            if (p.find_first_of("*?[") == std::string::npos) exact.push_back(p);
+        if (exact.empty()) continue;
+        auto symbols = mcpp::runtime::elf::inspect_dynamic_symbols(plan.outputDir / lu.output);
+        if (!symbols) continue;   // not an ELF image this reader reads: nothing is claimed
+        for (auto const& name : exact) {
+            if (std::ranges::any_of(symbols->defined, [&](auto const& s) { return s.name == name; })) continue;
+            const auto detail = std::format("[targets.{}] exports \"{}\"", lu.targetName, name);
+            mcpp::pm::compat::record_use("unmatched-exact-export", lu.targetName, detail, true);
+            if (d)
+                mcpp::diag::warning(d->domain, std::format(
+                    "{}: {} names a symbol the image does not define, so a host that looks it up does not "
+                    "find it. Dropping it without a word is {}. Write {} instead.",
+                    lu.output.filename().string(), detail, mcpp::pm::compat::deprecation_clause(*d),
+                    d->canonical));
+        }
+    }
 }
 
 std::vector<std::string> start_link_flags(std::string_view start, bool direct) {
@@ -5565,6 +5608,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // one reader both build paths call.
     if (ok) mcpp::build::advice::report_and_clear(plan.outputDir);
 
+    if (ok) report_unmatched_exact_exports(plan);
     if (ok) {
         auto runtimeReport =
             mcpp::build::runtime_validation::validate_changed_artifacts(

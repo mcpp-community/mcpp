@@ -91,6 +91,10 @@ enum class Code {
     // the graph and reaching the target, and still not be compiled for the
     // build program, which is what `host-module = true` asks for.
     HostModuleMissing,
+    // Two shared libraries of one build are loaded by one name (their file
+    // name or a stated `soname`): the loader loads the first it finds for
+    // both (mcpp#975).
+    SonameCollision,
     // Two declarations name one xlings package at versions that cannot both
     // hold. Distinct from VersionFloorUnmet, which is about the machine: this
     // one is about two manifests disagreeing over a tool.
@@ -261,6 +265,7 @@ constexpr std::string_view name(Code c) {
         case Code::DeviceSourceUnconsumed:
                                          return "device-source-unconsumed";
         case Code::HostModuleMissing:    return "host-module-missing";
+        case Code::SonameCollision:      return "soname-collision";
         case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::SharedLibraryCxxRuntime:
                                          return "shared-library-cxx-runtime";

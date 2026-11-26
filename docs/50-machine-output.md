@@ -669,6 +669,7 @@ a program classifying the outcome reads `reason`:
 | `accel-backend-undeclared` | a `[build] sources` entry names a backend its own package does not list in `[package] accelerators` |
 | `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
+| `soname-collision` | two shared libraries of one build are loaded by one name, their file name or a stated `soname` (2026.11.27.1+) |
 | `build-program-unpublished-input` | `mcpp publish`: the package's build program reads a file its archive does not carry -- one outside the package's directory, or one HEAD does not track (2026.11.21.1+) |
 | `companion-too-old` | a companion stated beside the toolchain (`companions = { binutils = … }`) is older than the one the toolchain's payload declares (SPEC-006 §2.9) |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |

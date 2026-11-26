@@ -118,6 +118,14 @@ inline constexpr Deprecation kDeprecations[] = {
         "manifest/deprecated", "docs/05-dependencies.md",
     },
     {
+        "unmatched-exact-export", "2026.11.27.1", "2027.3",
+        "an `exports` entry without a wildcard that names a symbol the shared image does not define, "
+        "dropped from the published set without a word",
+        "the name the image defines (its mangled form for a C++ name, or the function declared "
+        "`extern \"C\"`), or the entry under the [target.<selector>] that defines it",
+        "manifest/deprecated", "docs/04-mcpp-toml.md",
+    },
+    {
         "no-universal-flag", "2026.10.30.1", kRemovalFloor,
         "`mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a "
         "target set)",
