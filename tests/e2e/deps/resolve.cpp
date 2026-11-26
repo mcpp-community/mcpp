@@ -147,10 +147,10 @@ E2E resolve{"resolve", s::home_fixture, [] {
     "79 gtest regular dep feature main"_test = [] {
         // #168: compat.gtest as a regular dependency (`mcpp add compat.gtest`) does not inject
         // gtest_main into an app with its own main; `features = ["main"]` does; `add --dev`
-        // writes [dev-dependencies.compat].
+        // writes [dev-dependencies] (a dotted key since 2026.11.27.1, #964).
         auto app = s::project::scaffold("app");
         app.mcpp({"add", "compat.gtest@1.15.2"});
-        expect(fatal(s::has_line(app.read("mcpp.toml"), R"(^\[dependencies\.compat\])"))) << "add did not write [dependencies.compat]";
+        expect(fatal(s::has_line(app.read("mcpp.toml"), R"(^compat\.gtest = "1\.15\.2"$)"))) << "add did not write compat.gtest";
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "#168 — build with regular-dep gtest failed";
         auto newest_graph = [&] {
             std::optional<fs::path> best;
@@ -167,7 +167,8 @@ E2E resolve{"resolve", s::home_fixture, [] {
         expect(e2e::contains(newest_graph(), "gtest_main")) << "features=[main] did not link gtest_main";
         auto lib = s::project::scaffold("libapp");
         lib.mcpp({"add", "--dev", "compat.gtest@1.15.2"});
-        expect(s::has_line(lib.read("mcpp.toml"), R"(^\[dev-dependencies\.compat\])")) << "add --dev did not write [dev-dependencies.compat]";
+        expect(s::has_line(lib.read("mcpp.toml"), R"(^\[dev-dependencies\]$)")) << "add --dev did not write [dev-dependencies]";
+        expect(s::has_line(lib.read("mcpp.toml"), R"(^compat\.gtest = "1\.15\.2"$)")) << "add --dev did not write compat.gtest";
     };
 }};
 

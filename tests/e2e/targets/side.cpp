@@ -431,6 +431,24 @@ int main() {
             << s::text(r);
         expect(fatal(s::has_line(s::text(r), R"(sizeof\(long\) +declared 8 +measured 4)"))) << "the refusal does not name the quantity and both values\n" << s::text(r);
     };
+
+    "1174 a graph C library without a C++ ABI is refused at planning"_test[s::gcc] = [] {
+        // mcpp#898 (SPEC-002 §3.11, docs/22): the graph supplies `c-abi`, no package supplies
+        // `c++-abi`, and a unit imports `std`; the plan stops with the two remedies before anything
+        // is compiled. A stated `cxx_runtime` is the author's answer, and this refusal leaves it.
+        const auto tmp = s::case_dir();
+        s::project(tmp / "libc", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"tiny-musl\"\nversion   = \"0.1.0\"\nprovides  = [\"mcpp:c-abi=musl\"]\n\n[build]\nsources = []\n"}});
+        s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ntiny-musl = { path = \"../libc\" }\n"},
+                                     {"src/main.cpp", "import std;\nint main() { std::println(\"x\"); }\n"}});
+        auto r = app.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "the plan was not refused\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "no package supplies the C++ ABI")) << s::text(r);
+        expect(e2e::contains(s::text(r), "add a dependency that provides `mcpp:c++-abi`, or state [build] cxx_runtime = \"host-coupled\"")) << s::text(r);
+        expect(s::lacks(s::text(r), "features.h")) << "the refusal came after the std module's precompile\n" << s::text(r);
+        app.write("mcpp.toml", app.read("mcpp.toml") + "\n[build]\ncxx_runtime = \"host-coupled\"\n");
+        r = app.mcpp({"build"});
+        expect(s::lacks(s::text(r), "no package supplies the C++ ABI")) << "a stated cxx_runtime was refused\n" << s::text(r);
+    };
 }};
 
 }  // namespace

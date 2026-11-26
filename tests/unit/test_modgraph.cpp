@@ -165,7 +165,11 @@ UTest an_entry_source_the_scanner_refuses_keeps_its_imports{"Scanner/AnEntrySour
           "#endif\n"
           "export import std;\n"
           "int main() {}\n");
-    expect(fatal(!(scan_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table()).has_value())));
+    // The conditional import is the compiler's to answer (mcpp#1026): the text
+    // scan marks the unit rather than refusing it, and its reading is partial.
+    auto scanned = scan_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table());
+    expect(fatal(scanned.has_value()));
+    expect(scanned->importsFromCompiler);
     auto u = scan_entry_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table());
     std::vector<std::string> names;
     for (auto const& r : u.requires_) names.push_back(r.logicalName);
@@ -636,17 +640,41 @@ UTest partition_import_with_dotted_module_name{"Scanner/PartitionImportWithDotte
     std::filesystem::remove_all(dir);
 }};
 
-UTest rejects_conditional_import{"Scanner/RejectsConditionalImport", [] {
+// A CONDITIONAL IMPORT IS THE COMPILER'S TO ANSWER (mcpp#1026). The text scan
+// marks the unit; the plan's answer gives its imports, and a scan with no
+// answer names the unit rather than taking the text's partial reading.
+UTest a_conditional_import_is_the_compilers_to_answer{"Scanner/AConditionalImportIsTheCompilersToAnswer", [] {
     auto dir = make_tempdir("mcpp-scanner");
-    write(dir / "main.cpp",
+    write(dir / "src" / "main.cpp",
           "import std;\n"
           "#ifdef WANT_X\n"
           "import x;\n"
           "#endif\n"
           "int main(){}");
-    auto r = scan_file(dir / "main.cpp", "pkg", mcpp::builtin_extension_table());
-    expect(!r.has_value());
-    expect(ne(r.error().message.find("conditional"), std::string::npos));
+    auto r = scan_file(dir / "src" / "main.cpp", "pkg", mcpp::builtin_extension_table());
+    expect(fatal(r.has_value()));
+    expect(r->importsFromCompiler);
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "pkg";
+    m.modules.sources = {"src/*.cpp"};
+    auto unanswered = scan_packages({PackageRoot{dir, m}});
+    expect(fatal(eq(unanswered.errors.size(), 1u)));
+    expect(ne(unanswered.errors[0].message.find("preprocessor condition"), std::string::npos));
+
+    // The compiler's reading: `WANT_X` undefined, only `std`.
+    auto answered = scan_packages({PackageRoot{dir, m}}, {}, [](const SourceUnit& u) -> std::expected<SourceUnit, std::string> {
+        SourceUnit out = u;
+        out.requires_.erase(std::remove_if(out.requires_.begin(), out.requires_.end(),
+                                           [](auto const& q) { return q.logicalName == "x"; }),
+                            out.requires_.end());
+        return out;
+    });
+    expect(fatal(answered.errors.empty()));
+    expect(fatal(eq(answered.graph.units.size(), 1u)));
+    std::vector<std::string> names;
+    for (auto const& q : answered.graph.units[0].requires_) names.push_back(q.logicalName);
+    expect(eq(names, (std::vector<std::string>{"std"})));
     std::filesystem::remove_all(dir);
 }};
 

@@ -69,7 +69,8 @@ E2E path{"path", s::home_fixture, [] {
 
     "12 add command"_test = [] {
         // `mcpp add` writes [dependencies]: default-namespace packages as bare keys, `ns.name` as a
-        // subtable, `ns:name` only as a deprecated alias; a package no readable index serves is
+        // dotted key unless the table already has a `[dependencies.<ns>]` section (2026.11.27.1,
+        // #964), `ns:name` only as a deprecated alias; a package no readable index serves is
         // refused before mcpp.toml is touched (#305), where absence is provable; `mcpp remove`
         // stays within [dependencies].
         auto app = s::project::scaffold("myapp");
@@ -90,9 +91,9 @@ E2E path{"path", s::home_fixture, [] {
         expect(eq(s::count_matching(manifest(), R"(^\[dependencies\]$)"), std::size_t{1})) << "[dependencies] header duplicated";
         expect(s::has_line(manifest(), R"(^gadget = "0\.2\.0"$)")) << "gadget not set";
         app.mcpp({"add", "acme.util@2.0.0"});
-        expect(s::has_line(manifest(), R"(^\[dependencies\.acme\]$)")) << "missing [dependencies.acme] section";
-        expect(s::has_line(manifest(), R"(^util = "2\.0\.0"$)")) << "util entry missing";
-        expect(s::no_line(manifest(), R"(^acme\.util = )")) << "dotted selector must not be stored as an ambiguous flat key";
+        expect(s::has_line(manifest(), R"(^acme\.util = "2\.0\.0"$)")) << "util entry missing";
+        expect(s::no_line(manifest(), R"(^\[dependencies\.acme\]$)")) << "a section was opened where no section existed";
+        expect(s::no_line(manifest(), R"(^"acme\.util")")) << "the dotted key must not be quoted";
         const auto alias = s::text(app.mcpp({"add", "acme:util@2.0.0"}));
         expect(e2e::contains(alias, "deprecated")) << "missing migration warning";
         expect(e2e::contains(alias, "acme.util@2.0.0")) << "warning lacks canonical replacement";
@@ -101,15 +102,26 @@ E2E path{"path", s::home_fixture, [] {
         expect(e2e::contains(exact, "mcpplibs.capi.lua")) << "migration warning lacks old selector";
         expect(e2e::contains(exact, "capi.lua")) << "migration warning lacks new selector";
         app.mcpp({"add", "capi.lua@5.4.7"});
-        expect(s::has_line(manifest(), R"(^\[dependencies\.capi\]$)")) << "missing [dependencies.capi] section";
-        expect(s::has_line(manifest(), R"(^lua = "5\.4\.7"$)")) << "exact capi.lua entry missing";
+        expect(s::has_line(manifest(), R"(^capi\.lua = "5\.4\.7"$)")) << "exact capi.lua entry missing";
         app.mcpp({"add", "mcpplibs.capi.lua@9.9.9"});
-        expect(s::has_line(manifest(), R"(^\[dependencies\.mcpplibs\.capi\]$)")) << "nested namespace section missing";
+        expect(s::has_line(manifest(), R"(^mcpplibs\.capi\.lua = "9\.9\.9"$)")) << "nested namespace entry missing";
         app.mcpp({"remove", "mcpplibs.capi.lua"});
-        expect(s::no_line(manifest(), R"(^lua = "9\.9\.9"$)")) << "nested exact remove failed";
+        expect(s::no_line(manifest(), R"(^mcpplibs\.capi\.lua = )")) << "nested exact remove failed";
+        expect(s::has_line(manifest(), R"(^capi\.lua = "5\.4\.7"$)")) << "the remove took the sibling";
         app.write("mcpp.toml", manifest() + "\n[dependencies.legacy]\nold = \"0.1.0\"\n");
         app.mcpp({"remove", "legacy.old"});
         expect(s::no_line(manifest(), R"(^old = "0\.1\.0"$)")) << "legacy.old was not removed";
+        // The table flags (mcpp#993): `--build` and `--dev` name the table each command edits,
+        // and both at once are refused.
+        expect(e2e::succeeded(app.mcpp({"add", "--build", "gadget@0.2.0"}))) << "add --build failed";
+        expect(s::has_line(manifest(), R"(^\[build-dependencies\]$)")) << "add --build wrote no [build-dependencies]\n" << manifest();
+        expect(e2e::succeeded(app.mcpp({"add", "--dev", "gadget@0.2.0"}))) << "add --dev failed";
+        expect(s::has_line(manifest(), R"(^\[dev-dependencies\]$)")) << "add --dev wrote no [dev-dependencies]\n" << manifest();
+        expect(failed(app.mcpp({"add", "--dev", "--build", "gadget@0.2.0"}))) << "--dev and --build together were accepted";
+        expect(eq(s::count_matching(manifest(), R"(^gadget = "0\.2\.0"$)"), std::size_t{3})) << "the three tables do not each hold gadget\n" << manifest();
+        expect(e2e::succeeded(app.mcpp({"remove", "--build", "gadget"}))) << "remove --build failed";
+        expect(e2e::succeeded(app.mcpp({"remove", "--dev", "gadget"}))) << "remove --dev failed";
+        expect(eq(s::count_matching(manifest(), R"(^gadget = "0\.2\.0"$)"), std::size_t{1})) << "remove --build/--dev did not take the entries out of their tables, or took [dependencies]'\n" << manifest();
         auto bare = app.mcpp({"add", "bareword"});
         expect(failed(bare)) << "expected error for missing version";
         expect(e2e::contains(s::text(bare), "version required")) << "wrong error";
@@ -133,7 +145,7 @@ E2E path{"path", s::home_fixture, [] {
         expect(e2e::contains(s::text(nope), "route: local index 'acme': root present, pkgs present")) << "missing privacy-safe local-index route state";
         expect(eq(manifest(), before)) << "mcpp.toml mutated for missing package";
         app.mcpp({"add", "unknownidx.thing@1.0.0"});
-        expect(s::has_line(manifest(), R"(^\[dependencies\.unknownidx\]$)")) << "unverifiable namespace should still be added";
+        expect(s::has_line(manifest(), R"(^unknownidx\.thing = "1\.0\.0"$)")) << "unverifiable namespace should still be added";
         auto avail = app.mcpp({"add", "widget@9.9.9"});
         expect(e2e::contains(s::text(avail), "available: 0.1.0")) << "expected available-versions warning";
         expect(s::has_line(manifest(), R"(^widget = "9\.9\.9"$)")) << "widget@9.9.9 should still be written";
@@ -147,7 +159,7 @@ E2E path{"path", s::home_fixture, [] {
         expect(fatal(e2e::succeeded(ws.mcpp({"new", "m1"}))));
         auto added = ws.mcpp_in("m1", {"add", "acme.util@2.0.0"});
         expect(e2e::succeeded(added)) << "workspace member could not read its root-owned local index";
-        expect(s::has_line(ws.read("m1/mcpp.toml"), R"(^util = "2\.0\.0"$)")) << "member should inherit workspace [indices]";
+        expect(s::has_line(ws.read("m1/mcpp.toml"), R"(^acme\.util = "2\.0\.0"$)")) << "member should inherit workspace [indices]";
         auto mnope = ws.mcpp_in("m1", {"add", "acme.nope@1.0.0"});
         expect(failed(mnope)) << "expected error inside workspace member";
         expect(e2e::contains(s::text(mnope), "(acme, nope)")) << "wrong error";
@@ -157,12 +169,44 @@ E2E path{"path", s::home_fixture, [] {
         upsert.write("mcpp.toml", std::format("[package]\nname = \"upsert\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"{}\" }}\n\n[dependencies]\n\"acme.util\" = \"1.0.0\"\n", app.at("index").generic_string()));
         upsert.mcpp({"add", "acme.util@2.0.0"});
         expect(s::no_line(upsert.read("mcpp.toml"), R"(^"acme\.util" = )")) << "legacy flat selector was duplicated instead of migrated";
-        expect(eq(s::count_matching(upsert.read("mcpp.toml"), R"(^util = "2\.0\.0"$)"), std::size_t{1})) << "canonical exact selector was not upserted once";
+        expect(eq(s::count_matching(upsert.read("mcpp.toml"), R"(^acme\.util = "2\.0\.0"$)"), std::size_t{1})) << "canonical exact selector was not upserted once";
         // remove stays within [dependencies].
         upsert.write("mcpp.toml", "[package]\nname = \"remove-scope\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\nwidget = \"0.2.0\"\n\n[dependencies]\nwidget = \"0.1.0\"\n");
         upsert.mcpp({"remove", "widget"});
         expect(s::has_line(upsert.read("mcpp.toml"), R"(^widget = "0\.2\.0"$)")) << "remove escaped [dependencies] and deleted the dev dependency";
         expect(s::no_line(upsert.read("mcpp.toml"), R"(^widget = "0\.1\.0"$)")) << "regular dependency was not removed";
+    };
+
+    "1173 a reopened dependency table is read, reported and repaired"_test[s::python3] = [] {
+        // mcpp#964 (SPEC-004 §17, docs/05): a `[dependencies.<ns>]` header after dotted keys defined
+        // that table is read with them and reported; the next `mcpp add` to the table writes its
+        // entries as dotted keys, which a strict TOML reader accepts.
+        const auto python = s::on_path("python3");
+        expect(fatal(python.has_value())) << "no python3 on PATH";
+        if (!e2e::succeeded(s::run(*python, {"-c", "import tomllib"})))
+            skip("python3 has no tomllib, the strict reader this case compares with");
+        const auto root = s::case_dir();
+        for (auto name : {"util", "extra"})
+            s::project(root / name, {{"mcpp.toml", std::format("[package]\nnamespace = \"acme\"\nname      = \"{0}\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n[targets.{0}]\nkind = \"lib\"\n", name)},
+                                     {"src/lib.cpp", std::format("int {}_value() {{ return 1; }}\n", name)}});
+        s::project app(root / "app", {{"index/pkgs/a/acme.more.lua", index_package("acme", "more", "a package of the namespace", "1.0.0")},
+                                      {"src/main.cpp", "int main() { return 0; }\n"},
+                                      {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[indices]\nacme = { path = \"index\" }\n\n"
+                                                    "[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[dependencies]\nacme.util = { path = \"../util\" }\n\n"
+                                                    "[dependencies.acme]\nextra = { path = \"../extra\" }\n"}});
+        const auto strict = [&] { return s::run(*python, {"-c", "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb'))", app.at("mcpp.toml").string()}); };
+        expect(fatal(!e2e::succeeded(strict()))) << "the fixture is not the table TOML 1.0 refuses";
+        auto r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the reopened table was not read\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "reopened-dotted-table") || e2e::contains(s::text(r), "[dependencies.acme]")) << "the reopened table was not reported\n" << s::text(r);
+        r = app.mcpp({"add", "acme.more@1.0.0"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        const auto repaired = app.read("mcpp.toml");
+        expect(s::no_line(repaired, R"(^\[dependencies\.acme\]$)")) << "the reopening header was kept\n" << repaired;
+        expect(s::has_line(repaired, R"(^acme\.extra = \{ *path = "\.\./extra" *\}$)")) << "the header's entry was not written as a dotted key\n" << repaired;
+        expect(s::has_line(repaired, R"(^acme\.more = "1\.0\.0"$)")) << "the new entry is missing\n" << repaired;
+        auto checked = strict();
+        expect(e2e::succeeded(checked)) << "a strict TOML reader refuses what mcpp add wrote\n" << s::text(checked) << repaired;
     };
 
     "23 remove update"_test = [] {

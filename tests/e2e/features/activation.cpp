@@ -204,7 +204,7 @@ int dep_value(void);
 int main(void) { printf("%d\n", dep_value()); return 0; }
 )cpp"}}};
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "the feature-off build failed";
-        expect(fatal(s::find_files(app.at("target"), R"(libdepshared\.so)").empty())) << "a feature-gated dependency target was built with the feature off";
+        expect(fatal(s::find_files(app.at("target"), R"(libdep_depshared\.so)").empty())) << "a feature-gated dependency target was built with the feature off";
         const auto bin = s::find_file(app.at("target"), "app");
         expect(fatal(bin.has_value())) << "no executable";
         expect(fatal(s::has_line(s::run(*bin).out, "^5$"))) << "the gated-off build does not run";
@@ -220,7 +220,8 @@ main = "src/main.c"
 dep = { path = "../dep", features = ["plugin"] }
 )cpp");
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "the feature-on build failed";
-        expect(s::find_file(app.at("target"), "libdepshared.so").has_value()) << "requesting the feature did not build the gated target";
+        // A target named otherwise than its package is named after the package (mcpp#975).
+        expect(s::find_file(app.at("target"), "libdep_depshared.so").has_value()) << "requesting the feature did not build the gated target";
     };
 
     "601 exclusive capability"_test = [] {

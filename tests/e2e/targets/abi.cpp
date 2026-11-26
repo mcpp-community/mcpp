@@ -237,13 +237,13 @@ int main() {
         auto a = make_app("a", "fwlinux", "");
         auto r = a.mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "FAIL: A: build failed: " << s::text(r);
-        expect(fatal(s::find_file(a.at("target"), "libfw.so").has_value())) << "FAIL: A: no libfw.so: " << s::text(r);
+        expect(fatal(s::find_file(a.at("target"), "libdemo_fw.so").has_value())) << "FAIL: A: no libdemo_fw.so: " << s::text(r);
         auto rec = reason_of(s::find_file(a.at("target"), "resolution.json").value_or(fs::path()), "demo.fw@0.1.0");
         expect(fatal(rec == "shared row-kind")) << "FAIL: A: link record is '" << rec << "'";
         auto b = make_app("b", "fwwin", "");
         r = b.mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "FAIL: B: build failed: " << s::text(r);
-        expect(fatal(!s::find_file(b.at("target"), "libfw.so").has_value())) << "FAIL: B: a non-matching row built libfw.so";
+        expect(fatal(!s::find_file(b.at("target"), "libdemo_fw.so").has_value())) << "FAIL: B: a non-matching row built libdemo_fw.so";
         rec = reason_of(s::find_file(b.at("target"), "resolution.json").value_or(fs::path()), "demo.fw@0.1.0");
         expect(fatal(rec == "static default")) << "FAIL: B: link record is '" << rec << "'";
         auto c = make_app("c", "fwlinux", ", linkage = \"static\"");

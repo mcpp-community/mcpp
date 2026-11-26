@@ -526,11 +526,12 @@ int main() { std::puts("1-2-3"); return fw_anchor() == 41 && named_anchor() == 1
             if (!exe && f.generic_string().ends_with("/bin/app")) exe = f;
         expect(fatal(exe.has_value())) << "no bin/app\n" << s::text(r);
         const auto bin = exe->parent_path();
-        expect(fatal(fs::is_regular_file(bin / "libfw.so"))) << "no bin/libfw.so\n" << s::text(r);
-        expect(fatal(s::read_header(bin / "libfw.so").soname == "libfw.so")) << "libfw.so carries SONAME '" << s::read_header(bin / "libfw.so").soname << "', not its file name";
-        expect(fatal(std::ranges::contains(s::read_header(*exe).needed, std::string("libfw.so")))) << "the consumer no longer needs libfw.so by its file name";
-        expect(fatal(fs::is_regular_file(bin / "libnamed.so"))) << "no bin/libnamed.so";
-        expect(fatal(s::read_header(bin / "libnamed.so").soname == "libnamed.so.1")) << "the declared soname became '" << s::read_header(bin / "libnamed.so").soname << "'";
+        expect(fatal(fs::is_regular_file(bin / "libdemo_fw.so"))) << "no bin/libdemo_fw.so\n" << s::text(r);
+        expect(fatal(s::read_header(bin / "libdemo_fw.so").soname == "libdemo_fw.so")) << "libdemo_fw.so carries SONAME '" << s::read_header(bin / "libdemo_fw.so").soname << "', not its file name";
+        expect(fatal(std::ranges::contains(s::read_header(*exe).needed, std::string("libdemo_fw.so")))) << "the consumer no longer needs libdemo_fw.so by its file name";
+        // The file is named by the package (mcpp#975); the stated soname is the name it is loaded by.
+        expect(fatal(fs::is_regular_file(bin / "libdemo_named.so"))) << "no bin/libdemo_named.so";
+        expect(fatal(s::read_header(bin / "libdemo_named.so").soname == "libnamed.so.1")) << "the declared soname became '" << s::read_header(bin / "libdemo_named.so").soname << "'";
 
         r = app.mcpp({"pack", "--pkg-format", "dir"});
         expect(fatal(e2e::succeeded(r))) << "mcpp pack --pkg-format dir failed\n" << s::text(r);
@@ -539,8 +540,8 @@ int main() { std::puts("1-2-3"); return fw_anchor() == 41 && named_anchor() == 1
         const fs::path manifest = tree->string() + ".stage-manifest";
         const auto lines = file_lines(manifest);
         expect(fatal(!lines.empty() && lines.front() == "closure = walked")) << "the manifest's first line is not 'closure = walked'\n" << s::read_file(manifest);
-        expect(fatal(fs::is_regular_file(*tree / "lib/libfw.so"))) << "lib/libfw.so is not bundled";
-        expect(fatal(has_exact_line(manifest, "needs\tlibfw.so\tlib/libfw.so"))) << "the manifest does not state libfw.so at lib/libfw.so\n" << s::read_file(manifest);
+        expect(fatal(fs::is_regular_file(*tree / "lib/libdemo_fw.so"))) << "lib/libdemo_fw.so is not bundled";
+        expect(fatal(has_exact_line(manifest, "needs\tlibdemo_fw.so\tlib/libdemo_fw.so"))) << "the manifest does not state libdemo_fw.so at lib/libdemo_fw.so\n" << s::read_file(manifest);
         expect(fatal(has_exact_line(manifest, "needs\tlibc.so.6\tplatform"))) << "the manifest does not state libc.so.6 as the platform's\n" << s::read_file(manifest);
         bool files = false, bad = false;
         for (std::size_t i = 1; i < lines.size(); ++i) {

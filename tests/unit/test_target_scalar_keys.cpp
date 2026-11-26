@@ -178,9 +178,29 @@ std::string target_loop_region(const std::string& source) {
     return source.substr(begin, end - begin);
 }
 
+// The tables the one enumeration of dependency tables walks (mcpp#962,
+// modules/manifest/src/dependency_tables.cppm): the names its
+// `dependency_table_name` returns.
+std::vector<std::string> enumerated_dependency_tables() {
+    auto source = read_file(repo_root() / "modules" / "manifest" / "src" / "dependency_tables.cppm");
+    std::vector<std::string> out;
+    auto begin = source.find("constexpr std::string_view dependency_table_name(");
+    if (begin == std::string::npos) return out;
+    auto end = source.find("\n}\n", begin);
+    const std::string ret = "return \"";
+    for (auto pos = source.find(ret, begin); pos != std::string::npos && pos < end; pos = source.find(ret, pos)) {
+        const auto nameStart = pos + ret.size();
+        const auto nameEnd = source.find('"', nameStart);
+        auto name = source.substr(nameStart, nameEnd - nameStart);
+        if (std::ranges::find(out, name) == out.end()) out.push_back(std::move(name));
+        pos = nameEnd;
+    }
+    return out;
+}
+
 // Every sub-table the loop body reads: a `body.find("<key>")` whose first type
-// check is `is_table()`, and every `read_deps("<key>", ...)`, the helper the
-// three conditional dependency tables go through.
+// check is `is_table()`, and every table the dependency enumeration walks when
+// the body calls it (`dependency_tables_in`).
 std::vector<std::string> parsed_target_tables(const std::string& region) {
     std::vector<std::string> out;
     const std::string needle = "body.find(\"";
@@ -196,13 +216,8 @@ std::vector<std::string> parsed_target_tables(const std::string& region) {
         if (classify(region, hits[i].first, nextPos) == Kind::Table)
             out.push_back(hits[i].second);
     }
-    const std::string helper = "read_deps(\"";
-    for (std::size_t pos = 0; (pos = region.find(helper, pos)) != std::string::npos;) {
-        std::size_t nameStart = pos + helper.size();
-        std::size_t nameEnd = region.find('"', nameStart);
-        out.push_back(region.substr(nameStart, nameEnd - nameStart));
-        pos = nameEnd;
-    }
+    if (region.find("dependency_tables_in(") != std::string::npos)
+        for (auto& name : enumerated_dependency_tables()) out.push_back(std::move(name));
     return out;
 }
 

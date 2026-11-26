@@ -90,3 +90,19 @@ UTest another_package_is_not_a_sibling{"EntryUsers/AnotherPackageIsNotASibling",
     expect(fs::exists(other / "users"));
     fs::remove_all(store);
 }};
+
+UTest a_tree_edited_to_another_trees_content_leaves_its_old_entry{"EntryUsers/ATreeEditedToAnotherTreesContentLeavesItsOldEntry", [] {
+    // Both checkouts at one content, then both edited to one new content: the first writes the
+    // new entry, the second hits it, and the entry of the old content has no user left.
+    const auto store = fresh("converge");
+    const auto old = entry(store, "aaaa");
+    mcpp::libs::entry_users::supersede(old, kPrefix, "/w/a/tool");
+    mcpp::libs::entry_users::supersede(old, kPrefix, "/w/b/tool");
+    const auto next = entry(store, "bbbb");
+    mcpp::libs::entry_users::supersede(next, kPrefix, "/w/a/tool");   // a writes the new content
+    expect(fs::exists(old / "entry.json")) << "the entry b uses was removed";
+    mcpp::libs::entry_users::supersede(next, kPrefix, "/w/b/tool");   // b hits it
+    expect(!fs::exists(old)) << "the entry neither tree uses is kept";
+    expect(eq(mcpp::libs::entry_users::users(next).size(), 2u));
+    fs::remove_all(store);
+}};

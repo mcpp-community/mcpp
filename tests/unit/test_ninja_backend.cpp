@@ -49,6 +49,17 @@ std::size_t count_words(std::string_view flags, std::string_view word) {
     return count;
 }
 
+// A path as a node of the emitted graph: forward slashes; `$`, `:` and space escaped.
+std::string ninja_node(const std::filesystem::path& path) {
+    std::string escaped;
+    for (char c : path.lexically_normal().generic_string()) {
+        if (c == ' ' || c == '$' || c == ':')
+            escaped.push_back('$');
+        escaped.push_back(c);
+    }
+    return escaped;
+}
+
 std::string escaped_include_flag(const std::filesystem::path& path) {
     auto s = path.string();
     std::string escaped;
@@ -1280,14 +1291,16 @@ UTest std_artifacts_and_runtime_dlls_use_the_stage_rule{"NinjaBackend/StdArtifac
     // The std artifacts are fingerprint-scoped, so they carry the size-only
     // check: it needs no OPEN of the destination, which is what lets staging
     // survive a holder that denies reads (Windows FileShare.None).
-    expect(ne(ninja.find("build pcm.cache/std.pcm : stage_file "
-                         "/cache/bmi/fp/pcm.cache/std.pcm\n"
+    // Each staged BMI also names its absolute spelling (SPEC-018 §1 item 6).
+    expect(ne(ninja.find("build pcm.cache/std.pcm | " + ninja_node(plan.outputDir / "pcm.cache/std.pcm") +
+                         " : stage_file /cache/bmi/fp/pcm.cache/std.pcm\n"
                          "  verify = --verify size\n"), std::string::npos)) << ninja;
     expect(ne(ninja.find("build obj/std.o : stage_file /cache/bmi/fp/std.o\n"
                          "  verify = --verify size\n"), std::string::npos)) << ninja;
     // std.compat keeps its order-only dependency on the staged std BMI.
-    expect(ne(ninja.find("build pcm.cache/std.compat.pcm : stage_file "
-                         "/cache/bmi/fp/pcm.cache/std.compat.pcm | pcm.cache/std.pcm"), std::string::npos)) << ninja;
+    expect(ne(ninja.find("build pcm.cache/std.compat.pcm | " + ninja_node(plan.outputDir / "pcm.cache/std.compat.pcm") +
+                         " : stage_file /cache/bmi/fp/pcm.cache/std.compat.pcm | pcm.cache/std.pcm"),
+              std::string::npos)) << ninja;
     // Windows DLL deployment shares the rule — and therefore the
     // skip-if-equivalent behaviour that keeps a loaded DLL from failing a build.
     // But NOT the size-only shortcut: a rebuilt DLL keeps its size (PE sections
@@ -1583,7 +1596,9 @@ UTest a_cache_fill_asks_for_every_bmi_of_its_package{"NinjaBackend/ACacheFillAsk
     });
 
     auto ninja = emit_ninja_string(plan);
-    expect(fatal(ne(ninja.find("build pcm.cache/dep/0011aabb/dep.time.pcm : cxx_precompile"), std::string::npos)))
+    expect(fatal(ne(ninja.find("build pcm.cache/dep/0011aabb/dep.time.pcm | " +
+                               ninja_node(plan.outputDir / "pcm.cache/dep/0011aabb/dep.time.pcm") +
+                               " : cxx_precompile"), std::string::npos)))
         << "the fixture is not the two-phase shape\n" << ninja;
     auto at = ninja.rfind("\ndefault ");
     expect(fatal(ne(at, std::string::npos))) << ninja;
@@ -1598,6 +1613,44 @@ UTest a_cache_fill_asks_for_every_bmi_of_its_package{"NinjaBackend/ACacheFillAsk
     expect(ne(line.find(" obj/dep/0011aabb/src/time.m.o"), std::string::npos)) << line;
     expect(ne(line.find(" pcm.cache/dep/0011aabb/dep.time.pcm"), std::string::npos)) << line;
     expect(eq(line.find(" obj/main.o"), std::string::npos)) << "a unit that fills nothing is in the fills: " << line;
+}};
+
+// mcpp#1015: clang's depfile names a BMI by the absolute `-fprebuilt-module-path`
+// and the graph by its relative path. Two nodes for one file let a build with no
+// edit, after an edit, compile the importer of an importer. Under clang the edge
+// that writes a BMI states both spellings; GCC's depfile names the relative one.
+UTest a_bmi_is_one_node_in_both_its_spellings{"NinjaBackend/ABmiIsOneNodeInBothItsSpellings", [] {
+    auto edge_of = [](mcpp::toolchain::CompilerId compiler, const std::string& bmiFile,
+                      std::filesystem::path& outputDir) {
+        auto plan = minimal_plan();
+        plan.toolchain.compiler = compiler;
+        if (compiler == mcpp::toolchain::CompilerId::Clang) {
+            plan.toolchain.version = "23.1.3";
+            plan.toolchain.binaryPath = "/usr/bin/clang++";
+            plan.scanDepsPath = "/usr/bin/clang-scan-deps";
+        }
+        plan.compileUnits.push_back({
+            .source = "src/c.cppm",
+            .kind = mcpp::SourceKind::ModuleInterface,
+            .object = "obj/c.m.o",
+            .packageName = "objc_rule_test",
+            .providesModule = "c",
+            .bmiFile = bmiFile,
+        });
+        outputDir = plan.outputDir;
+        auto ninja = emit_ninja_string(plan);
+        auto at = ninja.find("\nbuild obj/c.m.o ");
+        return at == std::string::npos ? ninja : ninja.substr(at + 1, ninja.find('\n', at + 1) - at - 1);
+    };
+
+    std::filesystem::path out;
+    auto clang = edge_of(mcpp::toolchain::CompilerId::Clang, "c.pcm", out);
+    expect(ne(clang.find("build obj/c.m.o | pcm.cache/c.pcm " + ninja_node(out / "pcm.cache/c.pcm") + " : "),
+              std::string::npos)) << clang;
+
+    auto gcc = edge_of(mcpp::toolchain::CompilerId::GCC, "c.gcm", out);
+    expect(ne(gcc.find("build obj/c.m.o | gcm.cache/c.gcm : "), std::string::npos)) << gcc;
+    expect(eq(gcc.find(ninja_node(out)), std::string::npos)) << gcc;
 }};
 
 // A cached unit whose cachedObject was never filled in is a bug upstream, not a

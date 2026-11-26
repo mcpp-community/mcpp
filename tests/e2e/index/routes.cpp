@@ -288,7 +288,7 @@ E2E routes{"routes", s::home_fixture, [] {
         s::project abs(tmp / "abs-app", {{"mcpp.toml", std::format("[package]\nname = \"absapp\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"{}\" }}\n", (tmp / "abs-index").generic_string())}});
         auto r = abs.mcpp({"add", "acme.util@2.0.0"});
         expect(fatal(e2e::succeeded(r))) << "an absolute local index path did not resolve on this host: " << s::text(r);
-        expect(fatal(s::has_line(abs.read("mcpp.toml"), R"(^util = "2\.0\.0"$)"))) << "the dependency was not written: " << abs.read("mcpp.toml");
+        expect(fatal(s::has_line(abs.read("mcpp.toml"), R"(^acme\.util = "2\.0\.0"$)"))) << "the dependency was not written: " << abs.read("mcpp.toml");
         r = abs.mcpp({"add", "acme.nope@1.0.0"});
         expect(fatal(r.started && r.status != 0)) << "expected a miss for acme.nope";
         expect(fatal(e2e::contains(s::text(r), route))) << "the absolute index is not addressed as a readable root: " << s::text(r);
@@ -298,7 +298,7 @@ E2E routes{"routes", s::home_fixture, [] {
                                    {"m1/mcpp.toml", "[package]\nname = \"m1\"\nversion = \"0.1.0\"\n"}});
         r = ws.mcpp_in("m1", {"add", "acme.util@2.0.0"});
         expect(fatal(e2e::succeeded(r))) << "a workspace member could not read its root-owned local index: " << s::text(r);
-        expect(fatal(s::has_line(ws.read("m1/mcpp.toml"), R"(^util = "2\.0\.0"$)"))) << "the member did not inherit the workspace [indices]: " << ws.read("m1/mcpp.toml");
+        expect(fatal(s::has_line(ws.read("m1/mcpp.toml"), R"(^acme\.util = "2\.0\.0"$)"))) << "the member did not inherit the workspace [indices]: " << ws.read("m1/mcpp.toml");
         r = ws.mcpp_in("m1", {"add", "acme.nope@1.0.0"});
         expect(fatal(r.started && r.status != 0)) << "expected a miss inside the workspace member";
         expect(fatal(e2e::contains(s::text(r), route))) << "the inherited index was anchored somewhere unreadable: " << s::text(r);

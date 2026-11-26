@@ -69,6 +69,33 @@ E2E invariants{"invariants", s::home_fixture, [] {
         metric("edges.compiled", static_cast<double>(rebuilt.compiled), "edges");
     };
 
+    "1176 a build with no edit after an edit of a module compiles nothing"_test[at_most{"edges.compiled", 0}] = [] {
+        // mcpp#1015: `c` is one file, imported by `b`, imported by `main`. A build after an edit of
+        // `c`'s body compiles what the edit reaches, and the next build, which has no edit,
+        // compiles nothing. Under clang the importer of the importer was compiled one build late:
+        // its depfile names `c`'s BMI by the absolute path clang finds it through, which ninja held
+        // as another file than the graph's `pcm.cache/c.pcm`. The host's default toolchain: clang
+        // on macOS and Windows, where the defect was.
+        s::own_home();
+        s::project p({{"mcpp.toml", "[package]\nname    = \"cascade\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cppm\", \"src/*.cpp\"]\n\n"
+                                    "[targets.cascade]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                      {"src/c.cppm", "export module c;\nexport int cv() { return 1; }\n"},
+                      {"src/b.cppm", "export module b;\nimport c;\nexport int bv() { return cv() + 1; }\n"},
+                      {"src/main.cpp", "import b;\nint main() { return bv() > 0 ? 0 : 1; }\n"}});
+        auto [cold, built] = recorded(p, {"build"}, "cold");
+        expect(fatal(e2e::succeeded(cold))) << s::text(cold);
+        p.write("src/c.cppm", "export module c;\nexport int cv() { return 3; }\n");
+        auto [edit, edited] = recorded(p, {"build"}, "edit");
+        expect(fatal(e2e::succeeded(edit))) << s::text(edit);
+        expect(fatal(gt(edited.compiled, std::size_t{0}))) << "the edit compiled nothing";
+        auto [again, rebuilt] = recorded(p, {"build"}, "again");
+        expect(fatal(e2e::succeeded(again))) << s::text(again);
+        std::string compiled;
+        for (auto const& o : rebuilt.compiledOutputs) compiled += "\n  " + o;
+        expect(eq(rebuilt.compiled, std::size_t{0})) << "a build with no edit compiled:" << compiled;
+        metric("edges.compiled", static_cast<double>(rebuilt.compiled), "edges");
+    };
+
     "1122 a dev-dependency is served from the cache to a second project"_test[s::gcc][at_most{"edges.compiled.dependency", 1}] = [] {
         // 5.4: mcpplibs.mtest, a dev-dependency of every test, is compiled once per home, not once
         // per project. Its entry unit (`main`) is the one compile left: a package's entry unit is

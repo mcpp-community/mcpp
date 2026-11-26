@@ -605,4 +605,42 @@ E2E entries{"entries", s::home_fixture, [] {
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(!fs::exists(old) && !fs::exists(fresh) && !fs::exists(legacy))) << "clean --all left a work directory\n" << s::text(r);
     };
+
+    "1171 an entry two trees use is kept for one when the other is edited"_test[s::gcc] = [] {
+        // mcpp#1025 item 1 (docs/09): two checkouts of one library share its entry; an edit in one
+        // writes a new entry and withdraws that checkout from the old one, which the other still
+        // uses and builds from; once both are edited, the old entry has no user and is removed.
+        const auto root = s::case_dir();
+        // A package of this run's own name: the shared home keeps the entries of earlier runs.
+        const auto package = std::format("share1171x{:08x}", std::random_device{}());
+        auto library = [&](std::string_view tree, int answer) {
+            s::project(root / tree, {{"mcpp.toml", std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cppm\"]\n\n[targets.{0}]\nkind = \"lib\"\n", package)},
+                                     {"src/share1171.cppm", std::format("export module share1171;\nexport int answer() {{ return {}; }}\n", answer)}});
+        };
+        auto app = [&](std::string_view name, std::string_view tree) {
+            return s::project(root / name, {{"mcpp.toml", std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n\n[dependencies]\n{2} = {{ path = \"../{1}\" }}\n\n"
+                                                                      "[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", name, tree, package)},
+                                            {"src/main.cpp", "import share1171;\nint main() { return answer() > 0 ? 0 : 1; }\n"}});
+        };
+        library("one", 1);
+        library("two", 1);
+        auto a = app("appone", "one");
+        auto b = app("apptwo", "two");
+        auto dir = s::text(a.mcpp({"cache", "dir"}));
+        while (!dir.empty() && (dir.back() == '\n' || dir.back() == '\r')) dir.pop_back();
+        const fs::path cache{dir};
+        auto entries = [&] { return s::glob(cache, std::format("pkg/*/{}@0.1.0+path.*/*/entry.json", package)).size(); };
+        expect(fatal(e2e::succeeded(a.mcpp({"build"})))) << "appone: build failed";
+        expect(fatal(e2e::succeeded(b.mcpp({"build"})))) << "apptwo: build failed";
+        expect(fatal(eq(entries(), std::size_t{1}))) << "two trees of one content did not share one entry under " << cache;
+        library("one", 2);
+        expect(fatal(e2e::succeeded(a.mcpp({"build"})))) << "appone: the build after the edit failed";
+        expect(fatal(eq(entries(), std::size_t{2}))) << "the entry the other tree uses was removed by an edit of this one";
+        b.remove("target");
+        auto r = b.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "apptwo: a clean build from the kept entry failed\n" << s::text(r);
+        library("two", 2);
+        expect(fatal(e2e::succeeded(b.mcpp({"build"})))) << "apptwo: the build after the edit failed";
+        expect(fatal(eq(entries(), std::size_t{1}))) << "the entry no tree uses was kept";
+    };
 }};
