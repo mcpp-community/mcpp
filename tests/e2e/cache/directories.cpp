@@ -86,7 +86,7 @@ void copy_tree(const fs::path& from, const fs::path& to) {
 
 }  // namespace
 
-E2E directories{"directories", [] {
+E2E directories{"directories", s::home_fixture, [] {
     "609 clean stale"_test = [] {
         // #565: `clean --stale` removes only the fingerprint directories no record considers
         // current and older than the window; --dry-run lists; --older-than; refusals; the

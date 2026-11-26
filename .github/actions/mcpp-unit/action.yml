@@ -41,6 +41,20 @@ inputs:
     description: the tests to run, as `mcpp test` patterns separated by spaces; empty for all
     required: false
     default: ''
+  cases:
+    description: the cases to run, one `mcpp test --case` pattern per line; empty for all
+    required: false
+    default: ''
+  jitter:
+    description: >
+      the most a contention point waits, in milliseconds (MTEST_JITTER, SPEC-017 O12; design
+      2026-11-20 §5.19), with `jitter-seed`; empty for none
+    required: false
+    default: ''
+  jitter-seed:
+    description: the seed of the jitter's waits (MTEST_JITTER_SEED)
+    required: false
+    default: ''
   mcpp:
     description: the mcpp that runs the tests; empty for this commit's (MCPP_FRESH)
     required: false
@@ -70,8 +84,7 @@ runs:
       run: |
         set -uo pipefail
         py=python3; command -v python3 >/dev/null 2>&1 || py=python
-        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
-                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        run=$(bash .github/tools/main_run.sh)  # main's, or the run it registered (design 2026-11-20 §5.22)
         if [ -z "$run" ]; then echo "no successful run of main: the tests run in the order they are listed"; exit 0; fi
         d="$RUNNER_TEMP/unit-history"
         rm -rf "$d"
@@ -114,6 +127,9 @@ runs:
         PATTERNS: ${{ inputs.patterns }}
         TIMEOUT: ${{ inputs.timeout }}
         RUNS: ${{ inputs.mcpp }}
+        CASES: ${{ inputs.cases }}
+        JITTER: ${{ inputs.jitter }}
+        JITTER_SEED: ${{ inputs.jitter-seed }}
       run: |
         set -euo pipefail
         args=(test --timeout "$TIMEOUT" --split auto)
@@ -137,6 +153,12 @@ runs:
           [ -z "$SINCE" ] || args+=(--since "$SINCE")
           # shellcheck disable=SC2206 -- the patterns are words
           [ -z "$PATTERNS" ] || args+=($PATTERNS)
+          while IFS= read -r c; do [ -z "$c" ] || args+=(--case "$c"); done <<< "$CASES"
+        fi
+        # A search for an order defect, never a verdict of its own (design 2026-11-20 §5.19).
+        if [ -n "$JITTER" ]; then
+          export MTEST_JITTER="$JITTER" MTEST_JITTER_SEED="${JITTER_SEED:-0}"
+          echo "jitter: up to $JITTER ms, seed $MTEST_JITTER_SEED"
         fi
         echo "mcpp ${args[*]}"
         "${RUNS:-$MCPP_FRESH}" "${args[@]}"

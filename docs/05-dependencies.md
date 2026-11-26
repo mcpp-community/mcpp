@@ -67,8 +67,8 @@ not deprecated:
 
 ```toml
 [dev-dependencies]
-mcpplibs.mtest         = "0.10.0"
-"mcpplibs.mtest.gtest" = "0.10.0"
+mcpplibs.mtest         = "0.11.3"
+"mcpplibs.mtest.gtest" = "0.11.3"
 ```
 
 ```toml
@@ -463,8 +463,9 @@ Controls, in order of precedence:
 
 | Control | Effect |
 |---|---|
-| `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install, no `git ls-remote`/`clone`. Anything already installed still builds, including git deps whose commit is in `mcpp.lock` and whose clone is cached |
+| `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install, no `git ls-remote`/`clone`. Anything already installed still builds, including git deps whose commit is in `mcpp.lock` and whose clone is cached; a payload the home lacks comes from an archive directory, if one is named (see below) |
 | `MCPP_OFFLINE=1` | Same, for a whole shell session or CI job |
+| `[build] offline = true` (2026.11.21.1+) | Same, stated by the project (`mcpp.toml`) or by the machine (`config.toml`); the command line and the variable take precedence, then the project, then the machine. `MCPP_OFFLINE=0` turns a stated `offline` off for one run |
 | `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh an index implicitly: not on a dependency miss, not on a target row the index's platform column does not list (2026.11.19.1+), not before installing a package the local index lacks, and not for the first sync of a project's custom index (that build stops and names `mcpp index update`). Downloads still work |
 
 `MCPP_NO_AUTO_INSTALL=1` remains accepted as the older, narrower spelling of
@@ -477,7 +478,58 @@ after any failed refresh. An install through xlings is stopped when xlings
 writes nothing, not even its heartbeat, for 300 seconds. Terminating mcpp
 terminates the xlings process it started.
 
+Processes that share a home refresh the index once. A process that finds another
+refreshing it reads the local index at once, unless an index the home reads (the
+provider's own, `xim`, or one the home declares) has no packages yet; it then
+waits for that refresh and reads what it fetched, instead of reporting no local
+package index *(2026.11.13.1+; the provider's own index and a directory not yet
+filled, 2026.11.22.1+, mcpp#927)*.
+
 Run any command with `-v` to see the decision for each dependency and why.
+
+### Offline builds and mcpp fetch (2026.11.21.1+)
+
+`mcpp fetch` is the step of a build that obtains what the build needs, as a
+command of its own. It resolves and plans each configuration as `mcpp build
+--configure-only` does — the dependencies by the lock, the toolchain and the
+payloads it declares, the target's base, the build programs' dependencies, the
+tests' dependencies — so that everything is in the home, and it compiles
+nothing. It takes the selection options of `mcpp build` (`--target`, repeatable;
+`--toolchain`, `--sysroot`, `--platform`, `-p`, `--workspace`, `--profile`,
+`--features`).
+
+```bash
+mcpp fetch                       # online: put what the build needs in the home
+mcpp fetch --to ./bundle         # then write it into a directory
+mcpp fetch --from ./bundle       # take such a directory into this home first
+mcpp build --offline             # afterwards: no network
+```
+
+- `--to <dir>` writes every payload the run used, with the closure of each
+  (xlings `download --to --with-index`), a snapshot of each index that resolved
+  them, a `git bundle` of each git clone the build used, and `bundle.toml`,
+  which describes the directory. The directory's layout is not an interface:
+  a directory one release writes, that release and every later one read.
+- `--from <dir>` places the bundle's index snapshots where the home has no index
+  of its own (an index the home keeps as a git work tree is kept), installs the
+  packages resolving with those snapshots, imports the clones into
+  `~/.mcpp/git`, and then plans as `mcpp fetch` does. A home that did not exist
+  is created and bootstrapped from the bundle. Afterwards the directory may be
+  removed.
+- `--from` refuses a bundle that lacks a version `mcpp.lock` records
+  (`bundle-older-than-lock`), and warns when the bundle was written on another
+  host or for none of the selected targets (`bundle-lacks-target`).
+
+An offline run that needs a payload the home lacks is refused by its cause:
+
+| The run | Refusal |
+|---|---|
+| names no archive directory | `offline-download-required`: nothing is asked; the remedy names how the run became offline and `mcpp fetch --to`, `--from` |
+| names archive directories (`[xlings] archives`, `MCPP_ARCHIVES`; 25 — Home, Indices and Store) | the download cache and the directories are asked, the network is not; `artifact-unavailable-offline` when none holds the archive, with the provider's list of what it lacked |
+
+The commit of a git dependency comes from `mcpp.lock` offline, so a project
+carried with `mcpp fetch --to` commits its lock. `mcpp self doctor` installs
+nothing, whatever archive directories are named.
 
 ## `[dev-dependencies]` — Test Dependencies
 
@@ -809,9 +861,9 @@ it rather than building it without its patches.
 ## Current limitations
 
 - **Two things need the network, and only two:** resolving a branch that has no
-  commit in the lock, and cloning a commit that is not cached yet. A `git =`
-  value naming a local directory or a `file://` URL needs neither and is never
-  refused offline.
+  commit in the lock, and cloning a commit that is not cached yet (a clone
+  `mcpp fetch --from` imported is cached). A `git =` value naming a local
+  directory or a `file://` URL needs neither and is never refused offline.
 - The index-refresh window **does not apply to a selector that states a
   namespace**. `mcpplibs.gtest` misses and stays missed until the next refresh.
 - `mcpp.lock` records and verifies a resolution; it does not constrain one. See

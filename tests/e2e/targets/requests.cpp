@@ -70,7 +70,7 @@ std::string uname_m() {
     return s::on_macos() ? "arm64" : "aarch64";
 }
 
-E2E requests{"requests", [] {
+E2E requests{"requests", s::home_fixture, [] {
     "282 target is a request"_test[s::gcc] = [] {
         // A triple that declines to name a C library is no contradiction of the graph's; one
         // that names another is reported, with what resolved and a spelling to use instead.
@@ -277,19 +277,24 @@ E2E requests{"requests", [] {
     };
 
     "300 a registered family is not reported unknown"_test[s::unix_shell][s::jq] = [] {
-        // A family the vocabulary registers (riscv64-linux, whose row riscv64-linux-musl is
-        // planned) is refused as planned, naming the row that exists and no triple nobody wrote; a
-        // typo is still unknown and keeps its suggestion. The rule is decided in the build's
-        // preparation (its tier gate), which exports no function that answers it.
+        // A family the vocabulary registers is never unknown: `riscv64-linux`, whose one row is
+        // riscv64-linux-musl, resolves to it and quotes no triple nobody wrote; `i686-linux`, whose
+        // rows are planned, is refused as planned, naming the row it resolves to. A typo is still
+        // unknown and keeps its suggestion. The rule is decided in the build's preparation (its
+        // tier gate), which exports no function that answers it.
         s::project p({{"mcpp.toml", "[package]\nname    = \"unkprobe\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "extern \"C\" int main(int, char**, char**) { return 0; }\n"}});
         auto json_for = [&](std::string_view t) { return s::json(p.mcpp({"why", "toolchain", "--target", std::string(t), "--format", "json"}).out); };
         const auto j = json_for("riscv64-linux");
         const auto reason = jstr(j, {"data", "reason"}, "-");
         const auto msg = messages(j);
-        expect(fatal(reason == "tier-planned")) << "FAIL: riscv64-linux refused as '" << reason << "', expected tier-planned\n" << msg;
-        expect(fatal(e2e::contains(msg, "riscv64-linux-musl"))) << "FAIL: the refusal does not name riscv64-linux-musl\n" << msg;
-        expect(fatal(s::lacks(msg, "riscv64-linux-gnu"))) << "FAIL: the refusal quotes 'riscv64-linux-gnu', which the reader never wrote";
+        expect(fatal(reason != "unknown-target" && reason != "tier-planned")) << "FAIL: riscv64-linux refused as '" << reason << "'\n" << msg;
+        expect(fatal(s::lacks(msg, "riscv64-linux-gnu"))) << "FAIL: the answer quotes 'riscv64-linux-gnu', which the reader never wrote\n" << msg;
+        const auto jp = json_for("i686-linux");
+        const auto reasonp = jstr(jp, {"data", "reason"}, "-");
+        const auto msgp = messages(jp);
+        expect(fatal(reasonp == "tier-planned")) << "FAIL: i686-linux refused as '" << reasonp << "', expected tier-planned\n" << msgp;
+        expect(fatal(e2e::contains(msgp, "i686-linux-gnu"))) << "FAIL: the refusal does not name the row i686-linux resolves to\n" << msgp;
         const auto j2 = json_for("x86_64-linux-mus");
         const auto reason2 = jstr(j2, {"data", "reason"}, "-");
         const auto msg2 = messages(j2);

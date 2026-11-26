@@ -29,6 +29,14 @@ on:
         description: whether the set gives this host any case
         type: boolean
         default: true
+      history:
+        description: the run whose stores the plan divided by (`none` for none); empty to resolve it
+        type: string
+        default: ''
+      coverage:
+        description: the run whose coverage map the plan read (`none` for none); empty to resolve it
+        type: string
+        default: ''
 
 jobs:
   e2e:
@@ -89,7 +97,7 @@ jobs:
       - name: "Toolchain: MinGW payload for the fat-package e2e"
         shell: bash
         run: |
-          # The build job's prewarm installs `mingw 16.1.0` on `main` and saves
+          # The build job's prewarm installs `mingw 16.2.0` on `main` and saves
           # it into the sandbox cache, so every PR restores a sandbox that
           # already holds it. The install call is then a no-op but still pays
           # the mcpp-toolchain startup cost; measured 68 s on three shards per
@@ -99,14 +107,14 @@ jobs:
           # passing one).
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           found=""
-          for c in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe \
-                   "$HOME"/.xlings/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe; do
+          for c in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/16.2.0/bin/g++.exe \
+                   "$HOME"/.xlings/data/xpkgs/xim-x-mingw-gcc/16.2.0/bin/g++.exe; do
             [[ -x "$c" ]] && { found="$c"; break; }
           done
           if [ -z "$found" ]; then
-            "$MCPP_SELF" toolchain install mingw 16.1.0
-            for c in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe \
-                     "$HOME"/.xlings/data/xpkgs/xim-x-mingw-gcc/*/bin/g++.exe; do
+            "$MCPP_SELF" toolchain install mingw 16.2.0
+            for c in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-mingw-gcc/16.2.0/bin/g++.exe \
+                     "$HOME"/.xlings/data/xpkgs/xim-x-mingw-gcc/16.2.0/bin/g++.exe; do
               [[ -x "$c" ]] && { found="$c"; break; }
             done
           fi
@@ -119,6 +127,8 @@ jobs:
       - uses: ./.github/actions/e2e-mtest
         with:
           host: windows
+          history: ${{ inputs.history }}
+          coverage: ${{ inputs.coverage }}
 
       - name: E2E suite
         shell: bash

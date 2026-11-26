@@ -260,7 +260,16 @@ std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i) 
         }
         return joined;
     }
-    return {};
+    // No package supplies the layer to the target: the system does, and its
+    // row states the interfaces (design 2026-11-22 §3.17).
+    auto const& l = state.resolvedTargetSide.kernelAbi;
+    if (!target || !state.targetSideResolved || l.fromGraph() || !l.interfacesStated) return {};
+    std::string joined;
+    for (auto const& name : l.interfaces) {
+        if (!joined.empty()) joined += ';';
+        joined += name;
+    }
+    return joined;
 }
 
 PackageInstances package_instances(const PrepareState& state) {
@@ -1398,7 +1407,12 @@ static void step6_record_tool_provision(PrepareState& state, HostToolCtx& ctx,
             auto var = mcpp::build::tool_store::env_var_name(n, ctx.toolName);
             if (std::ranges::find(vars, var) != vars.end()) continue;
             vars.push_back(var);
-            v.emplace_back(std::move(var), p.string());
+            // The owner is the providing package: two packages building one
+            // tool name under one variable are two owners (§3.7).
+            v.push_back({std::move(var), p.string(),
+                         std::format("dep_bin(\"{}\", \"{}\")", n, ctx.toolName),
+                         state.packages[ctx.depIdx].root.string(),
+                         mcpp::build::tool_store::ambiguous_env_var_name(n, ctx.toolName)});
         }
     }
 }
@@ -2044,6 +2058,38 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                 bpEnv.programCompile  = program->compile;
             } else {
                 bpEnv.programError = program.error();
+            }
+            // A PACKAGE WHOSE SOURCES ARE NAMED RUNS ITS PROGRAM IN THE HOME
+            // (design 2026-11-20 §5.2): its OUT_DIR and run record are keyed by
+            // its contract, so every project that builds it in one
+            // configuration states the same include directories and shares
+            // its cache entry. Held while the program runs: a second project
+            // waits, then replays the directives the first recorded. A program
+            // run in a packing pass is not: what it writes is a function of the
+            // pack's request and the member's staged tree, which its contract
+            // does not hold, and two
+            // projects packing through one provider read each other's archive
+            // (measured: e2e 868 found its provider's package in the home).
+            std::optional<mcpp::home::FileLock> outLock;
+            if (program && sources_named(state, i) && !state.overrides.describes() && bpEnv.packFormat.empty()
+                && bpEnv.packStageDir.empty()) {
+                auto label = std::format("{}@{}", pkg.manifest.package.name, pkg.manifest.package.version);
+                for (auto& c : label)
+                    if (c == '/' || c == '\\' || c == ':') c = '_';
+                const auto dir = mcpp::build::program_out_root() / label
+                               / mcpp::build::program_contract_digest(pkg.root, bpEnv);
+                bpEnv.outDir = dir / "out";
+                bpEnv.genBase = bpEnv.outDir;
+                bpEnv.artifactsDir = dir / "run";
+                outLock = mcpp::home::FileLock::acquire(
+                    dir, "run.lock", std::format("{}'s build program", label), std::chrono::seconds{2},
+                    [&](std::string_view holder) {
+                        mcpp::ui::info("note", std::format("waiting for {} ({})", holder.empty() ? label : holder,
+                                                           mcpp::home::spelling(dir)));
+                    });
+                // Its last use, which `mcpp cache gc` collects by.
+                std::ofstream(dir / ".mcpp-used", std::ios::binary | std::ios::trunc);
+                state.programOutDirs[i] = bpEnv.outDir;
             }
             auto& bcDep = pkg.manifest.buildConfig;
             const auto cxxN = bcDep.cxxflags.size();

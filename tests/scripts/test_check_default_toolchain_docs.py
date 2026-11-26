@@ -18,9 +18,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / ".github" / "tools" / "check_default_toolchain_docs.py"
 DOCS = ["docs/01-getting-started.md", "docs/zh/01-getting-started.md",
         "docs/20-toolchains.md", "docs/zh/20-toolchains.md"]
-ROWS = [("Linux", "x86_64", "gcc@16.1.0"), ("Linux", "aarch64", "llvm@23.1.3"), ("Linux", "riscv64", "gcc@15.1.0-musl"),
-        ("Darwin", "arm64", "llvm@23.1.3"), ("Windows", "AMD64", "llvm@23.1.3"),
-        ("Windows", "AMD64", "gcc@16.1.0")]
+# A machine of each host pattern of the built-in table's toolchain defaults: the
+# rows are the table's (modules/toolchain-model/data/builtin.toml), not a copy.
+MACHINE = {"linux-x86_64": ("Linux", "x86_64"), "linux-aarch64": ("Linux", "aarch64"),
+           "linux-*": ("Linux", "riscv64"), "macos-*": ("Darwin", "arm64"), "windows-*": ("Windows", "AMD64")}
+
+
+def default_rows() -> list[tuple[str, str, str]]:
+    import tomllib
+    data = tomllib.loads((REPO_ROOT / "modules/toolchain-model/data/builtin.toml").read_text(encoding="utf-8"))
+    rows = []
+    for d in data["default"]:
+        if d["of"] != "toolchain":
+            continue
+        for host in d["hosts"]:
+            rows.append((*MACHINE[host], d["use"]))
+    return rows
+
+
+ROWS = default_rows()
 
 
 def run(root: Path, os_name: str, arch: str, spec: str) -> int:

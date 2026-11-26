@@ -117,9 +117,10 @@ UTest android_is_reached_by_name_only{"TargetSelect/AndroidIsReachedByNameOnly",
 }};
 
 UTest a_planned_row_is_the_answer_only_when_alone{"TargetSelect/APlannedRowIsTheAnswerOnlyWhenAlone", [] {
-    auto s = on("linux-x86_64", {"riscv64-linux", "riscv64", "linux", "gnu"});
+    // Every row of i686 linux is planned, so the pattern's answer is one.
+    auto s = on("linux-x86_64", {"i686-linux", "i686", "linux", "gnu"});
     expect(fatal(s.row != nullptr));
-    expect(eq(s.identity(), "riscv64-linux-musl"));
+    expect(eq(s.identity(), "i686-linux-gnu"));
     expect(eq(s.row->tier, "planned"));
     // x86_64-macos is planned; the musl identity beside it is not.
     expect(eq(on("macos-x86_64", {"x86_64-macos", "x86_64", "macos", ""}).identity(), "x86_64-macos-musl"));

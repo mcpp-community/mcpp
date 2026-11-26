@@ -24,7 +24,7 @@ std::map<std::string, std::optional<std::string>> snapshot(const fs::path& root)
     return out;
 }
 
-E2E homes{"homes", [] {
+E2E homes{"homes", s::home_fixture, [] {
     "687 the vendored xlings probe is an argument vector"_test = [] {
         // A: the vendored xlings's version probe runs without a shell. B: a vendored binary
         // answering an older version (ninja stands in) is replaced from MCPP_VENDORED_XLINGS.
@@ -39,16 +39,24 @@ E2E homes{"homes", [] {
         expect(fatal(fs::is_regular_file(vendored))) << "the first command did not vendor xlings at " << vendored << ": " << s::text(r);
         r = s::mcpp({"self", "init"}, tmp, o);
         expect(fatal(!s::contains_nocase(r.err, "cannot find the path specified"))) << "A: the version probe reached a shell that could not open its redirect: " << r.err;
+        // Any ninja binary stands in: the case's home's, else the shared home's, which the case's
+        // home reads as an upstream and so holds it in its own store only once it installed one.
+        std::vector<fs::path> candidates;
+        for (const auto& [base, pattern] : {std::pair{home, "*/ninja"}, std::pair{home, "*/bin/ninja"},
+                                            std::pair{s::shared_home(), "*/ninja"}, std::pair{s::shared_home(), "*/bin/ninja"}})
+            std::ranges::copy(s::glob(base / "registry/data/xpkgs/xim-x-ninja", std::string(pattern) + (s::on_windows() ? ".exe" : "")),
+                              std::back_inserter(candidates));
         std::optional<fs::path> ninja;
-        for (std::string_view pattern : {"*/ninja", "*/bin/ninja"}) {
-            for (const auto& c : s::glob(home / "registry/data/xpkgs/xim-x-ninja", std::string(pattern) + (s::on_windows() ? ".exe" : "")))
-                if (fs::is_regular_file(c)) { ninja = c; break; }
-            if (ninja) break;
-        }
-        expect(fatal(ninja.has_value())) << "B: no ninja binary to stand in for an older xlings under " << home / "registry";
+        if (auto c = std::ranges::find_if(candidates, [](const fs::path& p) { return fs::is_regular_file(p); }); c != candidates.end())
+            ninja = *c;
+        expect(fatal(ninja.has_value())) << "B: no ninja binary to stand in for an older xlings under " << home / "registry" << " or " << s::shared_home() / "registry";
         const auto answer = s::run(*ninja, {"--version"}).out;
-        const auto older = answer.substr(0, answer.find('\n'));
-        expect(fatal(std::regex_match(older, std::regex{R"([0-9].*\..*)"}))) << "B: the stand-in " << *ninja << " answered '" << older << "', not a dotted version";
+        // The version mcpp reads from the answer: its leading dotted numbers (ninja 1.12.1-mcpp.1
+        // answers `1.12.1-mcpp.1`, and is read as 1.12.1).
+        std::smatch dotted;
+        const auto first = answer.substr(0, answer.find('\n'));
+        expect(fatal(std::regex_search(first, dotted, std::regex{R"(^[0-9]+(\.[0-9]+)+)"}))) << "B: the stand-in " << *ninja << " answered '" << first << "', not a dotted version";
+        const auto older = dotted.str();
         const auto real = tmp / "real" / s::exe("xlings");
         fs::create_directories(real.parent_path());
         fs::copy_file(vendored, real);
@@ -97,9 +105,9 @@ E2E homes{"homes", [] {
         const auto run = [&](std::vector<std::string> args, std::optional<int> expected = std::nullopt, bool offline = true) {
             auto e = env;
             if (!offline) e.emplace_back("MCPP_OFFLINE", std::nullopt);
-            args.insert(args.begin(), s::mcpp_path());
-            auto p = e2e::run({.argv = args, .cwd = root, .env = e, .timeout = std::chrono::seconds{15}});
-            if (expected) expect(fatal(p.started && p.status == *expected)) << args[1] << " " << (args.size() > 2 ? args[2] : "") << ": exit " << p.status << ", expected " << *expected << "\n" << p.out << p.err;
+            const auto what = args[0] + (args.size() > 1 ? " " + args[1] : "");
+            auto p = s::mcpp(std::move(args), root, {.env = std::move(e), .timeout = std::chrono::seconds{15}});
+            if (expected) expect(fatal(p.started && p.status == *expected)) << what << ": exit " << p.status << ", expected " << *expected << "\n" << p.out << p.err;
             return p;
         };
         const auto home_of = [&] { return s::json(run({"self", "env", "--format", "json"}, 0).out)["data"]; };

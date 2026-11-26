@@ -99,7 +99,28 @@ std::string source_tag(const SourceDecision& d, const fs::path& relativeTo) {
     return std::format("{} · {}", cls, place);
 }
 
+// A HOST INPUT IS SAID ONCE PER PROJECT AND IDENTITY (design 2026-11-21,
+// offline and toolchain defaults §3.3): a source found on this machine (PATH,
+// `glibc@system`) or a toolchain named by its directory. The note names it,
+// says another machine may build differently, and, when mcpp.toml states it,
+// that the statement is a machine's. Its value and detail are part of the
+// key, so the machine's input changing is said again.
+void notice_host_input(const SourceDecision& d) {
+    const bool host = d.cls == SourceClass::Host
+        || (d.cls == SourceClass::Custom && d.subject.starts_with("toolchain."));
+    if (!host || d.value.empty()) return;
+    const auto what = d.detail.empty() ? d.value : std::format("{} {}", d.detail, d.value);
+    std::string hint = "another machine may build differently; docs/25, \"Host inputs\"";
+    if (d.originKind == "manifest")
+        hint = "mcpp.toml states it, so it holds only on machines like this one, and a machine's "
+               "input belongs in config.toml; " + hint;
+    mcpp::diag::notice(mcpp::diag::Severity::Note, "host-input",
+        std::format("{}\x1f{}", d.subject, what),
+        std::format("{} is this machine's ({}), not the store's", subject_shown(d), what), hint);
+}
+
 void record_source(PrepareState& state, SourceDecision d) {
+    if (state.overrides.tool_depth == 0) notice_host_input(d);
     const bool announce = d.announce && !source_class_is_default(d.cls)
         && state.announcedSources.insert(d.subject + "\x1f" + d.value).second;
     if (announce) {
@@ -379,12 +400,18 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
     if (!cfg) return;
     auto xlEnv = mcpp::config::make_xlings_env(**cfg);
     std::set<std::string> answered;
-    // Namespaced first -- it is the exact spelling, and the bare form must not
-    // shadow it (the receiver keeps the first value it is given for a name).
+    // Namespaced first -- it is the exact spelling, and the bare one answers
+    // the first declared only while that reading is deprecated (§3.7). The
+    // owner is the payload: two namespaces declaring a name are two owners.
     auto put = [&](const mcpp::provider::PackageRef& ref, std::string_view suffix,
                    const std::string& value) {
-        e.xpkgDirs.emplace_back(mcpp::build::xpkg_env_var(ref.ns, ref.name, suffix), value);
-        e.xpkgDirs.emplace_back(mcpp::build::xpkg_env_var("", ref.name, suffix), value);
+        const auto owner = ref.ns + ":" + ref.name;
+        e.xpkgDirs.push_back({mcpp::build::xpkg_env_var(ref.ns, ref.name, suffix), value,
+                              std::format("xpkg_dir(\"{}\", \"{}\")", ref.ns, ref.name), owner,
+                              mcpp::build::xpkg_ambiguous_var(ref.ns, ref.name)});
+        e.xpkgDirs.push_back({mcpp::build::xpkg_env_var("", ref.name, suffix), value,
+                              std::format("xpkg_dir(\"{}\")", ref.name), owner,
+                              mcpp::build::xpkg_ambiguous_var("", ref.name)});
     };
     for (auto const& raw : declared) {
         // THE VERSION THIS BUILD INSTALLED, NOT THE ONE THIS MANIFEST WROTE.
@@ -472,7 +499,7 @@ answer_payload_requests(PrepareState& state, mcpp::manifest::Manifest& m,
         }
     }
     // The program runs again with the directories it asked for.
-    std::erase_if(e.xpkgDirs, [](const auto& kv) { return kv.first.starts_with("MCPP_XPKG_"); });
+    std::erase_if(e.xpkgDirs, [](const auto& a) { return a.var.starts_with("MCPP_XPKG_"); });
     fill_xpkg_env(state, e, m, consumer);
     return true;
 }

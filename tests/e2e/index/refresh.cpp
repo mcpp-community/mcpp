@@ -27,7 +27,7 @@ std::string trimmed(std::string t) {
     return t;
 }
 
-constexpr std::string_view handshake = R"HS([[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; })HS";
+constexpr std::string_view handshake = R"HS([[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries","store_roots"]}'; exit 0; })HS";
 
 // A stub xlings that answers the handshake and records every other command in STUB_LOG.
 void stub_logging_xlings(const fs::path& file) {
@@ -57,7 +57,7 @@ bool has_word(const nlohmann::json& list, std::string_view word) {
     return false;
 }
 
-E2E refresh{"refresh", [] {
+E2E refresh{"refresh", s::home_fixture, [] {
     "173 index refresh policy"_test[s::gcc][s::fresh_sandbox] = [] {
         // A 30-day-old marker refreshes nothing when the index answers (an exact version and a
         // constraint); offline, a miss says so and names the revision and `mcpp index update`;
@@ -471,6 +471,47 @@ exit 0
         refused("offline mode", off);
         s::project(home, {{"config.toml", s::read_file(home / "config.toml") + "\n[index]\nauto_refresh = false\n"}});
         refused(R"(\[index\] auto_refresh = false)", o);
+    };
+
+    "1145 a column miss that refuses nothing does not refresh"_test[s::fresh_sandbox] = [] {
+        // mcpp#996: only a request refused without a platform refreshes the index on a miss of its
+        // column (SPEC-013 §14 item 6). A custom triple a `[target.<triple>]` section defines, a
+        // `planned` row built with a named toolchain, and a request a table answers with
+        // `platform = "none"` are not refused for want of a platform, so the refresh policy is not
+        // asked: outside the debounce window and offline, no decision for the column is logged.
+        // Before, each of them was decided (and, online, synced) on every build more than the
+        // debounce apart -- 12 to 19 s a build for `i686-windows-msvc` with a section.
+        const auto home = s::case_home(s::home::inherited);
+        const auto index = home / "indices/mcpplibs";
+        s::project(index, {{".xlings-index-version", "abc1234\n"}, {"pkgs/.keep", ""}, {".mcpp-index-updated", ""}});
+        age(index / ".mcpp-index-updated", std::chrono::hours{24 * 30});
+        const auto app_with = [](std::string_view name, std::string_view tables) {
+            return s::project(s::case_dir() / name, {
+                {"mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\n"
+                                          "main = \"src/main.cpp\"\n{}", tables)},
+                {"src/main.cpp", "int main() { return 0; }\n"}});
+        };
+        s::options o = inherited;
+        o.env.emplace_back("MCPP_VERBOSE", "1");
+        o.env.emplace_back("MCPP_OFFLINE", "1");
+        const auto undecided = [&](std::string_view why, const s::project& app, std::vector<std::string> args, std::string_view row) {
+            auto r = app.mcpp(args, o);
+            const auto out = s::text(r);
+            expect(fatal(r.started)) << why << ": " << out;
+            expect(fatal(s::no_line(out, std::format("refresh for the platform column for {}", row))))
+                << why << ": the column's miss reached the refresh policy: " << out;
+            return out;
+        };
+        undecided("a section", app_with("section", "\n[target.x86_64-toyos]\ntoolchain = \"gcc@16.1.0\"\n"),
+                  {"build", "--target", "x86_64-toyos"}, "x86_64-toyos");
+        undecided("a planned row with --toolchain", app_with("planned", ""),
+                  {"build", "--target", "i686-linux-gnu", "--toolchain", "gcc@16.1.0"}, "i686-linux-gnu");
+        const auto none = undecided("platform = \"none\"", app_with("none", "\n[target.'cfg(os = \"toyos\")']\nplatform = \"none\"\n"),
+                                    {"build", "--target", "x86_64-toyos"}, "x86_64-toyos");
+        // Still refused as unknown -- no section defines it -- and the refusal adds nothing about
+        // an index that was not consulted.
+        expect(fatal(s::has_line(none, "unknown target 'x86_64-toyos'"))) << "none: not refused as unknown: " << none;
+        expect(fatal(s::no_line(none, "lists no platform for it"))) << "none: the refusal speaks of the column: " << none;
     };
 }};
 

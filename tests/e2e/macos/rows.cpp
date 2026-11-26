@@ -70,7 +70,7 @@ std::vector<std::uint32_t> section_words(const std::string& dump) {
     return words;
 }
 
-E2E rows{"rows", [] {
+E2E rows{"rows", s::home_fixture, [] {
     "259 shared library macho"_test[s::macos] = [] {
         // A Mach-O shared library's install name is @rpath/<file>, not the build directory, so
         // it loads where it is extracted: packed, the build tree removed, a consumer builds and

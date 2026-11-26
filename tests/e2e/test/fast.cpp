@@ -13,7 +13,7 @@ namespace {
 
 void touch(const fs::path& f) { std::ofstream(f) << ""; }
 
-E2E fast{"fast", [] {
+E2E fast{"fast", s::home_fixture, [] {
     "1068 a running test holds no build directory"_test = [] {
         // `mcpp test` releases the build directory's lock once its tests are built (mcpp#915): a
         // build and a second test of the same configuration proceed while a test runs. The first
@@ -97,7 +97,7 @@ int main() {{ return std::system(WHOLE("\"{}\" build > \"{}\" 2>&1")) == 0 ? 0 :
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E fast_machine{"fast-machine", resource{"machine"}, [] {
+E2E fast_machine{"fast-machine", s::home_fixture, resource{"machine"}, [] {
     "1069 an unchanged project tests without planning"_test = [] {
         // A full `mcpp test` records what it planned beside test.ninja; the next one runs the
         // selected tests from it, resolving no dev-dependency. An edited test, a test added or
@@ -129,6 +129,9 @@ UTest two{{"two", [] {{ expect(eq(2, {})); }}}};
         expect(s::lacks(s::text(one), "Resolved mcpplibs.")) << "a selection was planned again";
         expect(e2e::contains(s::text(one), "cases: 1 passed, 0 failed"));
         // An edited test is built, and its result is the edit's.
+        // A second of the file system's clock, not a time moved forward: the edit must be newer
+        // than the last build's test.ninja and older than the next one's, which the record is
+        // compared with (a time two seconds ahead kept the next, unchanged run planning again).
         std::this_thread::sleep_for(1s);
         write_cases(3);
         auto edited = p.mcpp({"test"});
@@ -139,6 +142,9 @@ UTest two{{"two", [] {{ expect(eq(2, {})); }}}};
         expect(s::lacks(s::text(again), "Resolved mcpplibs.")) << "an unchanged failing project was planned again";
         expect(e2e::contains(s::text(again), "cases: 1 passed, 1 failed")) << "the record's run lost the failure";
         // A test added is planned and run; one removed is no longer run.
+        // As above, not a time moved forward: the edit must be newer
+        // than the last build's test.ninja and older than the next one's, which the record is
+        // compared with (a time two seconds ahead kept the next, unchanged run planning again).
         std::this_thread::sleep_for(1s);
         write_cases(2);
         p.write("tests/extra.cpp", "int main() { return 0; }\n");

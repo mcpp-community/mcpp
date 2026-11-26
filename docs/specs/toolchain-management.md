@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.11 |
-| 最后修改 | 2026-11-10 |
+| 状态 | 草案 v0.14 |
+| 最后修改 | 2026-11-23 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
-| 相关设计文档 | `.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md` |
-| 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755、mcpp#832 |
+| 相关设计文档 | `.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`、`.agents/docs/2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md` |
+| 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755、mcpp#832、mcpp#988 |
 | 使用文档 | [docs/20 - 工具链](../zh/20-toolchains.md)、[docs/32 - 编写载荷](../zh/32-authoring-a-payload.md)、[docs/91 - 工具链内部](../zh/91-toolchain-internals.md) |
 
 本规范定义 mcpp 对工具链的命名、选择和使用方式,以及一个工具链载荷在发布前必须满足的条件。
@@ -84,6 +84,58 @@
 前缀**必须**按版本分量匹配:`14.4` 匹配 `14.4.x`,不匹配 `14.44`。「最高」**必须**按数字元组比较。
 
 当前:本机 MSVC toolset 的匹配与比较按本条实现;其他族的前缀匹配方式未逐一核对。
+
+### 2.6 一个请求一个回答 已实现(2026.11.21.1 起)
+
+一个由包提供的工具链请求**必须**只有一个解析,`mcpp toolchain install`、`mcpp toolchain default` 与构建读取同一个结果:
+
+- 部分版本(`gcc@16`、`gcc@16.2`)取本地索引中以它为前缀的最新正式发布,未安装时由构建安装;
+- 预发布(`17.0.0-20261108`)只由完整的键选中;
+- 本地索引没有该包时取已安装的最新版本,并以 `degraded` 说明索引中更新的发布未被考虑。
+
+`mcpp toolchain default` 写入解析出的完整版本;解析出的版本未安装时拒绝,并给出安装它的命令。
+
+### 2.7 写明的部分版本进入锁 已实现(2026.11.21.1 起)
+
+- 工程的 `mcpp.toml` 写明的部分版本(`[toolchain]`、`[workspace.toolchain]`、`[target.<三元组>] toolchain`)解析后**必须**
+  记入 `mcpp.lock` 的 `[toolchain."<请求>"]`,请求写作它所要求的包(`xim:gcc@16`),值为 `version`;之后的构建按记录取。
+- 完整版本即其自身的记录,不写入;`--toolchain`、依赖方为宿主工具选择的工具链与机器、引擎的缺省都不写入。
+- `mcpp update` 删除全部记录,`mcpp update <包>` 删除该包的记录(`gcc` 或 `xim:gcc@16`);之后的构建重新解析。
+- `--locked` 与 `--frozen` 之下锁保持原样:锁中没有该请求的记录时按 2.6 解析,以 `note` 说明,不拒绝。
+
+### 2.8 缺省的改变 已实现(2026.11.21.1 起)
+
+工程没有写明工具链时,工具链取机器的缺省(`mcpp toolchain default`)或引擎的缺省。它所给出的工具链与该工程上一次构建所用的不同时,
+构建**必须**以 `note` 说明一次(`toolchain/default-changed`,策略 `once`),写出两者与保留旧版本的写法。上一次所用的工具链按目标记在
+`target/.mcpp-notices` 中;工程的第一次构建与 `mcpp clean` 之后没有可比的值,不提示。`--toolchain` 选择的工具链不参与比较,也不被记住。
+
+### 2.9 配套载荷 已实现(2026.11.21.1 起)
+
+- 工具链所用的配套载荷(GCC 的 binutils、glibc 基础层的 Linux 内核头文件、GCC 的运行库)**必须**取工具链载荷的描述文件为本宿主声明的
+  运行依赖:声明为一个键时取该键,声明为要求(`>=2.39`)时取 store 中满足它的最新版本。没有声明时取 store 中的最新版本。
+  **禁止**按目录遍历的次序选择。声明的版本都不在 store 中时以 `degraded` 报告,不以另一个版本代替。
+- 声明**必须**依次取自两个描述文件:载荷安装时的描述文件(安装器保存在载荷旁的 `.xpkg.lua`),然后是索引中的描述文件;取 store
+  持有的第一个声明。从 `[xlings] upstream` 链接载荷的 home 按索引安装配套载荷,载荷旁是上游的描述文件,因此两者都需要读。一个声明也
+  不满足时以 `degraded` 报告,两个声明都写出。工具链载荷自身的声明(`companion-too-old` 的比较)是第一个。**已实现**
+  (mcpp >= 2026.11.22.1;2026.11.21.1 读索引的描述文件,xim 的 gcc 配方把 binutils 由 2.42.1 改为 2.47 之后,已安装的 gcc@16.1.0 在
+  `mcpp index update` 之后得不到 binutils,构建停在 "cannot execute 'as'")。
+- 工程可以在工具链的陈述旁写明 binutils:`default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`,
+  `[toolchain]` 的各平台键与 `[workspace.toolchain]` 同样可写。`companions` 只有 `binutils` 一项;只用于 GCC。
+- 写明的 binutils 低于工具链载荷声明的版本时**必须**拒绝,原因标记 `companion-too-old`:GCC 在构建时按所用的 binutils 选定汇编器的能力。
+- 内核头文件不在工具链的陈述中覆盖,它们是目标的 `kernel-abi` 层(`[target.<selector>.layers] kernel-abi`,SPEC-002 §3.9)。
+  基座不带内核头文件(共享视图、载荷布局的 glibc)时,缺省取工具链载荷声明的版本,读法同上;载荷没有声明时不取 store 中的
+  最新版本,而是拒绝并给出陈述的写法。引擎**禁止**向共享视图写入内核头文件(mcpp >= 2026.11.23.1)。
+
+### 2.10 存储的根 已实现(2026.11.23.1 起)
+
+- 构建**必须**为其图所指名的、mcpp 包存储中的每个载荷登记一个根:提供者为 mcpp 给出的根目录中一个指向该载荷的链接,名为
+  `<存储名>@<版本>`(xlings 的存储根规范)。根以临时名创建后改名覆盖,因此每次使用都更新链接自身的时间;复用其图的构建按图旁
+  `roots.list` 的记录同样更新。`mcpp toolchain install` 为它安装的工具链登记根。
+- 没有根目录的 home 在第一次装载配置时为存储中的每个载荷登记一次根,时间取当时;根目录整体发布,因此这一步只执行一次且幂等。
+  借用的 registry 由其所有者登记。
+- `mcpp cache gc` 在缓存之后调用提供者的回收(`xlings self clean`);给出 `--older-than` 时先移除在该期限内没有使用过的根,
+  期限按链接自身的时间判断。回收只有提供者的一个实现。根无法创建时以 `degraded`(`store/roots`)报告一次,构建继续。
+  `--dry-run` 只列出会回收的条目与根。
 
 ---
 
@@ -410,6 +462,8 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | v0.8 | 2026-10-16 | 随 mcpp 2026.10.16.1:§4.3 改为「安装后不改写」,载荷只由提供者写入;工具链运行在提供者按 home 的运行库钉版本绑定的运行库上。 |
 | v0.10 | 2026-10-23 | 随 mcpp 2026.10.24.1:§1 定义目标基座与执行宿主;新增 §3.9 目标基座(一次解析、四档写法与优先级、测量与声明、不写入、运行时语义)、§3.10 自备输入、§3.11 核心知识判据;§2.2.1 工具链阶段可陈述 `spec` 与 `sysroot`,`spec` 与路径专属键同时出现时拒绝;§3.1 补全读者名单;§3.3 增加主体 `sysroot` 与 `run_under`;§3.5 clang 行接受 `{ path }`;§4.3 要求被陈述的 gnu-sysroot 基座把 `--sysroot` 交给链接器;新增附录 A。 |
 | v0.11 | 2026-11-10 | 随 mcpp 2026.11.10.1:§3.9.2 引擎默认档为所选提供者的 `sysroot` 列,为包时按工程陈述的规则解析;附录 A 的 `*-windows-gnu` 接受基座包与 `{ path }`,新增 `*-freebsd` 行(基座包见 SPEC-002 §2.5)。 |
+| v0.13 | 2026-11-22 | 随 mcpp 2026.11.22.1:§2.9 配套载荷的声明依次取自载荷安装时的描述文件与索引的描述文件,取 store 持有的第一个。 |
+| v0.14 | 2026-11-23 | 随 mcpp 2026.11.23.1(设计 2026-11-22 内核接口与派生状态 §3.3、§3.11):§2.9 内核头文件是目标的 `kernel-abi` 层;基座不带时缺省取工具链载荷的声明,没有声明时拒绝;引擎不向共享视图写入内核头文件。新增 §2.10 存储的根。 |
 | v0.9 | 2026-10-17 | 随 mcpp 2026.10.17.1:新增 §4.7,已安装的修订在构建中继续使用,`floor` 决定是否必须替换,`toolchain install` 取当前修订;§6.4 doctor 只读,报告构建实际使用的工具链与包 home 的一致性。 |
 
 ---

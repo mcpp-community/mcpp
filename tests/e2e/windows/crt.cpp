@@ -71,7 +71,7 @@ std::size_t std_cache_files_with(std::string_view word) {
     return n;
 }
 
-E2E crt{"crt", [] {
+E2E crt{"crt", s::home_fixture, [] {
     "703 the llvm row on the msvc abi records its static crt"_test[s::windows] = [] {
         // What resolution.json records for the llvm row's C++ runtime contract: toolchain-coupled
         // by default, and an explicit host-coupled or self-contained delivered as recorded, with

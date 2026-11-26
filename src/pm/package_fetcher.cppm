@@ -19,6 +19,7 @@ import mcpp.pm.index_contract;   // index.toml floor check (E0006)
 import mcpp.pm.refresh_policy;   // decide_for_miss / apply (#648 A5)
 import mcpp.build.refusal;       // offline-download-required (#648 A1)
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -137,6 +138,11 @@ public:
     struct HitDescription {
         std::vector<std::string>          versions;
         mcpp::manifest::XpkgCatalogFields catalog;
+        std::string                       descriptor;    // its text; empty when none was found
+        // An mcpp package: a descriptor that states an `mcpp` field, or one
+        // outside the provider's official index, whose entries without the
+        // field are the provider's own payloads (mcpp#992).
+        bool                              mcppPackage = false;
     };
     std::vector<HitDescription> describe_hits(std::span<const SearchHit> hits) const;
 
@@ -322,6 +328,18 @@ format_install_failure_diagnostic(std::string_view target,
                                   int exitCode,
                                   std::span<const std::string> indexRepos,
                                   std::string_view childError = {});
+
+// THE TWO WAYS AN OFFLINE RUN LACKS A PAYLOAD (design 2026-11-21 §3.2), each
+// a refusal with its code, for every install path to say alike. `what` is the
+// payload (`gcc@16.1.0`, `dependency 'fmt' v11.1.4`).
+//   offline_without_sources: no archive directory, so nothing was asked
+//                            (offline-download-required);
+//   offline_unavailable:     the download cache and the archive directories
+//                            were asked and none holds it; `providerReport`
+//                            is the provider's list of what it lacked
+//                            (artifact-unavailable-offline).
+std::string offline_without_sources(std::string_view what);
+std::string offline_unavailable(std::string_view what, std::string_view providerReport);
 
 } // namespace mcpp::pm
 
@@ -656,7 +674,19 @@ Fetcher::list_repos() {
 
     std::vector<RepoInfo> repos;
     for (auto& d : r->dataEvents) {
-        // payload format varies; styled_list with [name, url] pairs is common.
+        // THE INTERFACE'S OWN RECORD (`repo_list`: `repos`, each with its name and url), which
+        // the xlings mcpp pins writes. Read as the older `styled_list` pairs below, it named no
+        // repository, and `mcpp index list` showed the configuration's alone: a registry
+        // `mcpp index add` had added was missing from it.
+        if (d.dataKind == "repo_list") {
+            const auto payload = nlohmann::json::parse(d.payloadJson, nullptr, false);
+            const auto list = payload.is_object() ? payload.value("repos", nlohmann::json::array()) : nlohmann::json::array();
+            for (auto const& repo : list)
+                if (repo.is_object() && repo.contains("name") && repo["name"].is_string())
+                    repos.push_back({repo["name"].get<std::string>(), repo.value("url", std::string{}), false});
+            continue;
+        }
+        // An older xlings: a styled_list of [name, url] pairs.
         auto items = extract_object(d.payloadJson, "items");
         // Walk pairs as in search().
         std::size_t p = 0;
@@ -910,7 +940,8 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
     // wherever it sits (the flat `mwrap/` layout included). Identity is read
     // from the descriptor's text; a descriptor that declares no namespace is
     // keyed by its name alone.
-    std::map<std::string, std::string> byIdentity;
+    struct Found { std::string lua; bool official = false; };
+    std::map<std::string, Found> byIdentity;
     const auto field = [](std::string_view lua, std::string_view key) -> std::string {
         std::size_t pos = 0;
         while ((pos = lua.find(key, pos)) != std::string_view::npos) {
@@ -930,9 +961,12 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
         }
         return {};
     };
-    for (auto const& root : mcpp::provider::open(location_of(cfg_))->index_roots()) {
+    const auto provider = mcpp::provider::open(location_of(cfg_));
+    const auto official = provider->official_index_status(0).dir.lexically_normal();
+    for (auto const& root : provider->index_roots()) {
         std::error_code ec;
         const auto pkgs = root / "pkgs";
+        const bool isOfficial = root.lexically_normal() == official;
         if (!std::filesystem::is_directory(pkgs, ec)) continue;
         for (auto it = std::filesystem::recursive_directory_iterator(pkgs, ec);
              !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
@@ -941,7 +975,7 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
             std::string lua{std::istreambuf_iterator<char>(is), {}};
             const auto name = field(lua, "name");
             if (name.empty()) continue;
-            byIdentity.try_emplace(field(lua, "namespace") + ":" + name, std::move(lua));
+            byIdentity.try_emplace(field(lua, "namespace") + ":" + name, Found{std::move(lua), isOfficial});
         }
     }
     std::vector<HitDescription> out(hits.size());
@@ -952,8 +986,12 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
             if (colon != std::string::npos) it = byIdentity.find(":" + hits[i].name.substr(colon + 1));
         }
         if (it == byIdentity.end()) continue;
-        out[i].versions = mcpp::manifest::all_xpkg_versions_desc(it->second);
-        out[i].catalog = mcpp::manifest::xpkg_catalog_fields(it->second);
+        const auto& lua = it->second.lua;
+        out[i].versions = mcpp::manifest::all_xpkg_versions_desc(lua);
+        out[i].catalog = mcpp::manifest::xpkg_catalog_fields(lua);
+        out[i].mcppPackage = !it->second.official
+            || mcpp::manifest::extract_mcpp_field(lua).kind != mcpp::manifest::McppField::Absent;
+        out[i].descriptor = lua;
     }
     return out;
 }
@@ -1219,7 +1257,9 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         p.sourceDir = (subs.size() == 1) ? subs.front() : p.root;
     };
 
+    // Each payload handed out is one this run used (`mcpp fetch --to`).
     auto make_payload = [&](const std::filesystem::path& verdir) -> XpkgPayload {
+        mcpp::effects::note_package_used(mcpp::provider::to_string(ref));
         XpkgPayload payload;
         payload.root = payload_root(verdir);
         fill_payload(payload);
@@ -1274,16 +1314,11 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     }
 
     // Offline is checked HERE, after the "already usable" fast path above: a
-    // build whose packages are all usable stays functional offline. Only an
-    // actual download is refused, naming the package.
-    if (mcpp::effects::offline_mode()) {
-        mcpp::build::refusal::record(
-            mcpp::build::refusal::Code::OfflineDownloadRequired);
-        return std::unexpected(CallError{ std::format(
-            "offline mode: `{}` is not installed and cannot be downloaded\n"
-            "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
-            label) });
-    }
+    // build whose packages are all usable stays functional offline. Without
+    // an archive directory nothing is asked; with one, the install below asks
+    // the local sources alone (XLINGS_NET_UNREACHABLE).
+    if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None)
+        return std::unexpected(CallError{offline_without_sources(label)});
 
     // A replacement says why, once, before it starts (D3): the user sees a
     // download in a command that only builds, so the reason is part of it.
@@ -1313,7 +1348,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             mcpp::pm::policy_for(cfg_), location_of(cfg_),
             std::format("xim:{}", parsed.packageName));
         if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
-            mcpp::ui::warning(r.error());
+            mcpp::diag::warning("pm", r.error());
     }
 
     // Satisfied: what the intent asks of the payload now there.
@@ -1357,6 +1392,10 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             if (auto dir = satisfied()) return make_payload(*dir);
     }
 
+    if (mcpp::effects::offline_mode())
+        return std::unexpected(CallError{offline_unavailable(label,
+            inst->error ? inst->error->message : std::string{})});
+
     std::string installError = std::format("install of '{}' failed (interface exit {}{})", targets[0],
         inst->exitCode, policy.retry ? std::format(", direct exit {}", directRc) : std::string{});
     if (inst->error)
@@ -1377,6 +1416,32 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     return std::unexpected(CallError{std::format(
         "{}\n  help: {}", installError,
         install_failure_hint(inst->error, cfg_.xlingsHome()))});
+}
+
+namespace {
+std::string offline_bring_help() {
+    return std::format("{}; or bring it: `mcpp fetch --to <dir>` on a machine with a network, "
+                       "then `mcpp fetch --from <dir>` here (docs/05, \"Offline builds and mcpp fetch\")",
+                       mcpp::effects::offline_remedy());
+}
+}
+
+std::string offline_without_sources(std::string_view what) {
+    mcpp::build::refusal::record(mcpp::build::refusal::Code::OfflineDownloadRequired);
+    return std::format("offline: {} is not installed, and no archive directory is named to take it from\n"
+                       "  help: {}", what, offline_bring_help());
+}
+
+std::string offline_unavailable(std::string_view what, std::string_view providerReport) {
+    mcpp::build::refusal::record(mcpp::build::refusal::Code::ArtifactUnavailableOffline);
+    std::string dirs;
+    for (auto const& d : mcpp::effects::archive_dirs())
+        dirs += (dirs.empty() ? "" : ", ") + d.string();
+    return std::format("offline: {} is not installed, and neither the download cache nor an archive "
+                       "directory ({}) holds its archive{}\n  help: {}",
+                       what, dirs.empty() ? std::string("none named") : dirs,
+                       providerReport.empty() ? std::string{} : std::format("\n  provider: {}", providerReport),
+                       offline_bring_help());
 }
 
 PayloadAction payload_action(PayloadIntent intent, bool present, bool usable, bool current) {

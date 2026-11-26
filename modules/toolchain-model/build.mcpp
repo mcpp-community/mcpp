@@ -18,6 +18,7 @@ constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
     "link-emulation", "clang-triple", "gcc-triple", "family", "object-format", "data-model", "exe-suffix",
     "shared-suffix", "loader", "execution", "companions", "exceptions", "exe-suffix-fixed",
+    "link-without-main", "interfaces",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
@@ -26,13 +27,18 @@ constexpr std::string_view kProviderKeys[] = {
 constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled", "exclusive" };
 constexpr std::string_view kSystemKeys[] = {
     "name", "uname", "resources", "command-scripts", "object-format", "exe-suffix", "shared-suffix",
+    "kernel-abi", "interfaces",
 };
+constexpr std::string_view kKernelAbiKeys[] = { "header", "version", "packed", "include", "arch-include", "package" };
+constexpr std::string_view kPackedKeys[] = { "macro", "bits" };
 constexpr std::string_view kObjectFormats[] = { "elf", "mach-o", "pe", "wasm", "coff" };
 constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
 constexpr std::string_view kPayloadKeys[] = {
     "name", "aliases", "family", "serves", "hosts", "frontend-dir", "frontends", "builds-for", "glibc-fixup", "family-version",
 };
 constexpr std::string_view kOfferKeys[] = { "name", "hosts" };
+constexpr std::string_view kDefaultKeys[] = { "of", "use", "hosts", "when", "target" };
+constexpr std::string_view kDefaultOf[] = { "toolchain", "ninja", "patchelf" };
 constexpr std::string_view kFamilies[] = { "gcc", "llvm", "msvc" };
 constexpr std::string_view kTiers[] = { "verified", "preview", "planned" };
 
@@ -86,6 +92,14 @@ struct Arrays {
         decls += "};\n";
         return "d::" + name;
     }
+    std::string add_ints(const std::vector<int>& v) {
+        if (v.empty()) return "{}";
+        auto name = std::format("a{}", n++);
+        decls += std::format("inline constexpr int {}[] = {{", name);
+        for (std::size_t i = 0; i < v.size(); ++i) decls += std::format("{}{}", i ? ", " : "", v[i]);
+        decls += "};\n";
+        return "d::" + name;
+    }
 };
 
 std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
@@ -132,7 +146,8 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         ".exact = {}, .march = {}, .mabi = {}, "
         ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, "
         ".gccTriple = {}, .objectFormat = {}, .family = {}, .dataModel = {}, .exeSuffix = {}, .sharedSuffix = {}, "
-        ".loader = {}, .execution = {}, .companions = {}, .exceptions = {}, .exeSuffixFixed = {} }},\n",
+        ".loader = {}, .execution = {}, .companions = {}, .linkWithoutMain = {}, .exceptions = {}, "
+        ".exeSuffixFixed = {}, .interfaces = {}, .interfacesStated = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
@@ -142,7 +157,9 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         lit(text(t, "data-model", where)), lit(text(t, "exe-suffix", where)),
         lit(text(t, "shared-suffix", where)), lit(text(t, "loader", where)),
         lit(text(t, "execution", where)), arrays.add(words(t, "companions", where)),
-        lit(text(t, "exceptions", where)), suffixFixed ? "true" : "false");
+        arrays.add(words(t, "link-without-main", where)),
+        lit(text(t, "exceptions", where)), suffixFixed ? "true" : "false",
+        arrays.add(words(t, "interfaces", where)), t.find("interfaces") != t.end() ? "true" : "false");
 }
 
 std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {
@@ -211,6 +228,50 @@ std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<
         runnerEnabled, runnerExclusive);
 }
 
+// A system's `kernel-abi` table (design 2026-11-22 §3.4): how a probe measures
+// the kernel headers in effect, and a payload's layout. The version is read
+// from the parts' macros, else decoded from the packed macro by its widths.
+std::string kernel_abi_entry(const toml::Table& sys, Arrays& arrays, std::string_view systemWhere) {
+    auto it = sys.find("kernel-abi");
+    if (it == sys.end()) return "{}";
+    const auto where = std::format("{}.kernel-abi", systemWhere);
+    if (!it->second.is_table()) throw Failure{std::format("{}: not a table", where)};
+    auto const& t = it->second.as_table();
+    known_keys(t, kKernelAbiKeys, where);
+    const auto header = text(t, "header", where);
+    if (header.empty()) throw Failure{std::format("{}: `header` names the header a probe includes", where)};
+    const auto version = words(t, "version", where);
+    std::string packedMacro;
+    std::vector<int> bits;
+    if (auto p = t.find("packed"); p != t.end()) {
+        const auto pwhere = std::format("{}.packed", where);
+        if (!p->second.is_table()) throw Failure{std::format("{}: not a table", pwhere)};
+        known_keys(p->second.as_table(), kPackedKeys, pwhere);
+        packedMacro = text(p->second.as_table(), "macro", pwhere);
+        if (auto b = p->second.as_table().find("bits"); b != p->second.as_table().end()) {
+            if (!b->second.is_array()) throw Failure{std::format("{}: `bits` is not an array", pwhere)};
+            for (auto const& v : b->second.as_array()) {
+                if (!v.is_int() || v.as_int() <= 0 || v.as_int() > 32)
+                    throw Failure{std::format("{}: `bits` holds widths from 1 to 32", pwhere)};
+                bits.push_back(static_cast<int>(v.as_int()));
+            }
+        }
+        if (packedMacro.empty() || bits.empty())
+            throw Failure{std::format("{}: `macro` and `bits` are stated together", pwhere)};
+    }
+    if (version.empty() && packedMacro.empty())
+        throw Failure{std::format("{}: `version` or `packed` says how the version is read", where)};
+    if (!version.empty() && !bits.empty() && version.size() != bits.size())
+        throw Failure{std::format("{}: `version` and `packed.bits` name the same parts", where)};
+    const auto archInclude = text(t, "arch-include", where);
+    if (!archInclude.empty() && archInclude.find("{arch}") == std::string::npos)
+        throw Failure{std::format("{}: `arch-include` names the architecture as {{arch}}", where)};
+    return std::format("{{ .header = {}, .version = {}, .packed = {}, .bits = {}, .include = {}, .archInclude = {}, "
+                       ".package = {} }}",
+                       lit(header), arrays.add(version), lit(packedMacro), arrays.add_ints(bits),
+                       lit(text(t, "include", where)), lit(archInclude), lit(text(t, "package", where)));
+}
+
 std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
     known_keys(t, kSystemKeys, "[[platform.system]]");
     const auto name = text(t, "name", "[[platform.system]]");
@@ -225,11 +286,15 @@ std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::str
     const auto format = text(t, "object-format", where);
     if (!format.empty() && !std::ranges::contains(kObjectFormats, std::string_view(format)))
         throw Failure{std::format("{}: `object-format` is elf, mach-o, pe, wasm or coff", where)};
+    const auto kabi = kernel_abi_entry(t, arrays, where);
+    const bool interfacesStated = t.find("interfaces") != t.end();
     return std::format("    {{ .name = {}, .uname = {}, .resources = {}, .commandScripts = {}, .objectFormat = {}, "
-                       ".exeSuffix = {}, .sharedSuffix = {} }},\n",
+                       ".exeSuffix = {}, .sharedSuffix = {}, .kernelAbi = {}, .interfaces = {}, "
+                       ".interfacesStated = {} }},\n",
                        lit(name), lit(text(t, "uname", where)), resources,
                        arrays.add(words(t, "command-scripts", where)), lit(format),
-                       lit(text(t, "exe-suffix", where)), lit(text(t, "shared-suffix", where)));
+                       lit(text(t, "exe-suffix", where)), lit(text(t, "shared-suffix", where)), kabi,
+                       arrays.add(words(t, "interfaces", where)), interfacesStated);
 }
 
 std::string executes_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
@@ -278,6 +343,27 @@ std::string offer_entry(const toml::Table& t, Arrays& arrays) {
                        arrays.add(words(t, "hosts", "[[toolchain.offer]] " + name)));
 }
 
+std::string default_entry(const toml::Table& t, Arrays& arrays) {
+    known_keys(t, kDefaultKeys, "[[default]]");
+    const auto of = text(t, "of", "[[default]]");
+    if (std::ranges::find(kDefaultOf, of) == std::end(kDefaultOf))
+        throw Failure{std::format("[[default]]: `of` is toolchain, ninja or patchelf, not `{}`", of)};
+    const auto use = text(t, "use", "[[default]]");
+    const auto where = std::format("[[default]] {} = {}", of, use);
+    const auto at = use.rfind('@');
+    if (at == std::string::npos || at == 0 || at + 1 == use.size())
+        throw Failure{std::format("{}: `use` is `<package>@<version>`", where)};
+    const auto hosts = words(t, "hosts", where);
+    if (hosts.empty()) throw Failure{std::format("{}: `hosts` names no host", where)};
+    const auto when = text(t, "when", where);
+    if (!when.empty() && when != "msvc" && when != "no-msvc")
+        throw Failure{std::format("{}: `when` is msvc or no-msvc", where)};
+    if (!when.empty() && of != "toolchain")
+        throw Failure{std::format("{}: `when` narrows a toolchain only", where)};
+    return std::format("    {{ .of = {}, .use = {}, .hosts = {}, .when = {}, .target = {} }},\n",
+                       lit(of), lit(use), arrays.add(hosts), lit(when), lit(text(t, "target", where)));
+}
+
 const toml::Array& entries(const toml::Document& doc, std::string_view path) {
     static const toml::Array none;
     auto* v = doc.get(path);
@@ -290,7 +376,7 @@ std::string generate(const toml::Document& doc) {
     Arrays arrays;
     std::set<std::string> rowNames;
     std::set<std::string> systemNames, executesHosts;
-    std::string rows, providers, systems, executes, payloads, offers;
+    std::string rows, providers, systems, executes, payloads, offers, defaults;
     for (auto const& e : entries(doc, "platform.define")) {
         if (!e.is_table()) throw Failure{"[[platform.define]]: an entry that is not a table"};
         rows += row_entry(e.as_table(), arrays, rowNames);
@@ -315,6 +401,11 @@ std::string generate(const toml::Document& doc) {
         if (!e.is_table()) throw Failure{"[[toolchain.offer]]: an entry that is not a table"};
         offers += offer_entry(e.as_table(), arrays);
     }
+    for (auto const& e : entries(doc, "default")) {
+        if (!e.is_table()) throw Failure{"[[default]]: an entry that is not a table"};
+        defaults += default_entry(e.as_table(), arrays);
+    }
+    if (defaults.empty()) throw Failure{"no [[default]] entry: a build that states nothing has no toolchain"};
     return std::format(
         "// Generated by modules/toolchain-model/build.mcpp from data/builtin.toml.\n"
         "export module mcpp.toolchain.builtin_targets;\n\n"
@@ -331,8 +422,9 @@ std::string generate(const toml::Document& doc) {
         "inline constexpr std::span<const mcpp::toolchain::target::Executes> kExecutes = d::executes;\n\n"
         "inline constexpr mcpp::toolchain::target::Payload kPayloads[] = {{\n{}}};\n\n"
         "inline constexpr mcpp::toolchain::target::Offer kOffers[] = {{\n{}}};\n\n"
+        "inline constexpr mcpp::toolchain::target::Default kDefaults[] = {{\n{}}};\n\n"
         "}} // namespace mcpp::toolchain::builtin\n",
-        arrays.decls, executes, rows, providers, systems, payloads, offers);
+        arrays.decls, executes, rows, providers, systems, payloads, offers, defaults);
 }
 
 } // namespace

@@ -30,7 +30,7 @@ std::string host_triple(const s::project& p) {
     return triples.front();
 }
 
-E2E program{"program", [] {
+E2E program{"program", s::home_fixture, [] {
     "339 run reports the program status"_test[s::gcc][s::unix_shell] = [] {
         // `run` exits with the program's status (127 too, without an error line of its own); a
         // runner that cannot be executed exits 126 saying why; a missing runner exits 2 or 127.

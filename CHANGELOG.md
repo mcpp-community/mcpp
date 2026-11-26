@@ -4,6 +4,500 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.26.1] - 2026-11-26
+
+### Changed
+
+- A private module fragment is still a unit of its own when the purview before it holds
+  conditions (`#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif`) or `#error` and
+  `#warning`: a condition only decides which declarations exist, and the implementation unit
+  receives them from the interface. Before, any directive refused. A directive that changes what
+  the fragment means (`#define`, `#undef`, `#include`, `#pragma`, `#line`, `_Pragma`), and a
+  condition still open at the module declaration or at the fragment, still leave the source as
+  written, and `--verbose` names the line (SPEC-019 §5).
+- The text before a fragment is read as C++ tokens. A digit separator (`1'000`) no longer hides
+  the rest of its line, a raw string literal may run over lines and hold `module :private;`, a
+  `static` inside `extern "C" { … }` is a `static` at namespace scope, and a line continuation
+  between the module declaration and the fragment leaves the source as written. Each of these
+  only makes more sources built as written (SPEC-019 §5 items 4 and 8).
+- `MCPP_BUILDOPT`, `MCPP_PRIVATE_FRAGMENT` and `MCPP_BMI_SCHEDULE` are part of the request a
+  recorded build is replayed for: the first build after one of them changes writes the graph
+  again. Before, a build with no edit replayed the graph the other value had written.
+
+### Added
+
+- `[build] private_fragment = "conservative"` (and `MCPP_PRIVATE_FRAGMENT=conservative`): the
+  fragment is a unit of its own, and any directive in the purview before it leaves the source as
+  written, as before conditions were let through. It is the way to check the entry on GCC, which
+  cannot build a fragment as written.
+- A build that fails at a step an optimization acted on ends with a `tip:` that names the entry
+  and the one invocation that checks it: a source built as two units that failed, a unit that
+  imports a BMI kept with the lines of an earlier source that failed, a link that failed where
+  either is in the graph. A failure of another step says nothing; `--quiet` gives none. The
+  register states, for each entry that is on and has a key, the value that checks it
+  (`check`), and the text is made of it (SPEC-019 §9, docs/26).
+
+### Recorded
+
+- A reader for clang's `.pcm`, which would keep a BMI when only the function hashes, offsets and
+  locations differ, is not implemented. Measured with clang 20.1.7 to 23.1.6: the operand that
+  holds a function's hash is at an index that varies with the declaration and the version, and a
+  third of the edits change the width of that 32-bit value in the stream, which moves the bit
+  offsets and three offset tables. Without a model of the declaration records, a reader cannot
+  tell the field from an interface change (SPEC-019 §8, SPEC-018 §2.2).
+
+## [2026.11.24.1] - 2026-11-24
+
+### Fixed
+
+- `mcpp pack --pkg-format <provided format> -o <directory>/` writes the distributable together
+  with the outputs it consumed that lie below its own directory, at their places relative to it.
+  Before, it wrote the distributable alone, so a web page (`--pkg-format web`) arrived without its
+  `.js`, its `.wasm` and its deployed files and loaded nothing. Each destination is replaced, and
+  nothing else in the directory is touched (SPEC-014 §6, v2.8).
+
+## [2026.11.23.1] - 2026-11-23
+
+### Added
+
+- On a Linux row, `[target.<selector>.layers] kernel-abi` states the kernel headers:
+  `"xim:linux-headers@<version>"` (an ecosystem payload, always with its version) or
+  `{ path = "<dir>" }` (a header directory without `mcpp.toml`). The statement holds with or
+  without a platform. Its directories reach every unit and the std module with `-isystem`, ahead
+  of the base. The headers in effect are measured by preprocessing `<linux/version.h>`, and the
+  report, `mcpp why toolchain` and `layers[].version` give the version. A stated version the
+  measurement contradicts is refused (`target-base`). So is a prebuilt form on any other layer,
+  on a row whose system publishes its kernel interface with its C library (macOS, Windows,
+  FreeBSD), and a second supplier on an openkal row. Which systems take the form, and how the
+  version is read, are the system row's data (`kernel-abi`), not the engine's (docs/22)
+  (mcpp#988).
+- A system row and a target row state the interfaces of their kernel-abi layer (`interfaces`):
+  every openkal interface on Linux, macOS, FreeBSD and Windows, fewer on the iOS rows (no program
+  start) and on `wasm32-emscripten`. `cfg(interface = "...")` reads the provider's list, else the
+  row's, else the system's, so it holds on a row without openkal as well. The same list is in
+  `layers[].interfaces` and `MCPP_KERNEL_ABI_INTERFACES` (mcpp#1005).
+- `riscv64-linux-musl` is a `preview` row: the musl cross payload `gcc@16.1.0` builds it on a
+  Linux x86_64 machine, and `mcpp run` starts its static programs under qemu-user
+  (`xim:qemu-user-riscv64@7.2.0`, installed on the first run). The `linux-musl` target set now
+  includes it (mcpp#1005).
+- The iOS simulator rows (`aarch64-ios-sim`, `x86_64-ios-sim`) state their runner: `simctl-run`
+  (`xim:apple-simulator-tools@0.3.0`) chooses a device, boots it and returns the program's
+  status. It boots a simulator device, so it is enabled on request (`[target.aarch64-ios-sim]
+  runner = true`, or `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`); a project's own `runner` stands
+  over it as before. `aarch64-ios` has no runner (mcpp#1005).
+- `mcpp::action::origin(path)` names the authored file a generated unit is a transformed copy
+  of, one of the action's inputs, on a `source` action. The build database gives it as
+  `ide.generated[].origin`. A generated unit that declares a module's primary name is a
+  `module-interface`. When the authored file is also among the sources, the duplicate-provider
+  error names the relation (mcpp#1004). `emit build-database` states S1 profile 0.4.0, the version
+  that defines the field (Sunrisepeak/mcpp-language-server#98).
+
+- A build holds each payload of mcpp's package store that its graph names as a root of the
+  store (`registry/data/roots/mcpp/<store-name>@<version>`, xlings' store-roots specification),
+  renewed by every build of that graph; `mcpp toolchain install` holds the toolchain it installs,
+  and a home from before has a root made for every payload it holds, once. `mcpp cache gc
+  --dry-run` says what would be collected and removes nothing.
+
+### Changed
+
+- openkal-platform 0.32.1 is the default platform of the openkal rows: a program of the firmware
+  and of DOS starts programs (`openkal.process`), an image on i686 starts an image
+  (mcpplibs/openkal-image#46), `riscv64-none-musl` runs over openkal-opensbi, and
+  `riscv64-linux-musl` is served by the platform's hosted arrangement over openkal-linux 0.27.2's
+  riscv64 layer and openkal-musl 0.30.3, run under qemu-user, where the specification's
+  conformance suite holds in every observation it makes.
+- xlings 2026.11.23.1 is the pinned provider, and the handshake requires its `store_roots`
+  feature (protocol 1.19): its collection keeps what a root holds, and its configuration of a
+  package that states `host_facts` runs again when those host files change (openxlings/xlings#712,
+  #727). An earlier provider is refused at the handshake, as before for one below the floor.
+  mcpp builds on mcpplibs.os 0.4.8, which reads a link's own time, and so do the launchers a
+  pack builds.
+- `mcpp cache gc` collects the package store after the cache: the provider removes the payloads
+  nothing references (`xlings self clean`), and with `--older-than` the roots no build used for
+  that long are released first. Before, payloads were never collected, and `xlings self clean`
+  in mcpp's registry listed the bases, libraries and platform packages projects use (154 payloads,
+  16 GB, on one home) as unreferenced.
+- Without a statement, the kernel headers are the base's own (a stated sysroot, a toolchain's own
+  sysroot such as `musl-gcc`'s, the host's root), else the version the toolchain's payload
+  declares. A build under gcc 16.2.0 now compiles against linux-headers 6.18.64, the version it
+  was built with, instead of the 5.11.1 the home's shared view linked to. The shared view is no
+  longer read for kernel headers, and mcpp no longer writes kernel headers into it; with neither
+  answer the build is refused before it compiles and names the statement to write.
+  A Linux compile names the headers it was decided to use, so a dependency's module interface
+  cached by an earlier version is compiled once more, then served from the cache.
+
+### Fixed
+
+- `layers`, `tools` and `link` in a `[target.<selector>]` table of the project or of
+  `config.toml` were accepted and had no effect on a row without a platform, with no report even
+  under `--strict`. They now complete the graph and reach the link on every row (docs/35);
+  `link.flags` that reaches no program says so, and `carrier`, a form of a platform's image, is a
+  warning there (`platform/carrier`).
+- A row a platform package defines takes the linkage its provider states. `i586-dos-djgpp`
+  (djgpp-platform, `linkage = "static"`) is linked statically, and `mcpp pack` in its default mode
+  packs its programs: a static program whose format is neither ELF, PE nor Mach-O has no runtime
+  closure, so none is asked for. A dynamic program of such a format is still refused, naming the
+  format (mcpp#1007).
+- The provider of a platform named by a path (`platform = { path = "<dir>" }`) is selected. Its
+  package reference `path:<dir>` was read as a payload without a version, so the selection left
+  it out, and what only the provider states, such as its `linkage`, did not apply (mcpp#1007).
+- A bare-metal row a platform defines is compiled, and its C library verified, for its
+  `clang-triple` (else the row), also when the row states no `march` or `link-emulation`. Before,
+  such a row (openkal-musl's `riscv64-none-musl`) had no target selection, and the verification
+  probe refused it.
+- `[target.<triple>] runner = true` and `runner = false` are read without the warning
+  "unsupported key 'runner'": the key check asked the value's type, and a boolean is not an array.
+- The runtime-closure check expands `$ORIGIN` at the directory a library was opened in, as the
+  loader does, not at the target of the link it was reached through. A program whose libraries are
+  links in a farm, each finding its dependencies beside it (compat.curand under LLVM), was refused
+  with `libgcc_s.so.1 not found` and ran when started.
+- On a macOS host, the link of a target other than the host's names the target, as its compile
+  does. `x86_64-macos` on Apple silicon linked its x86_64 objects for arm64 and found no `main`;
+  a C program now links and runs under Rosetta. The row stays `planned`: the LLVM payload's
+  libc++ is arm64 only.
+- `mcpp pack` carries the libraries of what the build deploys beside the program. An object of the
+  program's format and machine that `[runtime] deploy` or `mcpp::deploy` places (a plugin loaded
+  at run time, a helper program, another program under `--all-programs`) is a root of the runtime
+  closure as the program is, on ELF, PE, Mach-O and Android. A Qt platform plugin's
+  `libQt6XcbQpa.so.6`, which the program does not link, was left out of the package. On ELF a
+  deployed shared object is preloaded into the program's loader trace and its search path in the
+  tree becomes the bundle's `lib/` (docs/10, mcpp#1011).
+- `mcpp pack --all-programs` on `wasm32-emscripten` packs each program's module beside its
+  launcher. Before, only the program named after the package had its `.wasm` (mcpp#1007).
+- A build ended by a signal while it removed its compiler-run state no longer leaves the
+  configuration unbuildable. The removal could be cut short and leave a compiler unit without its
+  prepared transaction, which every later build refused ("compiler unit without prepared
+  transaction") until `mcpp clean`. The state is now renamed out of use before it is removed, and
+  such a remainder from an earlier version is removed by the next build.
+- A compiler's registration with its build no longer fails while the build is busy. The answer
+  was awaited for two seconds and the request then sent again, ten seconds in all, so under load
+  every retry queued a duplicate and the build failed with "compiler registration channel closed
+  or timed out" (measured on Windows and macOS CI). The answer is now awaited on the one
+  connection for as long as the build holds it.
+- `mcpp test` over several legs names a leg whose build failed, in the leg's section and in the
+  summary (`1 leg did not build`; `unbuilt` in the JSON summary). A build error reported as it
+  happened left the leg's section empty, and the summary counted no failure, although the run
+  ended with status 1.
+
+## [2026.11.22.1] - 2026-11-22
+
+### Added
+
+- `i686-windows-msvc`, the 32-bit x86 Microsoft ABI, is a `preview` row of the target table,
+  served by the msvc provider as `x86_64-windows-msvc` is; x86_64 Windows runs its programs
+  (WOW64). A project needs no `[target.i686-windows-msvc]` section to build it, and no platform is
+  looked up for it. `--target i686-windows` and `x86-windows-msvc` select it; before, they
+  selected no row. Under clang 23 its `import std` builds at C++20 only (docs/20) (mcpp#996).
+
+### Changed
+
+- The framework mcpp scaffolds tests with and suggests where a package has none is mtest 0.11.3
+  (`mtest gate` judges a ledger only for a set that runs every case; the library is
+  source-compatible with 0.11.2).
+
+### Fixed
+
+- A process that finds another refreshing the package index waits for it when an index the
+  home reads has no packages yet, and judges that as a reader does (`<index>/pkgs`): the
+  provider's own index (`xim`) is one of them, and a directory the other process has made and
+  not yet filled is absent. Before, only the declared directories were judged, by existence,
+  so a reader beside a first fetch skipped the refresh and reported no local package index
+  (mcpp#927, design 2026-11-12 §18 P3).
+- A request built without a platform refreshed the package index on every build more than the
+  debounce apart: a miss of the index's platform column refreshed for every row the engine does
+  not know and every `planned` one, and a custom triple a `[target.<triple>]` section defines, or
+  a `planned` row built with a named toolchain, is not refused for want of a platform (12 to 19 s
+  a build for `i686-windows-msvc` with a section). Only a request refused without a platform
+  refreshes now, judged by the facts the refusal reads; `platform = "none"` in a table ends the
+  lookup as `--platform none` does (SPEC-013 §14, mcpp#996).
+- Two entries of a project's effective `[indices]` that name one location -- a member's beside
+  its workspace's `[workspace.indices]`, or two in one manifest -- registered the location twice,
+  and installing any package of it stopped at the provider as ambiguous, naming neither entry.
+  The build and `mcpp index update` refuse it now, naming both entries, the location and the
+  remedy (`index-location-named-twice`, SPEC-004 §9).
+- An installed GCC's companions (binutils, the Linux headers) were read from the index's current
+  descriptor of the toolchain, not from the descriptor the payload was installed with. When xim's
+  gcc recipe moved binutils from 2.42.1 to 2.47, a gcc@16.1.0 installed beside binutils 2.42.1 was
+  given no binutils after `mcpp index update`, and its builds stopped at "cannot execute 'as'". The
+  installed descriptor is read first now, then the index's, and the first declaration the store
+  holds decides: a home that links the payload from an `[xlings] upstream` holds the companions
+  the index names, beside the upstream's descriptor (SPEC toolchain-management §2.9, design
+  2026-11-21 §3.5).
+- `mcpp test` counts a suite run as a case by its cases on the program's line as the summary
+  does: an mtest program of one suite and seven cases read `8 cases` on its line and
+  `7 passed` in the summary.
+
+## [2026.11.21.1] - 2026-11-21
+
+### Added
+
+- **The home's unit cache** (mcpp#927, docs/26). Before it starts a compiler, the compiler
+  executor looks up the compile by its command, its compiler and its source's content; when the
+  files an earlier compile of that key read still hold their contents, its object and BMI are
+  placed and no compiler starts. A BMI is named by the key of the compile that made it. A fresh
+  checkout of mcpp on a filled cache built in 4.1 s instead of 164 s, its 288 compiles placed.
+  The split schedule places its units from the cache too. cl.exe's compiles are not cached. A
+  Clang compile is given `-fmodule-file-deps`, so its depfile names the BMIs it imports beside
+  its headers, and ninja and the cache read them from it.
+- **A cacheable package's build program runs in the home** (mcpp#986, mcpp#927, SPEC-004 §9
+  item 18). A package whose source is named -- an index's version, a git commit, a path
+  dependency's content digest -- runs its build program into
+  `build-cache/v1/out/<package>@<version>/<key>/out`, keyed by its configuration, and a second
+  project takes the outputs; a program run by `mcpp pack --pkg-format` runs in the project. A
+  path enters a cache key by its role (`<store>`, `<pkg>`, `<out>`), never as written.
+- **`[profile.<name>] dependency_debug`** (mcpp#927, SPEC-004 §9 item 20): the debug information
+  of the dependencies from the package store and git, `true`, `false` or `"lines"`. Omitted,
+  `dev` and `debug` take `"lines"` while their `debug` is on. A test program whose only
+  dependency is mtest fell from 43.7 MB to 8.3 MB and its build from 15.9 s to 7.2 s.
+- **`[build] memory_threshold`** (mcpp#802, SPEC-004 §9 item 19): the available memory below
+  which the compiler executor waits for a running compiler to end before it starts another; the
+  engine's value is 1 GiB, `MCPP_MEMORY_THRESHOLD` overrides it, and after a minute below it the
+  compiler starts and standard error says so.
+- **One budget of slots for the machine** (mcpp#976, SPEC-017 O11). `mcpp test` states a
+  directory of one slot file per job (`MTEST_BUDGET`); a compiler a test starts through mcpp
+  holds a slot of it, so a test that builds a project takes from the run's jobs. A run inside
+  another runner's budget uses that one.
+- **The record of a build and of a run** (mcpp#927, SPEC-017 B4, P5.6, P12.4).
+  `MCPP_BUILD_RECORD=<file>` appends a line per edge a build ran: its package, its time, the
+  compiler's processor time and largest resident set, and whether the unit cache placed it.
+  `mcpp test` keeps a run's builds in `builds.ndjson`; a run names its machine's class, its
+  processors and memory, and a case its processor time, its steps, the surface items it used and
+  the limit it ran within. Estimates prefer the runs of the same class of machine. An edge that
+  runs a minute is named on a `Running` line; `--verbose` names the five slowest.
+- **Run fixtures** (mcpp#293, SPEC-017 O6, P11). A program declares a fixture the run shares and
+  its cases name it in `uses`; `mcpp test` starts it once, with `MTEST_SERVE`, before the first
+  program that uses it, gives its endpoint as `MTEST_FIXTURE_<NAME>`, and ends it after the
+  last. A fixture that does not become ready is the machine's failure: its users record `infra`.
+  `fixtures.ndjson` states each fixture's start, readiness and end.
+- **A header selects the tests that read it.** `mcpp test --changed`/`--since` takes the units
+  that read a changed header from the build directory's records (ninja's deps log, the scans'
+  depfiles) and runs the tests built from them; while a unit of the project has no record, a
+  header affects every test.
+- **`mcpp emit surface`** writes mcpp's surface, one `<kind> <name>` per line: the commands and
+  flags of the command line's definition, the manifest's keys and the refusals' reason tokens.
+  `MCPP_SURFACE_RECORD=<file>` makes each process of an invocation append the items it used.
+- `wire` features `test-steps`, `test-budget`, `test-jitter` and `test-fixtures` (docs/50).
+- `mcpp-community/mcpp/.github/actions/project-test`, a downstream repository's test job: the mcpp
+  the project pins, its home restored by the project's identity, `mcpp test`, the run's store as
+  an artifact and its slowest cases and edges in the summary (docs/08).
+
+- **A project is told a notice once** (design 2026-11-21, build programs' inputs §3.6). Every
+  warning, note and closing tip goes through one sink; a notice whose kind is registered `once`
+  (mcpp.notice) is said once per project and subject, recorded in `target/.mcpp-notices`, and said
+  again after `mcpp clean`. `--verbose` shows a suppressed one marked `(noted before)`; `--quiet`
+  hides notes. The build database's diagnostics carry every notice, with `shown: false` for one the
+  terminal did not show (docs/50); a command that plans in a directory of its own (`mcpp emit
+  build-database`, doctor, publish's plan) reads the record and does not write it.
+  `.github/tools/check_diag_sink.sh` keeps notices in the sink.
+- **A build program's headers are told once**: a program of the project that includes a standard,
+  system or package header receives one note per form, with the form that imports it
+  (`MCPP_BUILD_PROGRAM_INCLUDES_HEADER`, docs/30 "Headers or modules"); a file its compile reads
+  outside its package, its build dependencies and the store is warned once per file
+  (`MCPP_BUILD_PROGRAM_READS_OUTSIDE`), and `mcpp publish` refuses one its archive does not carry
+  (`build-program-unpublished-input`).
+- Directive protocol 21: `mcpp:deprecated=`, stated by a typed reader that answers by a deprecated
+  reading.
+- **`[build] allow_host_tools`** (mcpp#990, SPEC-004 §9 item 21, docs/25): the bootstrap tools a
+  build takes from `PATH` instead of the store, `ninja` and `patchelf`, from
+  `MCPP_ALLOW_HOST_TOOLS`, the project, then `config.toml`. Every host input -- a bootstrap tool,
+  a toolchain named by path, `glibc@system`, a tool found on `PATH` -- is a note once per project
+  and identity (`host-input`).
+- **`mcpp fetch`** (mcpp#990, docs/05 "Offline builds and mcpp fetch"): the step of a build that
+  obtains what it needs, as a command; it plans as `--configure-only` does and compiles nothing.
+  `mcpp fetch --to <dir>` writes the payloads the build used with their closures, the index
+  snapshots and a `git bundle` of each git clone into a directory described by `bundle.toml`;
+  `mcpp fetch --from <dir>` takes such a directory into a home, a fresh one included, after
+  which the directory may be removed. A bundle that lacks a version `mcpp.lock` records is
+  refused (`bundle-older-than-lock`); one written on another host or for none of the selected
+  targets is warned (`bundle-lacks-target`).
+- **`[build] offline`** in `mcpp.toml` and `config.toml` (SPEC-004 §9 item 22), below `--offline`
+  and `MCPP_OFFLINE` (`0` turns it off for a run). A refusal of an offline run names the tier
+  that made it offline. Workspace members that state different values of it, or of
+  `[build] allow_host_tools`, are planned apart, each plan with its root's value.
+- **`[xlings] archives`** in `config.toml` and `mcpp.toml`, and `MCPP_ARCHIVES` (SPEC-004 §9
+  item 23, docs/25 "Archive directories"): directories of archives taken by sha256 before the
+  network, and in its place offline, where a payload the home lacks is installed from the
+  download cache or a directory; one none holds is refused (`artifact-unavailable-offline`).
+  A directory outside the project named in `mcpp.toml` is a note once
+  (`machine-path-in-manifest`).
+- **A package's features are machine-readable** (mcpp#992, SPEC-004 §16, docs/06 "Reading a
+  package's features"). `mcpp search --format json` states, for each package of an mcpp index,
+  the features of its newest version (`features`: `version`, `state`, `from`, `list`),
+  read from the index or the installed payload; a payload that is not installed is
+  `not-installed` with a `null` list, and the query installs nothing. `mcpp why features
+  [--format json]` (`mcpp.why.features`) lists each package of the resolved graph with the
+  features it declares and those the build activates, which `resolution.json` records
+  (`features`, `feature_list`). `--protocol-version` lists `package-features`. A table-form
+  feature, and a descriptor's `features.<f>`, accept `description`.
+
+### Changed
+
+- **A package's instance is a function of its configuration, not of its units** (mcpp#986): a
+  test build after `mcpp build` no longer compiles the package again, and each refusal of the
+  cache names its reason. The cache's key carries the instance, so a dependency an earlier
+  release cached is compiled once more after the upgrade and served from then on.
+- **A case's time is the one its scopes state**: a case selected with `--case` runs within the
+  `timeout` its listed case states, not the run's.
+- **The defaults are the newest releases** (mcpp#988; docs/51): a first run installs gcc 16.2.0 on
+  Linux x86_64 and on Windows without MSVC (the MinGW row), musl gcc 16.2.0 on the other Linux
+  architectures, and the bootstrap tools ninja 1.13.2-mcpp.1 and patchelf 0.19.3; gcc 16.2.0
+  revision 1 brings binutils 2.47 and linux-headers 6.18.64. llvm stays 23.1.3, since
+  llvm-project's 23.1.6 publishes no macOS binary, and the musl rows stay 16.1.0, the only version
+  of their cross payloads. A project that built with the earlier default is told once.
+  `check_defaults.sh` compares a default with the newest release on every platform it serves.
+- mcpplibs.mtest 0.11.2 and mcpplibs.os 0.4.7 throughout, the new project's skeleton and the CI
+  engine included: a case run as a scope names no case in its events.
+- xlings 2026.11.21.1 is the pinned provider: archives by content, `xlings download --to` and
+  `xlings install --from`.
+- **CI verifies a tree once** (design 2026-11-20 §5.22). A pull request's push runs the `pr` tier;
+  a `ci:full` run that passes leaves `verified-<tree>`, a push to main of that tree registers
+  the run instead of testing again, and `release.yml` promotes the four archives that run built
+  and tested (`release-build.yml`) instead of building them. The release pull request passes
+  `ci:full` before it is merged, and main's run is not cancelled (docs/92).
+
+### Deprecated
+
+- `ambiguous-contract-name` (until 2027.2): a name whose variable several dependencies answer,
+  which a build program's typed reader answered by the first. It still answers so, and every build
+  whose program asks warns; `--strict` refuses it (docs/51).
+
+### Fixed
+
+- **A cached dependency is served only against the module interfaces it was compiled with**
+  (SPEC-001 §10.4 item 7). An entry records the digest of each upstream interface it imported;
+  when an upstream is compiled again (its entry removed by `mcpp cache gc`, then built at
+  another path), its dependents are compiled with it and their entries written again, instead of
+  being served and failing with `module '<name>' CRC mismatch`. Entries an earlier mcpp wrote
+  for packages that import another package's module are filled again once.
+- The store's nasm, installed by link from an upstream home, is no longer reported as the host's
+  assembler: the store is judged by path, not by where the link leads.
+- **`mcpp test --failed` reads the newest run** when two runs started in the same second: the
+  later line of the store's index is the newer run.
+- **What a scope's body does is the program's** (SPEC-017 P5.6, mtest 0.11.2): a `step`,
+  `exercise` or `metric` event that names no case is kept in the program's record (`steps`,
+  `exercised`, `metrics`) instead of making a case that never ended, which failed a Windows
+  program whose suite probed Visual Studio before its cases.
+- **A test that holds the machine has the budget's slots** (SPEC-017 O11 item 5): a worker of
+  `mcpp test` that waits for the machine gives its slot back, so the build of a `machine` test
+  runs its compilers in parallel instead of on the one slot its worker held.
+- **A compiler's version is what its driver states for machines** (mcpp#989): GCC's
+  `-dumpfullversion` (else `-dumpversion`) and clang's `-dumpversion`, not the last number of the
+  banner, which read Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` as `3`. A triple's
+  vendor field is any word, as GNU config.sub reads it (`x86_64-redhat-linux` is
+  `x86_64-linux-gnu`); a toolchain whose target mcpp cannot read is reported as a degradation
+  instead of applying none of the target's settings in silence.
+- **A build no longer requires patchelf** (mcpp#990): a payload's install declares it and the
+  provider installs it then, and mcpp runs it only when it packs. A build with the machine's
+  toolchain and `glibc@system` was refused in a home without it.
+- **A toolchain request has one answer** (mcpp#988, SPEC-006 §2.6 to §2.8, docs/20). A partial
+  version (`gcc@16`) is the newest release of the local index whose version it is a prefix of, in
+  `mcpp toolchain install`, `mcpp toolchain default` and a build alike; `toolchain default` took the
+  newest installed version and a build the one the payload manager kept active. A partial version
+  `mcpp.toml` states is recorded in `mcpp.lock` (`[toolchain."xim:gcc@16"]`) and read back until
+  `mcpp update`; under `--locked` a lock without the record is kept as it is and the build says so.
+  A project that states no toolchain is told once when the default it follows answers another
+  toolchain than the one it last built with.
+- **A required `dlopen` library is judged from the object that loads it** (design 2026-11-21
+  §3.10, docs/33, docs/91). The post-link validation and `mcpp self doctor` looked for it on the
+  union of the plan's search paths, the executable's `DT_RPATH`; an object with `DT_RUNPATH`, as
+  every payload xlings installs carries, searches no `DT_RPATH`, so xim:slint's `libslint_cpp.so`
+  could not load X11, Wayland or GL in any program mcpp built while both checks passed. Each
+  required soname is now looked up from the requiring package's own shared objects by glibc's
+  rule, through one function both checks call, and one that cannot be reached is reported
+  (`runtime/dlopen-unreachable`). The `DT_NEEDED` walk applies the same rule to the farm.
+- **A toolchain's companions are the versions its payload declares** (mcpp#990, SPEC-006 §2.9).
+  binutils, the kernel headers and GCC's runtime were the first version a directory walk of the
+  store returned: with binutils 2.42 and 2.42.1 installed, GCC 16.1.0 built with 2.42, which its
+  recipe does not declare. The version is now the one the payload's descriptor declares, else the
+  newest, and a declared one the store lacks is reported. `default = { package = "gcc@…",
+  companions = { binutils = "xim:binutils@…" } }` states another binutils; an older one than the
+  declared is refused (`companion-too-old`).
+- **The command line's `@` selects by the written prefix** (SPEC-001 §4.5): `--template
+  mcpplibs.mwrap.slint@1.19.0` selects the newest key 1.19.0.x (it refused, as no key is
+  `1.19.0`); `@=<key>` selects one key, `@^1.19` is a requirement, and an exact miss names the
+  finer keys.
+- **An edit of a header a build program includes compiles and runs the program again** (mcpp#991).
+  The program's identity was predicted at three places -- the fast path, the group record and the
+  home run cache -- and a header is no package's, so the old program ran with the old directives,
+  also after `target/.build-mcpp` was deleted. The files the program's compile read are observed,
+  from the sub-build's dependency records, recorded with the program and compared by size and time,
+  then content; a declared input (`rerun_if_changed`) is compared the same way.
+- **A name in a build program's contract is judged by its variable** (mcpp#852): `foo-bar`,
+  `foo_bar` and `foo.bar` publish one variable, and a variable several dependencies, tools or
+  payloads answer belongs to none of them. `MCPP_DEP_AMBIGUOUS_<KEY>` (`MCPP_XPKG_AMBIGUOUS_<KEY>`)
+  lists the spellings that name one, and `dep_dir`, `dep_linkage`, `dep_bin` and `xpkg_dir` asked
+  by the name end the program naming them. The per-build `collides on` warnings are removed.
+- `mcpp why <topic> <subject> --format json` reports a refusal whose branch has no token as
+  `other`, as `mcpp why toolchain` does; it reported `none` beside `refused`. Both take the reason
+  from one function of the refusal record.
+- A message that names a toolchain to write or to install names this host's first run, read from
+  the built-in table: the refusal of `[toolchain] = "system"`, the examples of `mcpp toolchain`'s
+  argument errors, `mcpp toolchain list` and `mcpp self config` with nothing installed, and
+  `mcpp self doctor`'s hints for the optional cross toolchains, which name
+  `mcpp toolchain install --target <triple>`. They named gcc 16.1.0 as written in the code.
+- A GCC named by path whose project states `tools = { as = ... }` (or `ld`) compiles and links with
+  that binutils, as its `std` module's compile already did (mcpp#755). The compile and link lines
+  took their `-B` from the archive tool's directory; such a GCC has no archive tool beside its
+  driver, so they had none, and the driver ran the host's assembler from PATH, which cannot read
+  gcc 16.2.0's `.base64` directive (binutils 2.42). Both take the directory from one function now.
+- A compiler whose baked sysroot is the building home's `subos/current` links against this home's
+  C library, as one whose baked sysroot is `subos/default` does. gcc 16.2.0 revision 1 names
+  `subos/current`; the remap recognised `subos/default` alone, and the link of a program whose
+  environment no package describes found no C library.
+- `mcpp index list` names the registries `mcpp index add` added. It read the provider's list of
+  registries in an older form, found none in the current one, and showed the configuration's
+  alone; the text form now marks the default as the JSON form does.
+- A program's resource script is compiled with its package's `include_dirs` expanded, as the
+  compile steps expand them: a relative entry is a glob, and `*/include` names the directories it
+  matches. It reached `llvm-windres` as written, and LLVM's tools on Windows expand wildcards in
+  their own command line against files, so the preprocessor saw several inputs and refused
+  ("cannot specify -o when generating multiple output files"); on other hosts the literal `*`
+  found nothing. Every program of a package whose `include_dirs` name an archive's wrap layer
+  failed so on Windows, among them compat.protobuf's `protoc` host tool, which gRPC's code
+  generation builds.
+
+## [2026.11.20.1] - 2026-11-20
+
+### Added
+
+- `main = false` states that a program's image has no program start: its host enters it only
+  through the names it exports (mcpp#981, SPEC-004 §14 items 6 to 8). An application on
+  `*-linux-android`, which the Java process loads as a shared library, and a program on
+  `wasm32-emscripten`, whose page calls the module's exported functions, state it on their row;
+  the Web row links it with `--no-entry`, its new `link-without-main` (SPEC-016 §2.1). Every
+  other row refuses it, naming what enters the image there and the remedy. A row's
+  `main = false` replaces the target's file on that row, which stays the beginning of the other
+  rows and is no source of that image. Beside it in one table, `start`, `windows_entry` and the
+  entry's `cflags`, `cxxflags` and `defines` are refused, as are `main = true` and the value on
+  an entry target or in `[test]`; leaving `main` out is still refused. `mcpp run` refuses such a
+  program, and the build record's artifact has `"entry": {"main": false}` and no `launch`. A
+  framework no longer ships a translation unit that defines nothing for its applications to
+  select on these rows.
+
+### Changed
+
+- `mcpplibs.openkal-platform@0.31.2` is the default platform of the rows openkal serves (0.31.0
+  in 2026.11.19.1). The runner of an ok image (openkal-image 0.7.2) ends a program with the
+  image's tasks alone, so a debugger continued to the end sees the program end as the image
+  ended it; it enters an image file an image starts through its own loader, held to its
+  signature requirements; and a copy of the program, which a library's `fork` makes, ends as
+  the copy ends itself (mcpplibs/openkal-image#42 to #45). On macOS a request to end that a
+  context other than the program's first acts on ends the program as the request
+  (openkal-macos 0.24.1).
+
+### Fixed
+
+- A package below the tree of a `path` dependency keeps its own objects (mcpp#979). Since
+  2026.11.19.1 a `path` dependency is kept in the global cache under the digest of its tree,
+  and its entry took every compile unit below its root. A workspace below a repository whose
+  package its members' build programs import (mcpp-plugins' `tests/ws`) put both members'
+  `src/main.cpp` at the one address `obj/src/main.o` of the dependency's entry, and a build
+  from a clean target directory linked one member's object into the other. An entry now holds
+  the units its key lists, each filed under the longest package root that holds it (SPEC-001
+  §10.4 item 6). The key of a package named by its commit or its tree changes once, so that no
+  entry 2026.11.19.1 wrote for a `git` or `path` dependency is read again; the keys of index
+  packages are unchanged.
+
 ## [2026.11.19.1] - 2026-11-19
 
 ### Added

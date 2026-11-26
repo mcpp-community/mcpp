@@ -267,7 +267,8 @@ defines the entry point. Where `app` is an executable, that entry is `main`
 itself. On `*-linux-android` the file is compiled as a translation unit of
 the shared library instead, and the platform's own entry
 (`ANativeActivity_onCreate`, or the JNI exports it declares) is the
-platform's contract, not a name mcpp assigns. `exports` (above) applies to an
+platform's contract, not a name mcpp assigns. A row on which the image has
+no program start states `main = false` (below). `exports` (above) applies to an
 `app` target exactly as it does to a `shared` one, and `windows_subsystem` /
 `windows_entry` (below) accept `app` exactly as they accept `bin`.
 
@@ -295,7 +296,7 @@ A framework that supplies a program's `main` declares the translation unit as an
 kind = "entry"
 main = "src/entry/player.cpp"
 
-[target.'cfg(os = "android")'.targets.player]
+[target.'cfg(env = "android")'.targets.player]
 main = "src/entry/player_android.cpp"   # the Android beginning is another file
 
 # the application (consumer)
@@ -333,6 +334,48 @@ main = { from = "openmui/player" }     # "<dependency>/<entry>"
   only entries still has the library or program its sources infer.
 
 Test programs take the same statement in `[test]` (§2.17).
+
+#### `main = false` — an image with no program start (mcpp 2026.11.20.1+)
+
+A program whose starter enters it only through the names it exports has no
+program start, and states so with `main = false`:
+
+```toml
+[targets.app]
+kind = "app"
+main = "platform/linux/main.cpp"      # the desktop rows begin here
+
+[target.'cfg(env = "android")'.targets.app]
+main = false                          # the Java process loads libapp.so
+
+[target.'cfg(os = "emscripten")'.targets.app]
+main = false                          # the page calls the module's exports
+```
+
+| Row | `main = false` | Link |
+|---|---|---|
+| `*-linux-android`, `kind = "app"` | accepted | `libapp.so`, as with a file |
+| `wasm32-emscripten`, `bin` and `app` | accepted | with `--no-entry`, the row's `link-without-main` |
+| every other row, and `kind = "bin"` on Android | refused, naming what enters the image there | — |
+
+- A row's `main = false` replaces the target's beginning on that row. The file
+  the target names stays the beginning of the other rows and is no source of
+  this row's image; the target's `cflags`, `cxxflags`, `defines`, `start` and
+  `windows_entry` do not apply on that row.
+- In one table `main = false` with `start`, `windows_entry`, `cflags`,
+  `cxxflags` or `defines` is refused, and so is `main = true`. An entry target
+  and `[test]` do not accept `main = false`.
+- Leaving `main` out is still refused: only the statement says that an image
+  has no start.
+- The names the host calls are the program's to define and export: an Android
+  library's `JNI_OnLoad`, `Java_*` functions or `ANativeActivity_onCreate`, a
+  Web module's exported functions (`EMSCRIPTEN_KEEPALIVE`;
+  `-sEXPORTED_FUNCTIONS` and `-sMODULARIZE` in `ldflags`). A framework that
+  defines them in one translation unit can supply it as an entry target
+  instead, selected with `main = { from }` (above).
+- `mcpp run` refuses such a program and names the file `mcpp build` writes. The
+  build record's artifact has `"entry": {"main": false}` and no `launch`
+  ([50 — Machine output](50-machine-output.md)).
 
 #### `start` — the symbol an image is entered at (mcpp 2026.10.26.2+)
 
@@ -641,7 +684,7 @@ dependency_linkage = "static"     # How dependencies arrive: static (default) | 
 cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
 jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
-private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
+private_fragment = "unit"         # A private module fragment: unit (default) | conservative (a unit; any purview directive refuses) | as-written (chapter 26)
 ```
 
 A file a word of `[build] ldflags` names by absolute path is an input of every
@@ -1053,7 +1096,9 @@ longer updated; the first build that finds it says so once, naming this key.
 | Key | Chapter |
 |---|---|
 | `allow_host_libs` | [20 — Toolchains](20-toolchains.md), [22 — Target Side](22-target-side.md) |
+| `allow_host_tools` | [25 — Home, Indices and Store](25-home-indices-and-store.md) |
 | `ios_deployment_target` | [20 — Toolchains](20-toolchains.md) |
+| `offline` | [05 — Dependencies](05-dependencies.md), "Offline builds and mcpp fetch" |
 | `platform-dependencies` | [22 — Target Side](22-target-side.md) |
 | `std-module`, `std-compat-module` | [22 — Target Side](22-target-side.md) |
 
@@ -1181,6 +1226,24 @@ publication; clang gets two ordinary edges instead, because it writes the BMI to
 its final path with `O_TRUNC` and a reader could observe a half-written file.
 MSVC is left alone — neither `/ifcOnly`'s cost nor `.ifc` atomicity has been
 measured, and guessing either wrong is silent.
+
+### Available memory (`memory_threshold`) *(2026.11.21.1+)*
+
+```toml
+[build]
+memory_threshold = "2GiB"   # a size ("512MiB", "1.5GB") or bytes; "0" waits for nothing
+```
+
+The compiler executor reads the system's available memory after it holds its
+slot and before it starts a compiler. Below this value it waits for a compiler
+already running to end; it ends none. The engine's value is 1 GiB, since one
+module interface compile peaks at 0.5–1.0 GB (above). The value is taken from
+`MCPP_MEMORY_THRESHOLD`, this key, `[build] memory_threshold` in
+`~/.mcpp/config.toml`, and the engine, in that order; a value that is not a size
+is reported and the next one holds. After a minute below it the executor says so
+on standard error and starts the compiler: memory that no compiler of this machine
+holds would be waited for forever ([SPEC-004 §9](specs/manifest-semantics.md)
+item 19).
 
 ### Module interface extensions (`module_extensions`)
 
@@ -1743,6 +1806,7 @@ ndebug     = true         # -DNDEBUG for every unit of the graph (default: on fo
 trim_paths = true         # -ffile-prefix-map per unit (default: on for release/dist)
 split_debuginfo = "off"   # "unpacked": debug information beside the objects (default: dev/debug)
 bmi_cutoff = "exact"      # "ignore-locations" (default): a GCC BMI whose line maps alone moved is kept
+dependency_debug = "lines" # the store's and git's dependencies: true | false | "lines" (default under dev/debug)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1786,6 +1850,17 @@ anything compiles.
   into the program (`__builtin_LINE()`, `std::source_location::current()` in a
   template's body) and a graph compiled with `-fcontracts` are compared exactly
   under either value. Clang's BMI has no such part and the key has no effect on it.
+- **`dependency_debug` (2026.11.21.1+)** states the debug information of the dependencies
+  that come from the package store and from git: `true` (the profile's `debug`),
+  `false` (none), `"lines"` (the line tables alone: `-g1` on GCC,
+  `-gline-tables-only` on Clang, from the toolchain's row). Omitted, `dev` and `debug`
+  take `"lines"` while their `debug` is on, and every other profile takes its
+  `debug`. The members of the workspace and path dependencies keep the profile's
+  `debug`. A backtrace through a dependency still names its files and lines;
+  measured on a project whose only dependency is mtest, its test program fell from
+  43.7 MB to 8.3 MB and its build from 15.9 s to 7.2 s. The flag enters the
+  dependency's configuration, so each value has its own entry in the cache
+  ([SPEC-004 §9](specs/manifest-semantics.md) item 20).
 - **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in
@@ -1896,7 +1971,12 @@ library's sources are the same, wherever its tree is checked out; an edit is a
 new key, and the entry built from the same tree under the previous digest is
 removed as the new one is written. A `path` dependency's tree is read again
 before its entry is written, and a tree that changed while it compiled is not
-stored.
+stored. An entry holds its own package's units *(2026.11.20.1+)*: a unit below
+a package nested in the dependency's tree belongs to that package -- a
+workspace below a repository whose package its members' build programs import
+keeps its members' units, which are built in place. Under 2026.11.19.1 the
+dependency's entry took them, and a build from a clean target directory linked
+one member's object into another (mcpp#979).
 
 What is **not** cached: the project's own trees, which are what is being edited
 -- the root package, its workspace members, and any package below the project's

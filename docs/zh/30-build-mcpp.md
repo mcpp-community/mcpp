@@ -397,7 +397,9 @@ const char* same    = mcpp::xpkg_dir("picolibc-riscv");          // bare name
 ```
 
 带命名空间的形式只对该命名空间下声明的包作答，应当优先使用；裸名形式是常见的单条
-声明的便利写法，两个命名空间都声明同一个名字时，它回答**先声明**的那个。两者在包
+声明的便利写法。两个命名空间都声明同一个名字时，裸名按「两个依赖共有的名字不属于任何一个包」
+判定：2027.2 之前它回答**先声明**的那个，构建以弃用的读法 `ambiguous-contract-name` 警告；
+自 2027.2 起它结束程序，并写出带命名空间的形式。两者在包
 未声明或未安装时都返回 `""` —— 缺失是否致命只有调用方知道，所以由它自己说。
 
 做成接口而不是给一条路径约定，是因为另一种做法是让构建程序把
@@ -725,6 +727,28 @@ a.env("GEN_MODE", "release")
 命令行，值改变时该 action 重新运行。两者都未声明的 action，其命令行与 protocol 12 逐字节
 相同。
 
+#### 生成单元的编写文件：`.origin()`(2026.11.23.1+)
+
+写出某个人工编辑文件之变换副本的 action（改写了 import 的源文件、加了前置内容的模块单元），以
+`.origin(...)` 指名该文件。该文件是 action 的输入之一，action 的角色为 `source`：
+
+```cpp
+const std::string in = std::string(mcpp::manifest_dir()) + "/templates/core.cppm";
+a.role = mcpp::roles::source;
+a.arg("rewrite").arg(in.c_str()).arg(out.c_str())
+ .input(in.c_str())
+ .origin(in.c_str())
+ .output(out.c_str())
+ .provides("app.core")
+ .submit();
+```
+
+构建数据库以 `ide.generated[].origin` 陈述这一关系（[50](50-machine-output.md)），编辑器据此把
+编写的文件显示为该单元的源。引擎不由输入推断这一关系。不在输入中的 `origin`，或陈述在其他角色
+action 上的 `origin`，在构建程序运行时被拒绝。在 `.provides(...)` 中声明某模块主名的单元是该模块
+的接口单元。编写的文件同时列在 `sources` 中时，二者都提供该模块，拒绝第二个提供者的错误写明这一
+关系。
+
 #### action 中的依赖程序：`${mcpp.artifact:}`(2026.9.27.1+)
 
 带 `artifacts = ["<bin>"]` 的依赖边为消费方的目标构建该程序（[05](05-dependencies.md)）。
@@ -938,6 +962,10 @@ mcpp::pack_program("app");          // 协议 19，mcpp 2026.11.16.1
 此后未指名程序的 `mcpp pack --pkg-format web` 打包 `app`；命令行指名的程序优先；陈述的程序不在本次构建中时，
 拒绝消息指名提供者。提供者在第二遍中什么也没有提交时，拒绝消息列出它在这一遍中陈述的警告（`mcpp::warning`、
 `mcpp::report`）作为原因。因此提供者以这两者说明为何不提交，而不写标准错误：mcpp 只在程序失败时显示标准错误。
+
+**`-o <目录>/` 写入产物在其旁读取的文件。** 产物是没有被其他 action 消费的输出。`-o <目录>/` 时产物以其名字写入该
+目录；它消费的输出中位于产物所在目录之下的，按相对产物的位置一并写入（2026.11.24.1）。`web` 的页面因此与其 `.js`、
+`.wasm` 和部署的文件一同到达。每个目标位置被替换，目录中的其他内容不变。
 
 **`mcpp pack --pkg-format <name>` 会 prepare 两次。** 一条 `artifact` action 是一条
 ninja 边，而那棵暂存树是 mcpp 在链接**之后**产出的，所以这棵树不可能成为构建出它自己
@@ -1192,8 +1220,27 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 (`--target …`)才会多编一份：`build.mcpp` 在**宿主**上编译并运行，而工程的目标
 是别的平台。
 
-`#include` 依然有效，对只需要 `std::fopen` 的程序也依然是更合适的选择——构建脚本
-没有必须模块化的要求。
+`#include` 可以使用；下面的「头文件或模块」一节说明它的代价与取代它的写法。
+
+### 头文件或模块（2026.11.21.1+）
+
+推荐的 `build.mcpp` 导入它所用的东西：标准库用 `import std;`，引擎接口用 `import mcpp;`，
+自己的共用代码做成 path 包的模块，列入 `[build-dependencies]` 并导入。以下两种写法可以使用，
+不推荐：
+
+| 写法 | 取代为 | 理由 |
+|---|---|---|
+| 标准库或系统的头文件，`#include <cstdio>` | `import std;` | 程序的每次编译都重新解析头文件；`std` 模块按工具链与标准只构建一次，并与主构建共用 |
+| 本包或依赖的头文件，`#include "support/emit.hpp"` | `[build-dependencies]` 中 path 包的模块，导入它 | 包有身份，可在多个程序与包之间共用，其 BMI 只构建一次 |
+
+一个工程第一次构建时，每种写法给出一条两行的 `note`（`MCPP_BUILD_PROGRAM_INCLUDES_HEADER`），
+列出使用它的各个包；之后的构建不再重复，直到 `mcpp clean` 删除 `target/`。索引包与 git 依赖的
+程序不由工程修改，不报告。写法从程序的文本读出；这条提示不改变构建所做的任何事。
+
+程序的编译读到包外的文件（绝对路径、`../shared/x.hpp`）时，构建依赖于这台机器，包的归档也不含
+这个文件。构建按包与文件各警告一次（`MCPP_BUILD_PROGRAM_READS_OUTSIDE`）；`mcpp publish` 拒绝
+这样的文件，以及包中未被 HEAD 跟踪的文件，原因标记为 `build-program-unpublished-input`。
+程序的读取限于它的包、它的 `[build-dependencies]` 与 store。
 
 凡是 mcpp 能用来构建宿主程序的工具链，都能构建 `build.mcpp`，原生 MSVC 也不例外
 ——模块处理读的是主构建同一批表，所以 `cl.exe` 的 `.ifc` + `/reference` 不需要
@@ -1430,22 +1477,31 @@ mcpp::generated(out.string().c_str());
 生成**模块接口**是可以的：`.cppm` 走与其他源文件相同的扫描，所以一个生成出来的、
 声明 `export module …` 的文件可以被该包自己的 TU import。
 
-## 增量：声明输入（避免无谓重跑）
+## 增量：观测的输入与声明的输入（避免无谓重跑）
 
 mcpp **不会**每次构建都重跑 `build.mcpp`。它会缓存程序产出的指令，只有当它依赖的东西
-变化时才重跑：
+变化时才重跑。它的输入分两类。
 
-- `build.mcpp` 源码本身，
-- 工具链，
+**程序编译时读到的文件由观测得出**（2026.11.21.1+）。编译 `build.mcpp` 时读到的文件——它包含的
+头文件、它嵌入的文件——取自这次编译的依赖记录（GNU depfile；cl.exe 的 `/sourceDependencies`），
+与主构建的取法相同。store 中的文件（工具链、索引包）与 `[build-dependencies]` 包中的文件已由该包的
+身份覆盖，不记录。记录的文件改变后，程序重新编译并重新运行，快速路径上与删除 `target/.build-mcpp`
+之后同样如此。文件先按大小与修改时间比较，二者之一改变时再按内容比较。记录以编译器为准：包含路径中
+新出现的同名头文件，以及系统包含目录之下的改变（`gcc@system` 读 `/usr/include`）不被观测，与主构建相同。
+
+**程序运行时读到的东西由声明给出**：
+
+- `build.mcpp` 源码本身与工具链无须声明即为输入，
 - 任何用 `rerun-if-changed` 声明的文件，
 - 任何用 `rerun-if-env-changed` 声明的环境变量，
 - （或某个 `generated` 产物 / `source=` 选中的文件丢失了），
 - （或该缓存是由一个对某条指令解释不同的 mcpp 写下的——条目带一个格式 **epoch**,
   遇到不认识的 epoch 就重跑一次，而不是把值按错误的含义重放）。
 
-因此必须**声明输入**：如果程序读了 `config.h` 或 `USE_FAST` 变量，就分别 emit
-`mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`。这用一份明确的
-输入/输出契约取代了过去「进程退出码为 0 就当成功」的猜测——让增量构建保持正确。
+因此必须**声明程序运行时读到的东西**：如果程序打开 `config.h` 或读取 `USE_FAST` 变量，就分别 emit
+`mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`。没有一种宿主能可移植地观测
+进程打开的文件，所以这仍是一份契约：程序的输入/输出是明确的，增量构建保持正确。声明的文件与观测的
+文件按同一规则比较。
 
 运行过或失败的程序各有一行，在程序结束时写出（2026.9.30.1+）：编译或运行过时是
 `build.mcpp <包名>  ran <耗时>`（`--verbose` 下为 `compiled <耗时> · ran <耗时>`），失败时是
@@ -1718,9 +1774,15 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   因此把 `namespace = "spike"` 与 `name = "installer"` 分开写的包，既是
   `dep_bin("installer", ...)`，也是 `dep_bin("spike.installer", ...)`（mcpp 2026.9.16.1+;
   此前它的工具只以 `installer` 发布）。
-- **两个依赖共有的名字不属于任何一个包**（2026.10.30.1+）。清单都写 `rules` 的两个包（`openmui.rules`、
-  `gongfu.rules`）各以限定名寻址；`rules` 本身不为任何一个发布，`MCPP_DEP_AMBIGUOUS_RULES` 列出两个限定名。
-  `dep_dir("rules")` 结束程序，并写出这两个名字。2026.10.30.1 之前，这个名字归两者之一，且每次构建都警告。
+- **两个依赖共有的名字不属于任何一个包**（2026.10.30.1+；2026.11.21.1+ 按变量判定）。名字以变量发布：
+  字母转为大写，其余字符转为 `_`，因此 `foo-bar`、`foo_bar` 与 `foo.bar` 是同一个变量。两个依赖共同回答的
+  变量不属于其中任何一个：`MCPP_DEP_AMBIGUOUS_<NAME>` 列出各自只指向其中一个的拼写（对于清单都写 `rules`
+  的 `openmui.rules` 与 `gongfu.rules`，即两个限定名），`dep_dir`、`dep_linkage`、`dep_bin` 与 `xpkg_dir`
+  以这个名字询问时结束程序，并写出这些拼写。没有任何拼写在变量保留的字符上不同时（`foo-bar` 与 `foo_bar`），
+  列表为空，消息说明需要改名其中一个包。2026.11.21.1 之前回答了的变量（回答两者中的第一个）在 2027.2 之前
+  照旧回答，属于弃用的读法 `ambiguous-contract-name`：程序询问它的每次构建都警告，`mcpp why compat` 列出它，
+  `--strict` 拒绝它（docs/51）。没有程序询问的名字，构建不警告。不经类型化接口、直接读取变量的程序得到相同
+  的值，没有警告；自 2027.2 起第一个回答不再发布。
 
 #### 旧版 mcpp 读到用了这些键的 manifest
 

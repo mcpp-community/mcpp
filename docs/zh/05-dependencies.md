@@ -62,8 +62,8 @@ mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自
 
 ```toml
 [dev-dependencies]
-mcpplibs.mtest         = "0.10.0"
-"mcpplibs.mtest.gtest" = "0.10.0"
+mcpplibs.mtest         = "0.11.3"
+"mcpplibs.mtest.gtest" = "0.11.3"
 ```
 
 ```toml
@@ -383,12 +383,13 @@ mcpp update           # sync, then re-resolve dependencies
 mcpp index status     # local state: state, age and revision
 ```
 
-三个开关，按优先级从高到低：
+几个开关，按优先级从高到低：
 
 | 开关 | 效果 |
 |---|---|
-| `--offline`（任意命令） | 完全不碰网络 —— 不刷索引、不下载、不自动安装工具链，也不发出 `git ls-remote`/`clone`。已安装的东西照常构建，包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖 |
+| `--offline`（任意命令） | 完全不碰网络 —— 不刷索引、不下载、不自动安装工具链，也不发出 `git ls-remote`/`clone`。已安装的东西照常构建，包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖；home 缺少的载荷在写明了归档目录时取自归档目录（见下文） |
 | `MCPP_OFFLINE=1` | 同上，作用于整个 shell 会话或一次 CI job |
+| `[build] offline = true`（2026.11.21.1 起） | 同上，由工程（`mcpp.toml`）或机器（`config.toml`）陈述；命令行与变量优先，其次工程，再次机器。`MCPP_OFFLINE=0` 在一次运行中关闭已陈述的 `offline` |
 | `~/.mcpp/config.toml` 中的 `[index] auto_refresh = false` | 永不隐式刷新索引：依赖未命中时不刷新，索引的平台列未列出目标行时不刷新（2026.11.19.1 起），安装本地索引没有的包之前不刷新，工程自定义索引的首次同步也不做（该次构建停止，并指出 `mcpp index update`）。下载仍然可用 |
 
 `MCPP_NO_AUTO_INSTALL=1` 作为 `--offline` 更早、更窄的拼法，仍然被接受
@@ -399,7 +400,48 @@ mcpp index status     # local state: state, age and revision
 失败之后一样，继续使用本地索引。经由 xlings 的安装，在 xlings 连续 300 秒
 没有任何输出（包括心跳）时被终止。终止 mcpp 会一并终止它启动的 xlings 进程。
 
+共用一个 home 的进程只刷新一次索引。发现另一个进程正在刷新的进程立即读取本地
+索引，除非 home 读取的某个索引（provider 自己的 `xim`，或 home 声明的）还没有
+任何包；这时它等待那次刷新结束，读取其取回的内容，而不是报告没有本地索引
+（2026.11.13.1 起；provider 自己的索引与尚未写入的目录，2026.11.22.1 起，mcpp#927）。
+
 对任意命令加 `-v`，可以看到每个依赖的判定结果与原因。
+
+### 离线构建与 mcpp fetch（2026.11.21.1 起）
+
+`mcpp fetch` 是构建中「取得所需之物」这一步的命令形式。它像 `mcpp build
+--configure-only` 一样解析并规划每个配置 —— 按锁取依赖，工具链及其声明的载荷，
+目标的基础层，构建程序的依赖，测试的依赖 —— 使所需之物都在 home 中，且不编译
+任何东西。它接受 `mcpp build` 的选择选项（`--target`，可重复；`--toolchain`、
+`--sysroot`、`--platform`、`-p`、`--workspace`、`--profile`、`--features`）。
+
+```bash
+mcpp fetch                       # 联网：把构建所需之物装入 home
+mcpp fetch --to ./bundle         # 然后写入一个目录
+mcpp fetch --from ./bundle       # 先把这样的目录装入本机的 home
+mcpp build --offline             # 之后：不使用网络
+```
+
+- `--to <dir>` 写入本次运行用到的每个载荷及其闭包（xlings 的 `download --to
+  --with-index`）、解析它们的每个索引的快照、构建用到的每个 git 克隆的
+  `git bundle`，以及描述该目录的 `bundle.toml`。目录的布局不是接口：一个版本
+  写出的目录，该版本与之后的版本都能读取。
+- `--from <dir>` 把 bundle 的索引快照放到 home 没有自己的索引之处（home 以 git
+  工作树保存的索引保持不变），以这些快照解析并安装包，把克隆导入
+  `~/.mcpp/git`，然后像 `mcpp fetch` 一样规划。尚不存在的 home 被创建，并由
+  bundle 完成引导。之后该目录可以移走。
+- `--from` 拒绝缺少 `mcpp.lock` 所记版本的 bundle（`bundle-older-than-lock`），
+  bundle 写于另一种宿主、或不是为所选目标写出时给出警告（`bundle-lacks-target`）。
+
+离线运行需要 home 缺少的载荷时，按原因拒绝：
+
+| 运行 | 拒绝 |
+|---|---|
+| 没有写明归档目录 | `offline-download-required`：不询问任何来源；补救说明本次如何成为离线，并给出 `mcpp fetch --to`、`--from` |
+| 写明了归档目录（`[xlings] archives`、`MCPP_ARCHIVES`；25 —— Home、索引与存储） | 询问下载缓存与这些目录，不询问网络；都没有该归档时为 `artifact-unavailable-offline`，并附提供者列出的缺少项 |
+
+离线时 git 依赖的提交取自 `mcpp.lock`，因此以 `mcpp fetch --to` 携带的工程应提交
+它的锁。无论写明了哪些归档目录，`mcpp self doctor` 都不安装任何东西。
 
 ## `[dev-dependencies]` —— 测试依赖
 
@@ -659,7 +701,7 @@ C 库用 `embed` 携带分配器之类本身需要 C 库才能构建的依赖。
 ## 当前边界
 
 - **只有两件事需要网络，而且只有这两件：** 解析一个在 lock 里没有 commit 的
-  分支，以及克隆一个尚未缓存的 commit。指向本地目录或 `file://` URL 的
+  分支，以及克隆一个尚未缓存的 commit（`mcpp fetch --from` 导入的克隆即已缓存）。指向本地目录或 `file://` URL 的
   `git =`，两者都不需要，因此离线时从不会被拒绝。
 - 索引刷新窗口**不适用于写明了 namespace 的选择器**。`mcpplibs.gtest` 一旦
   未命中，就保持未命中，直到下一次刷新。

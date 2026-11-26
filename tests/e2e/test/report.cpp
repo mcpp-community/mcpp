@@ -13,7 +13,7 @@ std::string manifest(std::string_view name) {
     return std::format("[package]\nname = \"{}\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n", name);
 }
 
-E2E report{"report", [] {
+E2E report{"report", s::home_fixture, [] {
     "15 test passing"_test = [] {
         // `mcpp test` discovers tests/**/*.cpp and runs each as a separate binary; all passing:
         // exit 0 and the summary.

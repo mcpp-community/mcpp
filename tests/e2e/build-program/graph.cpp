@@ -19,7 +19,7 @@ std::string run_line(const s::project& p, std::string_view prefix, std::vector<s
     return line;
 }
 
-E2E graph{"graph", [] {
+E2E graph{"graph", s::home_fixture, [] {
     "903 one package in both tables has two instances"_test[s::elf] = [] {
         // mcpp#797 R2, R3: one package in [dependencies] and [build-dependencies] has two
         // instances, each correct (they merged into one edge read as "build time only"). M1 both

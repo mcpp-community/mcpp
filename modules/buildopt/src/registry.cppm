@@ -60,6 +60,15 @@ struct Entry {
     std::string_view key;       // the manifest key that states otherwise; empty: none
     std::string_view env;       // the same for one invocation
     std::string_view values;    // the key's values, the default first
+    // The value that checks the entry: stated for one invocation, it turns this
+    // entry off and no other, so a failure that is the entry's goes with it.
+    // Empty: the entry has no value of its own to check with, and
+    // `MCPP_BUILDOPT=off` is the one statement (the failure advice reads it).
+    std::string_view check;
+    // The same on a compiler where `check` is not available: GCC cannot build a
+    // private module fragment as written, so the check there is the rule before
+    // the entry's narrowing (`conservative`). Empty: `check` holds everywhere.
+    std::string_view checkGcc;
 };
 
 inline constexpr std::string_view kKeepBmi         = "keep-bmi";
@@ -79,14 +88,14 @@ inline constexpr std::array<Entry, 7> kEntries{{
      Seam::Edge, Level::Exact, true, {}, {}, {}},
     {kGcmLocations, "a GCC BMI whose line maps alone moved is kept; its importers name the earlier lines",
      Seam::Edge, Level::Conditional, true, "[profile.<name>] bmi_cutoff", "MCPP_BMI_CUTOFF",
-     "ignore-locations | exact"},
+     "ignore-locations | exact", "exact"},
     {kScanPass, "the scans of a graph run as a pass of their own before its compiles",
      Seam::Graph, Level::Exact, true, {}, {}, {}},
     {kSplitSchedule, "importers start when a BMI exists, not when its compiler exits (two-phase, detached code generation)",
      Seam::Graph, Level::Shape, false, "[build] bmi_schedule", "MCPP_BMI_SCHEDULE", "auto | on | off"},
     {kPrivateFragment, "a private module fragment is built as a unit of its own, so an edit of it reaches no importer",
      Seam::Source, Level::Source, true, "[build] private_fragment", "MCPP_PRIVATE_FRAGMENT",
-     "unit | as-written"},
+     "unit | conservative | as-written", "as-written", "conservative"},
 }};
 
 constexpr const Entry* find(std::string_view id) {

@@ -33,7 +33,7 @@ bool spoiled(const fs::path& file) {
     return bytes.size() > 19 && static_cast<unsigned char>(bytes[18]) == 0xff && static_cast<unsigned char>(bytes[19]) == 0xff;
 }
 
-E2E runners{"runners", [] {
+E2E runners{"runners", s::home_fixture, [] {
     "330 runner hosted targets"_test[s::unix_shell] = [] {
         // A runner declared under [target.<host>] runs the artifact (argv[0] the artifact), on
         // the fast path too; --no-runner bypasses it with a note; a missing runner exits 2 naming

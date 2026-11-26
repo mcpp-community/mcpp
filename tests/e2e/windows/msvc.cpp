@@ -56,7 +56,7 @@ std::set<std::string> ms_versions(const fs::path& ninja) {
     return words;
 }
 
-E2E msvc{"msvc", [] {
+E2E msvc{"msvc", s::home_fixture, [] {
     "95 msvc system toolchain"_test[s::msvc] = [] {
         // `toolchain default msvc` locates and identifies the machine's MSVC and persists
         // msvc@system; `toolchain list` shows it under System, starred; a versioned spec is a
@@ -428,6 +428,24 @@ int main() { f(); }
         expect(fatal(e2e::contains(out, note))) << "C: the failure carries no note: " << out;
         expect(fatal(!e2e::contains(out, "standard = \"c++20\""))) << "C: C++20 was offered for code that uses coroutines: " << out;
         expect(fatal(e2e::contains(out, "toolchain = \"llvm@22.1.8\""))) << "C: llvm 22.1.8 was not offered: " << out;
+    };
+
+    "1144 i686-windows-msvc is a row: built and run with no section"_test[s::msvc] = [] {
+        // The 32-bit x86 Microsoft ABI is a row of the target table, served by the msvc provider
+        // like x86_64-windows-msvc (mcpp#996): a project that writes no [target.i686-windows-msvc]
+        // builds it with the machine's toolchain and runs it on x86_64 Windows (WOW64), with no
+        // platform looked up. Before, it was a custom triple, and without the section it was
+        // refused as an unknown target.
+        const s::options o{.where = s::home::registry};
+        s::project app{{"mcpp.toml", "[package]\nname = \"x86app\"\nversion = \"0.1.0\"\nstandard = \"c++20\"\n"},
+                       {"src/main.cpp", "import std;\nint main() { std::cout << \"x86 row \" << sizeof(void*) << \"\\n\"; }\n"}};
+        auto r = app.mcpp({"run", "--target", "i686-windows-msvc", "--verbose"}, o);
+        const auto out = s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "the row did not build and run: " << out;
+        expect(fatal(e2e::contains(out, "x86 row 4"))) << "the program is not a 32-bit one: " << out;
+        expect(fatal(!e2e::contains(out, "the platform column for i686-windows-msvc"))) << "a platform was looked up for a row the table serves: " << out;
+        r = app.mcpp({"toolchain", "list"}, o);
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "i686-windows-msvc"))) << "the row is not listed: " << s::text(r);
     };
 
     "1017 a system msvc builds the build program of a cross target"_test[s::windows][s::msvc] = [] {

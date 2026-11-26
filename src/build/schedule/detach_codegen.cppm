@@ -75,6 +75,9 @@ import mcpplibs.os.env;
 import mcpplibs.os.platform;
 import mcpplibs.os.stdio;
 import mcpplibs.os.text;
+import mcpplibs.os.machine;
+import mcpp.build.unit_cache;   // a compile placed by the contents it read (design 2026-11-20 §5.3)
+import mcpp.build.record;       // the compile's measurement (design 2026-11-20 §5.6)
 import mcpp.build.depfile;
 import mcpp.build.command_line;
 import mcpp.run;
@@ -341,6 +344,33 @@ bool drain_actors(const std::filesystem::path& generation) {
     return false;
 }
 
+// A GENERATION IS RETIRED BY A RENAME, THEN REMOVED. Its removal is not
+// atomic, and a build ended by a signal can end inside it: the signal's thread
+// ends the process while the build's thread retires the generation. A removal
+// cut short left an attempt whose `unit` outlived its `prepared` record, which
+// recovery refuses ("compiler unit without prepared transaction", e2e 936 H),
+// and every later build of the configuration with it. Renamed out of the
+// `run-` names first, the generation is no longer one recovery reads; what a
+// cut removal leaves is swept by the next build.
+std::expected<void, std::string> retire_generation(const std::filesystem::path& generation) {
+    auto retired = generation.parent_path() / "retired-";
+    retired += generation.filename();
+    std::error_code ec;
+    std::filesystem::rename(generation, retired, ec);
+    if (ec) return std::unexpected(std::format("cannot retire {}: {}", mcpp::home::spelling(generation), ec.message()));
+    std::filesystem::remove_all(retired, ec);
+    return {};
+}
+
+// What a removal cut short left: no build reads it, so a removal that fails
+// again (a file still held on Windows) is retried by the next build.
+void sweep_retired(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+        if (entry.path().filename().native().starts_with(std::filesystem::path("retired-").native()))
+            std::filesystem::remove_all(entry.path(), ec);
+}
+
 void withdraw_outputs(const std::filesystem::path& slot,
                       const std::filesystem::path& object = {}) {
     std::error_code ec;
@@ -386,7 +416,77 @@ bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=
 struct Permit {
     std::optional<mcpplibs::os::fs::lock> lock;
     std::filesystem::path reservation;
+    // The machine's budget slot (SPEC-017 O11), held for the compile, taken
+    // before the generation's slot; empty when the slot is the one the runner
+    // holds for this process, or no budget is stated.
+    std::optional<mcpplibs::os::fs::lock> budget;
+    std::optional<mcpplibs::os::fs::lock> heldClaim;
 };
+
+// ONE BUDGET FOR THE MACHINE (SPEC-017 O11, design 2026-11-20 §5.5). A runner
+// that states MTEST_BUDGET holds a slot file of that directory for the process
+// it started (MTEST_BUDGET_HELD); the first compiler of this build runs on it,
+// and every other compiler locks a free slot file before it starts. Four test
+// processes each starting a parallel build put 7 to 9 processes in the run
+// queue of 4 processors (measured, design §3.1): the work of a slot that is
+// not free waits instead.
+std::expected<void, int> take_budget_slot(Permit& permit, const std::filesystem::path& permits) {
+    const auto budget = mcpp::invocation::get("MTEST_BUDGET");
+    if (!budget || budget->empty()) return {};
+    const auto held = mcpp::invocation::get("MTEST_BUDGET_HELD").value_or("");
+    const std::filesystem::path dir = mcpp::home::from_utf8(*budget);
+    // The held slot is claimed by one compiler of the build at a time.
+    if (!held.empty()) {
+        auto claim = mcpplibs::os::fs::lock::acquire(permits / "budget-held.lock",
+                                                     mcpplibs::os::fs::lock::kind::exclusive, false);
+        if (claim) { permit.heldClaim.emplace(std::move(*claim)); return {}; }
+    }
+    std::vector<std::filesystem::path> slots;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+        if (e.path().filename().string().starts_with("slot-")
+            && mcpp::home::spelling(e.path()) != held)
+            slots.push_back(e.path());
+    if (slots.empty()) return {};   // a budget of one slot: the held one, claimed by another compiler
+    std::ranges::sort(slots);
+    for (;;) {
+        for (const auto& f : slots) {
+            auto slot = mcpplibs::os::fs::lock::acquire(f, mcpplibs::os::fs::lock::kind::exclusive, false);
+            if (slot) { permit.budget.emplace(std::move(*slot)); return {}; }
+        }
+        // The held slot may have been released by the compiler that claimed it.
+        if (!held.empty()) {
+            auto claim = mcpplibs::os::fs::lock::acquire(permits / "budget-held.lock",
+                                                         mcpplibs::os::fs::lock::kind::exclusive, false);
+            if (claim) { permit.heldClaim.emplace(std::move(*claim)); return {}; }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+// THE MEMORY A COMPILER MAY START BELOW (design 2026-11-20 §5.5, mcpp#802): read
+// after the slots are held, before the compiler starts. Below the threshold the
+// compiler waits for memory a running compiler gives back; none is ended. A
+// minute without enough is said and the compiler starts: waiting for memory no
+// compiler of this machine holds would wait forever.
+void await_memory() {
+    std::uint64_t threshold = 0;
+    if (const auto v = mcpp::invocation::get("MCPP_MEMORY_THRESHOLD"))
+        std::from_chars(v->data(), v->data() + v->size(), threshold);
+    if (threshold == 0) return;
+    const auto started = std::chrono::steady_clock::now();
+    for (;;) {
+        const auto available = mcpplibs::os::machine::memory_available();
+        if (!available || *available >= threshold) return;
+        if (std::chrono::steady_clock::now() - started > std::chrono::minutes(1)) {
+            std::println(std::cerr, "mcpp: {} MiB available, under the memory threshold of {} MiB for a "
+                                    "minute; the compiler starts ([build] memory_threshold)",
+                         *available >> 20, threshold >> 20);
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
 std::expected<Permit, int>
 acquire_permit(const Actor& actor, const std::filesystem::path& requested, int requestedCap) {
     const auto dir = actor.owner.permits(requested);
@@ -401,7 +501,9 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
     if (!actor.ready) return std::unexpected(130);
     if (dir.empty() || cap <= 0) {
         if (actor.owner.managed) return std::unexpected(2);
-        return Permit{};
+        Permit free;
+        await_memory();
+        return free;
     }
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -409,6 +511,8 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
         std::println(std::cerr, "mcpp: cannot create compiler semaphore {}: {}", dir.string(), ec.message());
         return std::unexpected(1);
     }
+    Permit budgeted;
+    if (auto took = take_budget_slot(budgeted, dir); !took) return std::unexpected(took.error());
     const auto started = std::chrono::steady_clock::now();
     constexpr auto kLimit = std::chrono::hours(2);
     std::optional<std::chrono::steady_clock::time_point> unexplainedSince;
@@ -425,7 +529,10 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
                     if (!available) { std::println(std::cerr,"mcpp: {}",available.error()); return std::unexpected(1); }
                     if (!*available) { orphan = true; continue; }
                 }
-                return Permit{std::optional<mcpplibs::os::fs::lock>{std::move(*permit)},reservation};
+                budgeted.lock.emplace(std::move(*permit));
+                budgeted.reservation = reservation;
+                await_memory();
+                return budgeted;
             }
             // On macOS a slot another compiler holds is now and then reported
             // "not found" from inside this executor, though the directory and
@@ -688,9 +795,7 @@ struct RunScope::State {
         }
         auto recovered = transactions::recover_generation(generation,witnesses ? &witnesses->observers() : nullptr);
         if (!recovered) { failure=recovered.error(); return std::unexpected(failure); }
-        std::error_code ec;
-        std::filesystem::remove_all(generation, ec);
-        if(ec) {failure="cannot retire completed compiler runtime state";return std::unexpected(failure);}
+        if(auto retired=retire_generation(generation);!retired) {failure=retired.error();return std::unexpected(failure);}
         if(witnesses&&witnesses->failed()) {
             failure="a compiler controller ended before completion; incomplete outputs were recovered";
             return std::unexpected(failure);
@@ -751,10 +856,9 @@ std::expected<void, std::string> retire_compiler_runs(const std::filesystem::pat
                 "an mcpp is building {}: the helpers of {} hold its locks; it was not cleaned",
                 mcpp::home::spelling(outputDir), mcpp::home::spelling(entry.path())));
         }
-        std::filesystem::remove_all(entry.path(), ec);
-        if (ec) return std::unexpected(std::format("cannot retire {}: {}",
-            mcpp::home::spelling(entry.path()), ec.message()));
+        if (auto retired = retire_generation(entry.path()); !retired) return std::unexpected(retired.error());
     }
+    sweep_retired(located->root);
     return {};
 }
 
@@ -802,9 +906,9 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
                 recovered->unobservable, recovered->unobservable==1?"":"s", mcpp::home::spelling(entry.path())),
                 "a compiler that outlived its controller in that process space is not found; a late "
                 "write is caught by the next build, which compiles that unit again");
-        std::filesystem::remove_all(entry.path(), ec);
-        if (ec) return std::unexpected("cannot retire previous compiler-run state");
+        if (auto retired = retire_generation(entry.path()); !retired) return std::unexpected(retired.error());
     }
+    sweep_retired(state->root);
     // Old owners, actors and units are quiet before cached output recovery;
     // no Ninja reader from this generation has started yet.
     // What the recovered attempts wrote below themselves goes with them
@@ -857,6 +961,96 @@ void RunScope::environment(std::vector<std::pair<std::string, std::string>>& env
 std::expected<void, std::string> RunScope::finish() { return state_->close(); }
 const std::filesystem::path& RunScope::directory() const { return state_->generation; }
 bool RunScope::failed() const {return state_->witnesses&&state_->witnesses->failed();}
+
+namespace {
+// THE UNIT, FOR THE SUPERVISOR TO PLACE OR KEEP (design 2026-11-20 §5.3): its
+// key is the command as the rule wrote it (an attempt's own paths are new each
+// time), its outputs the paths it is published at, the places a hit writes
+// where the compiler would have, and the files it reads -- the scan's depfile
+// (what the compiler's own is equivalent to, above) and the BMIs the scan says
+// it imports, by the module mapper. Nothing when the build states no cache.
+void record_unit(const CompileRequest& req, const CompileRequest& actual, const std::filesystem::path& watched) {
+    namespace uc = mcpp::build::unit_cache;
+    std::error_code ec;
+    const auto file = suffixed(actual.slot, ".unit");
+    std::filesystem::remove(file, ec);
+    const auto dir = mcpp::invocation::get(uc::kDirEnv);
+    if (!dir || dir->empty() || req.depFrom.empty()) return;
+    auto read = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(in), {}};
+    };
+    uc::Unit u{uc::split_command(req.command), std::filesystem::current_path(), req.object, req.bmi};
+    const auto shape = uc::shape_of(u.argv);
+    if (!shape) return;
+    // THE FILES READ, WHERE THEY ARE KNOWN BEFORE THE COMPILER RUNS: the scan's depfile
+    // (`<unit>.ddi.dep`) and the BMIs its record imports. A unit whose depfile is the compile's own
+    // (Clang's `-MMD -MF <out>.d`, which ninja takes into its log and removes) leaves them unset,
+    // and keeping it reads the depfile this compile writes. Read here, that depfile did not exist
+    // yet: the entry named no file read, and an edit of a header the module's purview includes
+    // was placed from it unchanged (measured: case 118 printed 41 after the edit to 42).
+    if (auto ddi = req.depFrom; ddi.extension() == ".dep") {
+        const auto text = read(req.depFrom);
+        if (text.empty()) return;
+        std::vector<std::filesystem::path> reads;
+        for (const auto& p : uc::depfile_prerequisites(text)) reads.emplace_back(p);
+        ddi.replace_extension();
+        const auto mapper = shape->mapper.empty() ? std::string{} : read(shape->mapper);
+        for (auto& b : uc::imported_bmis(read(ddi), mapper, u.cwd)) reads.push_back(std::move(b));
+        u.reads = std::move(reads);
+    }
+    const auto words = uc::split_command(actual.command);
+    for (std::size_t i = 0; i + 1 < words.size(); ++i)
+        if (words[i] == "-o") u.placeObject = words[i + 1];
+    u.placeBmi = watched;
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << uc::to_record(u);
+    // Before the BMI is published, its producer's key: an importer starts then.
+    std::vector<std::filesystem::path> roots;
+    std::istringstream lines(mcpp::invocation::get(uc::kRootsEnv).value_or(""));
+    for (std::string line; std::getline(lines, line);)
+        if (!line.empty()) roots.push_back(mcpp::home::from_utf8(line));
+    uc::Cache(mcpp::home::from_utf8(*dir), std::move(roots), u.cwd).announce(u);
+}
+
+// The cache the build states, for the unit phase 1 recorded beside `slot`.
+std::optional<std::pair<mcpp::build::unit_cache::Cache, mcpp::build::unit_cache::Unit>>
+recorded_unit(const std::filesystem::path& slot) {
+    namespace uc = mcpp::build::unit_cache;
+    const auto dir = mcpp::invocation::get(uc::kDirEnv);
+    if (!dir || dir->empty()) return std::nullopt;
+    std::ifstream in(suffixed(slot, ".unit"), std::ios::binary);
+    if (!in) return std::nullopt;
+    auto u = uc::from_record(std::string{std::istreambuf_iterator<char>(in), {}});
+    if (!u) return std::nullopt;
+    std::vector<std::filesystem::path> roots;
+    std::istringstream lines(mcpp::invocation::get(uc::kRootsEnv).value_or(""));
+    for (std::string line; std::getline(lines, line);)
+        if (!line.empty()) roots.push_back(mcpp::home::from_utf8(line));
+    return std::pair{uc::Cache(mcpp::home::from_utf8(*dir), std::move(roots), u->cwd), std::move(*u)};
+}
+
+long long unix_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// The compile's line in the build record (design 2026-11-20 §5.6): its object,
+// and the compiler's processor time and largest resident set -- the supervisor
+// starts no other program -- or that the unit cache placed it.
+void record_usage(const std::filesystem::path& object, long long started, bool served) {
+    namespace rec = mcpp::build::record;
+    const auto file = mcpp::invocation::get(rec::kUsageEnv);
+    if (!file || file->empty() || object.empty()) return;
+    rec::Usage u{object.generic_string(), started, unix_ms()};
+    u.served = served;
+    if (!served)
+        if (const auto used = mcpplibs::os::process::resources(mcpplibs::os::process::of::children)) {
+            u.cpuMs = std::chrono::duration<double, std::milli>(used->user + used->system).count();
+            u.peakBytes = used->peak_memory;
+        }
+    (void)mcpplibs::os::fs::append(mcpp::home::from_utf8(*file), rec::usage_line(u));
+}
+}  // namespace
 
 int compile_release_at_bmi(const CompileRequest& req) {
     if (req.command.empty() || req.self.empty()) return 2;
@@ -918,6 +1112,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
     // A relocated attempt watches its own BMI, which did not exist before it.
     const auto watched = plan.relocated() ? relocation::written_bmi(plan) : actual.bmi;
     const BmiIdentity before = plan.relocated() ? BmiIdentity{} : bmi_identity(actual.bmi);
+    record_unit(req, actual, watched);
     if (!attempt && !plan.relocated() && !actual.bmi.empty()) {
         const auto backup = suffixed(actual.bmi, ".bak");
         std::filesystem::remove(backup, ec);
@@ -1130,11 +1325,19 @@ int supervise(const std::filesystem::path& slot,
         if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{})) {
             (void)write_rc(slot,2);return 2;
         }
-        const int ran=run_to_completion(command,suffixed(slot,".log"),actor->owner,unit.get());
+        auto cached=recorded_unit(slot);
+        const auto started=unix_ms();
+        const bool served=cached&&cached->first.serve(cached->second);
+        const int ran=served?0:run_to_completion(command,suffixed(slot,".log"),actor->owner,unit.get());
         if(auto retired=retire_owned(*unit,actor->owner);!retired) {
             record_supervisor_error(slot,retired.error());return 1;
         }
         const int rc=publish_outputs(ran);
+        if(cached&&!served) {
+            if(rc==0)cached->first.keep(cached->second);
+            else mcpp::build::unit_cache::Cache::forget(cached->second);
+        }
+        if(rc==0)record_usage(cached?cached->second.object:object,started,served);
         if(!attempt.retired(rc)) {record_supervisor_error(slot,"cannot publish compiler retirement certificate");return 1;}
         std::string status_failure;
         if(!write_rc(slot,rc,&status_failure)) {
@@ -1178,7 +1381,15 @@ int supervise(const std::filesystem::path& slot,
     // Acquire in the supervisor: no lock-handle handoff, and no interval in
     // which an early-returning phase 1 could release the compiler's permit.
     if (!actor->owner.active()) return 130;
-    const int rc = publish_outputs(run_to_completion(command, suffixed(slot, ".log"), actor->owner));
+    auto cached = recorded_unit(slot);
+    const auto started = unix_ms();
+    const bool served = cached && cached->first.serve(cached->second);
+    const int rc = publish_outputs(served ? 0 : run_to_completion(command, suffixed(slot, ".log"), actor->owner));
+    if (cached && !served) {
+        if (rc == 0) cached->first.keep(cached->second);
+        else mcpp::build::unit_cache::Cache::forget(cached->second);
+    }
+    if (rc == 0) record_usage(cached ? cached->second.object : object, started, served);
     settle(mcpp::run::ending() ? 130 : rc);
     return 0;   // the supervisor's own status is not the compiler's
 }

@@ -1,0 +1,455 @@
+command add
+command bmi-await
+command bmi-compile
+command bmi-supervise
+command build
+command cache
+command cache clean
+command cache dir
+command cache gc
+command cache info
+command cache list
+command cache prune
+command cache verify
+command clean
+command coff-def
+command dyndep
+command emit
+command emit build-database
+command emit sbom
+command emit surface
+command emit xpkg
+command explain
+command fetch
+command index
+command index add
+command index list
+command index pin
+command index remove
+command index status
+command index unpin
+command index update
+command link-output
+command new
+command pack
+command place-dlls
+command platform-step
+command publish
+command remove
+command resolve
+command run
+command search
+command self
+command self config
+command self doctor
+command self env
+command self explain
+command self init
+command self store
+command self store dedupe
+command self version
+command stage
+command test
+command toolchain
+command toolchain default
+command toolchain install
+command toolchain list
+command toolchain remove
+command update
+command version
+command why
+command write
+command xpkg
+command xpkg parse
+flag --deny
+flag --frozen
+flag --locked
+flag --managed-only
+flag --no-color
+flag --offline
+flag --protocol-version
+flag --quiet
+flag --system
+flag --verbose
+flag add --dev
+flag bmi-await --object
+flag bmi-await --slot
+flag bmi-compile --bmi
+flag bmi-compile --cap
+flag bmi-compile --command-file
+flag bmi-compile --dep-from
+flag bmi-compile --dep-to
+flag bmi-compile --object
+flag bmi-compile --relocate
+flag bmi-compile --self
+flag bmi-compile --sem
+flag bmi-compile --slot
+flag bmi-supervise --cap
+flag bmi-supervise --command-file
+flag bmi-supervise --object
+flag bmi-supervise --relocation
+flag bmi-supervise --sem
+flag bmi-supervise --slot
+flag build --accel
+flag build --cache
+flag build --cap
+flag build --configure-only
+flag build --dev
+flag build --exclude
+flag build --features
+flag build --host-platform
+flag build --jobs
+flag build --message-format
+flag build --no-accel
+flag build --no-cache
+flag build --package
+flag build --platform
+flag build --play-game
+flag build --print-fingerprint
+flag build --profile
+flag build --release
+flag build --static
+flag build --strict
+flag build --sysroot
+flag build --target
+flag build --toolchain
+flag build --workspace
+flag cache clean --all
+flag cache clean --deps
+flag cache clean --legacy
+flag cache clean --std
+flag cache clean --tools
+flag cache gc --dry-run
+flag cache gc --max-size
+flag cache gc --older-than
+flag cache list --format
+flag cache list --json
+flag cache prune --older-than
+flag clean --bmi-cache
+flag clean --dry-run
+flag clean --older-than
+flag clean --report
+flag clean --stale
+flag coff-def --exports-file
+flag coff-def --llvm-cxx
+flag coff-def --llvm-nm
+flag coff-def --llvm-target
+flag coff-def --name
+flag coff-def --output
+flag coff-def --required
+flag dyndep --bmi-dir
+flag dyndep --bmi-ext
+flag dyndep --expect-imports
+flag dyndep --expect-none
+flag dyndep --expect-provides
+flag dyndep --module-map
+flag dyndep --output
+flag dyndep --single
+flag dyndep --split-module
+flag emit build-database --accel
+flag emit build-database --cap
+flag emit build-database --dev
+flag emit build-database --exclude
+flag emit build-database --features
+flag emit build-database --format
+flag emit build-database --host-platform
+flag emit build-database --no-accel
+flag emit build-database --output
+flag emit build-database --package
+flag emit build-database --platform
+flag emit build-database --profile
+flag emit build-database --release
+flag emit build-database --spec
+flag emit build-database --static
+flag emit build-database --strict
+flag emit build-database --sysroot
+flag emit build-database --target
+flag emit build-database --toolchain
+flag emit build-database --workspace
+flag emit sbom --output
+flag emit surface --output
+flag emit xpkg --namespace
+flag emit xpkg --output
+flag emit xpkg --package
+flag emit xpkg --url
+flag emit xpkg --version
+flag fetch --exclude
+flag fetch --features
+flag fetch --from
+flag fetch --package
+flag fetch --platform
+flag fetch --profile
+flag fetch --sysroot
+flag fetch --target
+flag fetch --to
+flag fetch --toolchain
+flag fetch --workspace
+flag index list --format
+flag link-output --aside
+flag link-output --companions
+flag link-output --output
+flag link-output --temporary
+flag link-output --text
+flag new --list-templates
+flag new --template
+flag pack --all-programs
+flag pack --compress
+flag pack --debug-symbols
+flag pack --dev
+flag pack --exclude
+flag pack --features
+flag pack --format
+flag pack --host-platform
+flag pack --linkage
+flag pack --list-formats
+flag pack --merge
+flag pack --message-format
+flag pack --mode
+flag pack --no-strip
+flag pack --no-universal
+flag pack --output
+flag pack --package
+flag pack --pkg-format
+flag pack --platform
+flag pack --profile
+flag pack --release
+flag pack --sysroot
+flag pack --systems
+flag pack --target
+flag pack --toolchain
+flag pack --workspace
+flag place-dlls --crt
+flag place-dlls --depfile
+flag place-dlls --output
+flag place-dlls --toolset-crt
+flag platform-step --out
+flag platform-step --steps-hex
+flag publish --allow-dirty
+flag publish --dry-run
+flag publish --exclude
+flag publish --package
+flag publish --tag
+flag publish --workspace
+flag resolve --explain
+flag run --accel
+flag run --cache
+flag run --dev
+flag run --features
+flag run --file
+flag run --format
+flag run --host-platform
+flag run --list-runners
+flag run --message-format
+flag run --no-accel
+flag run --no-cache
+flag run --no-runner
+flag run --package
+flag run --pkg-format
+flag run --platform
+flag run --play-game
+flag run --print-launch
+flag run --profile
+flag run --release
+flag run --runner
+flag run --sysroot
+flag run --target
+flag run --target-triple
+flag run --toolchain
+flag search --all-versions
+flag search --format
+flag self config --cache-unused-days
+flag self config --keep-days
+flag self config --mirror
+flag self env --format
+flag self env --host
+flag self env --host-platform
+flag self env --platform
+flag self env --target
+flag self init --force
+flag self init --home
+flag self store dedupe --apply
+flag stage --list
+flag stage --output
+flag stage --verify
+flag test --accel
+flag test --archive
+flag test --build-timeout
+flag test --cache
+flag test --cap
+flag test --case
+flag test --cases
+flag test --changed
+flag test --exclude
+flag test --failed
+flag test --features
+flag test --guide
+flag test --host-platform
+flag test --list
+flag test --message-format
+flag test --no-accel
+flag test --no-cache
+flag test --no-programs
+flag test --no-run
+flag test --no-runner
+flag test --package
+flag test --platform
+flag test --play-game
+flag test --print-launch
+flag test --profile
+flag test --runner
+flag test --seed
+flag test --shard
+flag test --since
+flag test --split
+flag test --strict
+flag test --sysroot
+flag test --target
+flag test --timeout
+flag test --toolchain
+flag test --workspace
+flag test --workspace-timeout
+flag toolchain default --target
+flag toolchain install --platform
+flag toolchain install --target
+flag toolchain list --format
+flag toolchain remove --target
+flag why --features
+flag why --format
+flag why --host-platform
+flag why --platform
+flag why --sysroot
+flag why --target
+flag why --toolchain
+flag write --append
+flag write --output
+flag xpkg parse --all-os
+flag xpkg parse --allow-split-name
+flag xpkg parse --allow-unknown
+flag xpkg parse --format
+flag xpkg parse --json
+key build-dependencies
+key build.accel
+key build.allow_host_libs
+key build.allow_host_tools
+key build.bmi_schedule
+key build.build_program_timeout
+key build.c_standard
+key build.cache
+key build.cflags
+key build.compile_commands
+key build.compiler_runtime_dir
+key build.cxx_runtime
+key build.cxxflags
+key build.default-profile
+key build.defines
+key build.dependency_linkage
+key build.dialect_cxxflags
+key build.flags
+key build.include_dirs
+key build.include_dirs_after
+key build.ios_deployment_target
+key build.jobs
+key build.ldflags
+key build.macos_deployment_target
+key build.memory_threshold
+key build.module_extensions
+key build.offline
+key build.platform-dependencies
+key build.private_fragment
+key build.private_include_dirs
+key build.profile
+key build.sources
+key build.static_stdlib
+key build.std-compat-module
+key build.std-module
+key build.std-module-flags
+key build.target
+key build.target_budget
+key dependencies
+key dev-dependencies
+key features
+key hooks
+key host
+key indices
+key package
+key platform
+key profile.<name>
+key resources
+key runtime
+key target.<sel>.abi
+key target.<sel>.carrier
+key target.<sel>.cxx_runtime
+key target.<sel>.dependencies
+key target.<sel>.layers
+key target.<sel>.link
+key target.<sel>.linkage
+key target.<sel>.min_api_level
+key target.<sel>.platform
+key target.<sel>.run_under
+key target.<sel>.runner
+key target.<sel>.runtime
+key target.<sel>.sysroot
+key target.<sel>.targets
+key target.<sel>.toolchain
+key target.<sel>.tools
+key target.<sel>.xlings
+key targets
+key test
+key toolchain
+key xlings
+reason accel-backend-undeclared
+reason accel-mismatch
+reason ambiguous-request
+reason apple-sdk-absent
+reason artifact-unavailable-offline
+reason build-program-unpublished-input
+reason bundle-older-than-lock
+reason c-env-unrealisable
+reason c-env-verification-mismatch
+reason capability-pin
+reason companion-too-old
+reason compiler-requirement-conflict
+reason convention-unreplaced
+reason crt-declared-under-host-coupled
+reason device-source-unconsumed
+reason exclusive-capability
+reason host-cannot-serve
+reason host-module-missing
+reason host-tool-toolchain
+reason index-location-named-twice
+reason interface-not-provided
+reason layer-cycle
+reason layer-ordering
+reason layer-requirement
+reason lld-required-absent
+reason local-toolchain
+reason lto-export-discovery
+reason managed-only
+reason msvc-redist-unavailable
+reason offline-download-required
+reason os-mismatch
+reason other
+reason package-cycle
+reason payload-override
+reason payload-request
+reason platform-dependency
+reason platform-not-a-platform
+reason platform-phase-directive
+reason platform-target-unserved
+reason platform-tool-absent
+reason platform-version-group
+reason program-cxx-runtime-split
+reason shared-library-cxx-runtime
+reason static-package-in-two-images
+reason std-module-precompile
+reason target-base
+reason tier-planned
+reason tool-version-conflict
+reason unknown-target
+reason version-floor-unmet
+notice build-program/includes-header
+notice build-program/reads-outside
+notice bundle-lacks-target
+notice host-input
+notice machine-path-in-manifest
+notice toolchain/default-changed

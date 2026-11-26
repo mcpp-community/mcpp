@@ -19,7 +19,7 @@ std::optional<fs::path> resolution(const fs::path& root) {
     return std::nullopt;
 }
 
-E2E identity{"identity", [] {
+E2E identity{"identity", s::home_fixture, [] {
     "679 a path dependency takes its manifests identity"_test = [] {
         // A `path` or `git` dependency's identity is the one its manifest declares, whatever key
         // reached it: one package, compiled once, recorded with both keys; two identities over one

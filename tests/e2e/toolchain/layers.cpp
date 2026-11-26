@@ -80,7 +80,7 @@ std::optional<std::string> std_tokens_in(const nlohmann::json& j, std::string_vi
     return std::nullopt;
 }
 
-E2E layers{"layers", [] {
+E2E layers{"layers", s::home_fixture, [] {
     "201 gcc no specs pollution"_test[s::gcc][s::elf] = [] {
         // A gcc artifact carries only the RUNPATH the build asked for (no other home's temporary
         // directory, no dead entry), names the payload's glibc as its interpreter, and loads
@@ -319,7 +319,10 @@ E2E layers{"layers", [] {
         fs::create_directory_symlink(G / "include/c++" / gcc, P / "cxx");
         for (std::string f : {"libstdc++.so", "libstdc++.so.6", "libstdc++.a", "libgcc_s.so", "libgcc_s.so.1"})
             if (fs::exists(G / "lib64" / f)) fs::create_symlink(G / "lib64" / f, P / "lib" / f);
-        s::project(P, {{"mcpp.toml", "[package]\nnamespace = \"gcc\"\nname      = \"libstdcxx\"\nversion   = \"16.1.0.1\"\nprovides  = [\"mcpp:c++-abi=libstdc++\"]\nrequires  = [\"mcpp:compiler=llvm\", \"mcpp:c-abi=glibc\"]\n\n[build]\nsources      = []\ninclude_dirs = [\"cxx\", \"cxx/x86_64-linux-gnu\", \"cxx/backward\"]\nstd-module   = \"cxx/bits/std.cc\"\n\n[runtime]\nlibrary_dirs = [\"lib\"]\n"}});
+        // The library is the package's: linked from its directory (`link_library_dirs`) and found
+        // there at run time, not the toolchain payload's runtime, whose libstdc++ is another
+        // release's than these headers.
+        s::project(P, {{"mcpp.toml", std::format("[package]\nnamespace = \"gcc\"\nname      = \"libstdcxx\"\nversion   = \"{}.1\"\nprovides  = [\"mcpp:c++-abi=libstdc++\"]\nrequires  = [\"mcpp:compiler=llvm\", \"mcpp:c-abi=glibc\"]\n\n[build]\nsources      = []\ninclude_dirs = [\"cxx\", \"cxx/x86_64-linux-gnu\", \"cxx/backward\"]\nstd-module   = \"cxx/bits/std.cc\"\n\n[runtime]\nlink_library_dirs   = [\"lib\"]\nruntime_search_dirs = [\"lib\"]\n", gcc)}});
         s::project(tmp / "needs", {{"mcpp.toml", "[package]\nname     = \"needs\"\nversion  = \"0.1.0\"\nrequires = [\"mcpp:c++-abi=libstdc++\"]\n\n[build]\nsources = []\n"}});
         fs::create_directories(tmp / "needs/src");
         s::project app(tmp / "app", {{"mcpp.toml", std::format("[package]\nname     = \"app\"\nversion  = \"0.1.0\"\nstandard = \"c++23\"\n\n[toolchain]\ndefault = \"llvm@{}\"\n\n[lib]\npath = \"src/xrt.cppm\"\n\n[targets.xrt]\nkind = \"shared\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[dependencies]\nlibstdcxx = {{ path = \"../libstdcxx\" }}\nneeds     = {{ path = \"../needs\" }}\n", s::llvm_version())},

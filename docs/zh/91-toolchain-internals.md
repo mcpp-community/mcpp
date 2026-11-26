@@ -25,7 +25,7 @@ resolve toolchain payload        ← project/default/install paths share one pip
         ▼
 ensure_declared_runtime()        ← exact glibc@version installed; the payload is never written
         ▼
-detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
+detect / probe                   ← triple, sysroot, payload paths (glibc)
         ▼
 ToolchainLinkModel (single resolver for the C-library axis)
         ├──► flags.cppm        (main build compile/link flags)
@@ -70,7 +70,7 @@ triple 解析器，加上封闭的已知目标词汇表；`compat.cppm` 是唯�
 |---|---|
 | `targetTriple` | `<compiler> -dumpmachine` |
 | `sysroot` | `-print-sysroot`（经校验：必须真的带有 libc 头文件），并为烙有构建期路径、在本机不存在的 xlings 构建版 GCC 提供 remap 回退 |
-| `payloadPaths` | 由已解析的 runtime binding（§2.1）精确指名 glibc payload；linux-headers 仍作为同级 payload 被发现。没有 binding 就没有 payload-first，这是设计使然 |
+| `payloadPaths` | 由已解析的 runtime binding（§2.1）精确指名 glibc payload。没有 binding 就没有 payload-first，这是设计使然。内核头文件在目标侧之后决定（`base.kernel`，即 kernel-abi 层），在每种模式下接在基座之前 |
 | runtime dirs | 工具链私有的 lib 目录，供产物的 `-L`/`-rpath` 使用 |
 
 注意，probe 刻意**不再**从 clang cfg 中挖 `--sysroot`：cfg 是这套机制的输出，
@@ -210,6 +210,11 @@ PE 什么都不获得，这与 loader 标签的约定一致），而且目标必
 产物的 `PT_INTERP` 指名一个内建默认路径不同的私有加载器，把 `/usr/lib`
 算进去，就是在为错误的加载器建模 —— 而开发机通常自带一份 `libGL.so.1`，
 于是这样做会把「已解析」报给一个最终以 127 退出的二进制。
+
+**闭包按对象读取（2026.11.21.1 起）。** 可执行文件以 `DT_RPATH` 携带闭包，glibc 为它所加载的对象也搜索这些目录；但带
+`DT_RUNPATH` 的对象只搜索 `LD_LIBRARY_PATH`、它自己的 `DT_RUNPATH` 与加载器的目录，不搜索任何 `DT_RPATH`，包括可执行文件的。
+xlings 安装的载荷按其 recipe 的运行依赖写出 `DT_RUNPATH`，因此 farm 与闭包的其余条目不在它所加载之库的路径上。模型对闭包中的每个对象
+应用这一规则，`DT_NEEDED` 与 `dlopen` 相同。
 
 闭包被记录在 `resolution.json` 的 `runtime.search.closure` 下，并由
 `mcpp why runtime` 打印。一个在 hermetic 产物的路径上找不到任何满足者的

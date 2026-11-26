@@ -28,6 +28,7 @@ import mcpp.runtime.search;
 import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.toolchain.triple;
 import mcpp.invocation;
 
@@ -47,7 +48,20 @@ struct ValidatedArtifact {
     std::filesystem::path artifact;
     mcpp::runtime::elf::RuntimeVerdict verdict;
     bool cacheHit = false;
+    // The required `dlopen` sonames the program cannot reach from the object
+    // that loads them, one sentence each (dlopen_unreachable).
+    std::vector<std::string> dlopenUnreachable;
 };
+
+// THE REQUIRED `dlopen` SONAMES A PROGRAM CANNOT REACH (design 2026-11-21,
+// offline and toolchain defaults §3.10), judged from the object that loads
+// each: the post-link validation and `mcpp self doctor` ask this one function.
+// A sentence per requirement, naming the object, the soname, the directories
+// it searches and the remedy.
+std::vector<std::string> dlopen_unreachable(const mcpp::build::BuildPlan& plan,
+                                            const mcpp::runtime::elf::RuntimeResolution& resolution);
+std::vector<std::string> dlopen_unreachable(const mcpp::build::BuildPlan& plan,
+                                            const std::filesystem::path& artifact);
 
 struct ValidationReport {
     std::vector<ValidatedArtifact> artifacts;
@@ -320,6 +334,10 @@ std::string cache_key(const mcpp::build::BuildPlan& plan,
 constexpr std::string_view kLoaderTagsRecord      = "loader_tags";
 constexpr std::string_view kSymbolProvisionRecord = "symbol_provision";
 constexpr std::string_view kDlopenSurfaceRecord   = "dlopen_surface";
+// The record of validated artifacts. 2: an entry states the `dlopen`
+// requirements its program cannot reach (`dlopen_unreachable`); an entry of 1
+// was judged without them and is judged again.
+constexpr int kValidationSchema = 2;
 
 // WHAT INVALIDATES A STORED VERDICT BESIDES THE ARTIFACT ITSELF.
 //
@@ -511,10 +529,22 @@ std::optional<ValidatedArtifact> cached_artifact(
         out.verdict.status = parse_status(it->value("status", "inconclusive"));
         out.verdict.diagnostics = it->value(
             "diagnostics", std::vector<std::string>{});
+        out.dlopenUnreachable = it->value(
+            "dlopen_unreachable", std::vector<std::string>{});
         return out;
     } catch (...) {
         return std::nullopt;
     }
+}
+
+// Said on every build, as the record keeps it: the program does not start
+// where it needs the library, whether or not this build linked it again.
+void report_dlopen_unreachable(const ValidatedArtifact& v) {
+    for (auto const& sentence : v.dlopenUnreachable)
+        mcpp::diag::degraded("runtime/dlopen-unreachable", sentence,
+            "the program fails where it loads the library",
+            "declare the providing package as a run-time dependency of the payload (its recipe), "
+            "not LD_LIBRARY_PATH, which the program's children inherit");
 }
 
 void store_artifact(nlohmann::json& doc,
@@ -527,6 +557,7 @@ void store_artifact(nlohmann::json& doc,
         {"fingerprint", artifactFingerprint},
         {"status", status_name(value.verdict.status)},
         {"diagnostics", value.verdict.diagnostics},
+        {"dlopen_unreachable", value.dlopenUnreachable},
     };
 }
 
@@ -615,12 +646,12 @@ void record_without_rules(const mcpp::build::BuildPlan& plan,
                           const ArtifactSnapshot& before) {
     auto doc = read_cache(plan.outputDir);
     bool changed = false;
-    if (doc.value("schema", 0) != 1
+    if (doc.value("schema", 0) != kValidationSchema
         || doc.value("contract_hash", "") != plan.runtimeBinding.contractHash) {
         doc = nlohmann::json::object();
         changed = true;
     }
-    doc["schema"] = 1;
+    doc["schema"] = kValidationSchema;
     doc["contract_hash"] = plan.runtimeBinding.contractHash;
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
@@ -638,6 +669,34 @@ void record_without_rules(const mcpp::build::BuildPlan& plan,
         changed = true;
     }
     if (changed) write_cache(plan.outputDir, doc);
+}
+
+std::vector<std::string> dlopen_unreachable(const mcpp::build::BuildPlan& plan,
+                                            const mcpp::runtime::elf::RuntimeResolution& resolution) {
+    std::vector<std::string> out;
+    if (plan.runtimeDlopenLibs.empty()) return out;
+    const auto searchDirs = runtime_search_dirs(plan);
+    for (auto const& req : plan.runtimeDlopenLibs) {
+        auto miss = mcpp::runtime::elf::dlopen_unreachable(
+            resolution, plan.runtimeBinding, searchDirs, req.soname, req.originDirs);
+        if (!miss) continue;
+        std::string dirs;
+        for (auto const& d : miss->searched) dirs += (dirs.empty() ? "" : ", ") + d.string();
+        out.push_back(std::format(
+            "{} requires {} at run time and loads it with dlopen from {}, which searches {}: "
+            "the package that provides it must be a run-time dependency of the payload that "
+            "declares this object, so that its DT_RUNPATH names it",
+            req.requester, req.soname, miss->object.string(), dirs.empty() ? "no directory" : dirs));
+    }
+    return out;
+}
+
+std::vector<std::string> dlopen_unreachable(const mcpp::build::BuildPlan& plan,
+                                            const std::filesystem::path& artifact) {
+    if (plan.runtimeDlopenLibs.empty()) return {};
+    const auto searchDirs = runtime_search_dirs(plan);
+    return dlopen_unreachable(plan, mcpp::runtime::elf::resolve_runtime_closure(
+        artifact, plan.runtimeBinding, searchDirs));
 }
 
 ValidationReport validate_changed_artifacts(
@@ -696,12 +755,12 @@ ValidationReport validate_changed_artifacts(
 
     auto doc = read_cache(plan.outputDir);
     bool changedCache = false;
-    if (doc.value("schema", 0) != 1
+    if (doc.value("schema", 0) != kValidationSchema
         || doc.value("contract_hash", "") != plan.runtimeBinding.contractHash) {
         doc = nlohmann::json::object();
         changedCache = true;
     }
-    doc["schema"] = 1;
+    doc["schema"] = kValidationSchema;
     doc["contract_hash"] = plan.runtimeBinding.contractHash;
     auto searchDirs = runtime_search_dirs(plan);
     // AN ARTIFACT LEAVES THIS RECORD WHEN IT LEAVES THE DISK, NOT WHEN IT
@@ -744,7 +803,7 @@ ValidationReport validate_changed_artifacts(
     const bool bindingUnevaluated =
         !plan.runtimeBinding.loader.has_value() && plan.runtimeBinding.libraryDirs.empty();
     if (bindingUnevaluated && !before.empty()) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("runtime", std::format(
             "runtime binding {} has no loader path or library directory yet, so "
             "rule B cannot decide for this build's artifacts. This is expected on "
             "the first build in a fresh MCPP_HOME; a second build resolves it.",
@@ -759,6 +818,7 @@ ValidationReport validate_changed_artifacts(
         auto key = cache_key(plan, artifact);
         auto fp = fingerprint(artifact, now, plan.runtimeBinding.contractHash);
         if (auto cached = cached_artifact(doc, key, fp, artifact)) {
+            report_dlopen_unreachable(*cached);
             // Same stat before/after and a current stored verdict is the hot
             // no-op: do not parse. Only PASS may also stay silent; a stored
             // mismatch must keep failing and an inconclusive result must keep
@@ -780,6 +840,8 @@ ValidationReport validate_changed_artifacts(
         // run-time resolution, so mcpp reports rather than blocks.
         validated.verdict = mcpp::runtime::elf::validate_runtime_artifact(
             artifact, plan.runtimeBinding, resolution, host_libs_allowed(plan));
+        validated.dlopenUnreachable = dlopen_unreachable(plan, resolution);
+        report_dlopen_unreachable(validated);
         store_artifact(doc, key, fp, validated);
         changedCache = true;
         report.artifacts.push_back(std::move(validated));
@@ -793,7 +855,7 @@ std::optional<ArtifactSnapshot> validated_artifact_snapshot(
     const std::filesystem::path& outputDir,
     const mcpp::runtime::RuntimeBinding& binding) {
     auto doc = read_cache(outputDir);
-    if (doc.value("schema", 0) != 1
+    if (doc.value("schema", 0) != kValidationSchema
         || doc.value("contract_hash", "") != binding.contractHash)
         return std::nullopt;
     auto artifacts = doc.find("artifacts");

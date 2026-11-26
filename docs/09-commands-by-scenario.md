@@ -112,6 +112,24 @@ warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc
 --older-than` collect `std` module entries by age as well; `gc --max-size`
 budgets packages and host tools, not `std` modules (2026.11.8.1+).
 
+**The store's payloads (2026.11.23.1+).** A build holds each payload of mcpp's
+package store that its graph names -- the toolchain, its base and companions,
+the packages and tools it wires -- as a **root**: a link
+`registry/data/roots/mcpp/<store-name>@<version>` to the payload, renewed by
+every build of that graph, so that its time is the payload's last use. `mcpp
+toolchain install` holds the toolchain it installs. A home from before has a
+root made for every payload it holds, once. After the cache, `mcpp cache gc`
+asks the package provider to collect the store (`xlings self clean`): a payload
+nothing references -- no environment, no link of one, no dependency of a kept
+payload, no root -- is removed. With `--older-than`, the roots no build used
+for that long are released first. `--dry-run` says what would be collected and
+removes nothing.
+
+```bash
+mcpp cache gc --older-than 60d --dry-run   # what would go, cache and store
+mcpp cache gc --older-than 60d
+```
+
 `mcpp emit build-database`, `mcpp pack --list-formats` and `mcpp publish`'s
 check of a library's pins plan a project without writing into it, each in a work directory of the home, one
 per project: `<home>/cache/build-database/`, `cache/pack-formats/` and
@@ -244,18 +262,22 @@ build programs, or for both (2026.10.11.1+). `mcpp why build-programs` lists the
 build programs' graphs: each program, the libraries it uses, the identity it
 was compiled from and its binary. `mcpp why compat` lists every use of a
 deprecated reading with the release that removes it (51 — Supported Versions).
+`mcpp why features` lists each package with the features it declares and those
+the build activates (2026.11.21.1+; docs/06).
 
 The same graph is recorded under `graph` in
 `target/<triple>/<fp>/resolution.json`, one entry per package with the root
 first: `package` (canonical identity, namespace, name, version, source),
 `root`, `requested_by` (`requester`, `key`, `table`), `manifest_dir` (the
-package's root), and, for a library, `link` (`form`, `reason`).
+package's root), `features` (those the build activates) and `feature_list`
+(those the package declares, 2026.11.21.1+), and, for a library, `link`
+(`form`, `reason`).
 
 `mcpp why target` lists a request's candidates in order (docs/21), `mcpp why
 flags [<unit>]` each word of a unit's command line with the layer that gave it,
 and `mcpp why platform` the rows a platform defines and the identities it
-serves (docs/35); the last two are not part of the report without a topic
-(2026.11.9.1+).
+serves (docs/35); the last two, and `features`, are not part of the report
+without a topic (2026.11.9.1+).
 
 The topic is `toolchain`, `runtime`, `deps` or `runners`, and all four report
 when none is named. `--target` and `--toolchain` turn the report into a query
@@ -303,8 +325,13 @@ that stops it. `mcpp self doctor` lists every index whose floor the running mcpp
 does not meet. Earlier versions printed the E0006 text as `error:` at the start
 of any run that read such an index, including runs that then succeeded.
 
-`--offline` (or `MCPP_OFFLINE=1`) forbids the network for one invocation and
-fails rather than fetch. `--locked` fails when resolution differs from
+`--offline` (or `MCPP_OFFLINE=1`, or `[build] offline = true` in `mcpp.toml` or
+`config.toml`) forbids the network and fails rather than fetch; a payload the
+home lacks comes from a named archive directory, if any. `mcpp fetch` puts
+what a build needs in the home beforehand, `mcpp fetch --to <dir>` writes it
+into a directory and `mcpp fetch --from <dir>` takes that directory into
+another machine's home (2026.11.21.1+; 05 — Dependencies, "Offline builds and
+mcpp fetch"). `--locked` fails when resolution differs from
 `mcpp.lock` instead of rewriting it, which is the shape a CI job wants.
 `mcpp index pin <name> <rev>` records a commit for a custom index in
 `mcpp.toml`; `mcpp index unpin` removes it. Both edit an `[indices]` entry
@@ -812,7 +839,7 @@ mcpp is involved and its documentation will not help.
 ## Current limitations
 
 - `mcpp why --format json` is defined for the `toolchain`, `sources`, `tool`,
-  `payload`, `build-programs`, `compat`, `target`, `flags` and `platform` topics. The other topics report
+  `payload`, `build-programs`, `compat`, `features`, `target`, `flags` and `platform` topics. The other topics report
   `'<topic>' has no machine-readable shape yet` and exit non-zero.
 - `mcpp search` matches a substring; there is no field selector, and no way to
   restrict a search to one namespace.

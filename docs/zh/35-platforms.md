@@ -93,6 +93,10 @@ runner = ["my-okrun", "{}"]
 同样的表也可以写在 `~/.mcpp/config.toml` 中,对一台机器生效。图中已有包提供的层交给该包,报告为 `graph`。
 C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只有与 `compiler-runtime = false` 同时写出才生效。
 
+这些表在没有平台的行上同样生效(mcpp 2026.11.23.1):这样的行有一份空的平台陈述,为它写的 `layers`、`tools` 与 `link`
+像在平台之上一样补全依赖图、到达链接。此前它们被接受而不起作用。`carrier` 是平台映像的形式,在这样的行上以警告报告
+(`platform/carrier`)而不使用。
+
 ## 选择平台,或不用平台
 
 第一个给出答案的来源决定目标的平台:
@@ -221,6 +225,10 @@ package = {
 见 [05](05-dependencies.md))刷新一次索引,再读平台列。随后的拒绝写出索引是否已刷新及未刷新的原因。此前,在本地
 副本取得之后才列入的行被拒绝为未知目标,直到 `mcpp index update`。
 
+没有平台也能构建的请求不被拒绝,它的平台列未命中不刷新索引 *(2026.11.22.1 起,mcpp#996)*:`[target.<triple>]` 段定义的
+自定义三元组,命名了工具链(`[target.<row>] toolchain`、`--toolchain`)的 `planned` 行,以及表以 `platform = "none"`
+回答的请求;后者与 `--platform none` 一样结束查询。前两者仍读平台列。此前,这样的构建每隔超过去抖时长就刷新一次索引。
+
 ## 编写平台包
 
 平台包是带 `[platform]` 段的包。openkal-platform 的节选:
@@ -327,7 +335,8 @@ platform = { path = "../platforms" }
 为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。`exe-suffix-fixed = true`
 （2026.11.17.1+）陈述行的可执行文件后缀是加载其程序的一部分：名字模板（`artifact_name("exe", "{name}")`、`link.exe`）
 只决定后缀之前的部分，名字以该后缀结尾且只出现一次。内置的 `wasm32-emscripten` 行陈述它，所以命名为 `{name}` 的程序
-仍是 `app.wasm` 旁的 `app.js`。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
+仍是 `app.wasm` 旁的 `app.js`。`link-without-main`（2026.11.20.1+）给出没有程序起点的可执行映像（`main = false`，见 04 的
+`main = false`）的链接词；未陈述它的行拒绝其可执行映像的 `main = false`。内置的 `wasm32-emscripten` 行为 `["--no-entry"]`。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
 SPEC-016 §2.4）；此时 `same-arch` 的 runner 为产物的架构构建，在本机启动。
 
 **定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`

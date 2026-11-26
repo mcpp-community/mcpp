@@ -96,7 +96,7 @@ LLVM 词表里「非 MSVC 那套 ABI」的标签，继承自 MinGW，而 clang �
 |---|---|
 | `x86_64-linux-gnu`、`aarch64-linux-android`、`riscv64-none-elf`、`x86_64-openkal` | ELF |
 | `aarch64-macos`、`aarch64-ios` | Mach-O |
-| `x86_64-windows-gnu`、`x86_64-windows-msvc` | PE |
+| `x86_64-windows-gnu`、`x86_64-windows-msvc`、`i686-windows-msvc` | PE |
 | `wasm32-emscripten` | wasm |
 
 它与「有没有一个操作系统可供链接」**不是**同一个问题。一个裸机 RISC-V
@@ -121,11 +121,12 @@ target spec 设置 `exe_suffix: ".js"`。
 | `lib` | `lib/lib<name>.a` | — |
 | `shared` | 被拒绝，点名 `-sSIDE_MODULE` | wasm 的 side module 需要一种 mcpp 不渲染的链接契约 |
 
-`--no-entry` 不是 mcpp 解释的开关，它是一条普通的
-`[target.'cfg(os = "emscripten")'.build] ldflags` 条目，`main` 仍然像
-在每一行上一样只是指名一个翻译单元 —— 因此一个模块化的 Web 程序，如果
-它的页面调用一个导出的工厂函数，就是一个 `main` 文件不定义 `main()` 的
-`bin` 目标，在自己的 `ldflags` 行上带 `--no-entry` 链接。
+页面调用导出的工厂函数的模块化 Web 程序没有程序起点：它在 Web 行上陈述 `main = false`
+（2026.11.20.1+），mcpp 以该行的 `link-without-main`，即 `--no-entry` 链接它
+（[04 —— `main = false`](04-mcpp-toml.md)）。`-sMODULARIZE`、`-sEXPORT_NAME` 与
+`-sEXPORTED_FUNCTIONS` 仍是普通的 `[target.'cfg(os = "emscripten")'.build] ldflags` 条目；
+mcpp 不解释 `ldflags`，因此 `main` 文件不定义 `main()`、在自己的 `ldflags` 行上带 `--no-entry`
+链接的写法得到同一个模块。
 
 执行 `bin/<name>.js` 的 runner 来自 payload 描述符
 （`.mcpp-toolchain.json`）、工程的 `[target.<triple>] runner`，或者
@@ -187,7 +188,7 @@ mcpp 构建的全部行。环境按上一节补全（`linux` 即 `linux-gnu`，`
 | 集合 | 成员（2026.10.30.1，openkal-platform 0.18.0） |
 |---|---|
 | `openkal` | `x86_64-openkal`、`aarch64-openkal` |
-| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl` |
+| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl`、`riscv64-linux-musl` |
 | `linux` | `x86_64-linux-gnu`、`aarch64-linux-gnu` |
 
 全部成员必须选到同一个平台；成员选到不同平台时命令被拒绝，消息写出每个成员
@@ -257,6 +258,15 @@ aarch64-macos      →  aarch64-unknown-macos
 
 三段式的拼法是四段式省掉一段之后的样子，省掉的是哪一段，由「能不能
 解析」决定。
+
+vendor 段可以是任何词（2026.11.21.1+），与 GNU `config.sub` 的读法相同：架构之后、系统段之前的段
+写出编译器的构建者。发行版的编译器报告它自己的名字（`x86_64-redhat-linux`、`x86_64-suse-linux`），
+即 `x86_64-linux-gnu`。其后的各段按词表严格读取。以路径指定的编译器报告了 mcpp 无法读取的目标时，
+以降级报告（`toolchain/triple`）：依目标而定的设置不作用于这次构建。
+
+编译器的版本取驱动为机器给出的版本：GCC 的 `-dumpfullversion`（GCC 7 起，否则 `-dumpversion`），
+clang 的 `-dumpversion`。`--version` 的横幅用于判定家族；发行版的横幅以它自己的发行号结尾
+（`(Red Hat 16.2.1-3)`），那不是编译器的版本。
 
 ### GCC 与 clang 选目标的方式并不相同
 
@@ -485,12 +495,13 @@ docs/22。
 | `aarch64-linux-gnu` | preview | `llvm@23.1.3` | 基座包 | 载荷 | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
-| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `riscv64-linux-musl` | preview | `gcc@16.1.0` | payload | — | — | — |
 | `i686-linux-musl`、`i686-linux-gnu` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | 载荷 | 载荷 | 基座 | 载荷 |
 | `aarch64-windows-gnu` | preview | `llvm@23.1.3` | 基座 | 基座 | 基座 | 基座 |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 载荷 |
 | `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
+| `i686-windows-msvc` | preview | — | — | — | — | 系统 |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
 | `aarch64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
@@ -537,6 +548,7 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 | `*-freebsd` | 每一台宿主，经平台 | 行是内置的；平台为每个身份指名 FreeBSD 基座包（`xim:x86_64-freebsd-sysroot`、`xim:aarch64-freebsd-sysroot`），以 `[target.<行>] platform` 或该行满足的任一选择器（`[target.freebsd]`、`cfg(os = "freebsd")`）选择；其他平台包的提供者不与所选平台竞争 |
 | `*-freebsd-musl` | 每一台宿主，经依赖图 | openkal-platform 的 hosted 部分（0.28.0）：openkal-freebsd 的 standalone 形态之上的 openkal-musl，一个静态程序；未为 `<arch>-freebsd` 选平台时，该请求取这一身份（2026.11.10.2+），正如非 Mac 宿主上的 `aarch64-macos` 取 musl 身份 |
 | `x86_64-windows-msvc` | Windows | MSVC 是在机器上被找到的 |
+| `i686-windows-msvc` | Windows | 同上；x86_64 Windows 运行其程序（WOW64），clang 23 下 `import std` 只能以 C++20 构建（[20](20-toolchains.md)） |
 | `x86_64-windows-musl` | payload 只在 Windows 上；图则任意宿主 | 没有 gcc 能发出 PE + musl，且 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器自己的 |
 | `*-none-elf` | 每一台宿主 | clang 与 lld 按构造就是交叉编译器 |

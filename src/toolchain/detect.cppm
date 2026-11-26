@@ -23,6 +23,12 @@ detect(const std::filesystem::path& explicit_compiler = {},
        std::string_view runtimeBinding = {},
        std::string_view runtimeContractHash = {});
 
+// THE ECOSYSTEM'S SHARED VIEW (SPEC-006 §2.2.1): the probed sysroot of a
+// toolchain whose base nobody stated, living in the home of the payloads its
+// glibc comes from. mcpp completes its glibc headers; its other contents are
+// the home's history, which no build reads as a fact (design 2026-11-22 §3.3).
+bool base_is_ecosystem_view(const Toolchain& tc);
+
 // Compatibility helper for older call sites/tests: GCC std module lookup now
 // lives in the GCC provider.
 std::optional<std::filesystem::path> find_std_module_source(
@@ -35,6 +41,23 @@ namespace mcpp::toolchain {
 std::optional<std::filesystem::path> find_std_module_source(
     const std::filesystem::path& cxx_binary, std::string_view version) {
     return mcpp::toolchain::gcc::find_std_module_source(cxx_binary, version);
+}
+
+// A version as a driver dumps it: dot-separated numbers.
+bool is_dumped_version(std::string_view v) {
+    if (v.empty() || !std::isdigit(static_cast<unsigned char>(v.front()))
+        || !std::isdigit(static_cast<unsigned char>(v.back())))
+        return false;
+    return std::ranges::all_of(v, [](char c) { return c == '.' || std::isdigit(static_cast<unsigned char>(c)); });
+}
+
+std::optional<std::string> dumped_version(const Toolchain& tc, const auto& env) {
+    std::vector<std::string_view> flags{"-dumpversion"};
+    if (tc.compiler == CompilerId::GCC) flags.insert(flags.begin(), "-dumpfullversion");
+    for (auto flag : flags)
+        if (auto r = run_capture({tc.binaryPath.string(), std::string(flag)}, env))
+            if (auto v = trim_line(*r); is_dumped_version(v)) return v;
+    return std::nullopt;
 }
 
 std::expected<Toolchain, DetectError>
@@ -95,6 +118,13 @@ detect(const std::filesystem::path& explicit_compiler,
         return std::unexpected(DetectError{
             std::format("unrecognized compiler output:\n{}", vstr)});
     }
+    // THE VERSION IS THE DRIVER'S STATEMENT FOR MACHINES (mcpp#989): GCC's
+    // `-dumpfullversion` (GCC 7+), else `-dumpversion`; clang's
+    // `-dumpversion`. The banner names the family and is the fingerprint's,
+    // not the version's: a distribution's ends in its own release, and
+    // Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` was read as `3`.
+    // The banner's reading stays for a driver that answers neither.
+    if (auto dumped = dumped_version(tc, env)) tc.version = *dumped;
 
     if (auto triple = probe_target_triple(tc.binaryPath, env)) {
         tc.targetTriple = *triple;
@@ -139,14 +169,20 @@ detect(const std::filesystem::path& explicit_compiler,
     // D10): its headers are completed on the command line instead. The view
     // is owned when it lives in the same home as the payloads it is completed
     // from.
-    if (tc.base.payload && !tc.base.root.empty()) {
-        auto store = mcpp::provider::store_of(tc.base.payload->glibcInclude);
-        if (store && mcpp::fallback::path_is_under(
-                         tc.base.root, mcpp::provider::layout().home_of_store(*store)))
-            ensure_sysroot_complete(tc.base.root, *tc.base.payload);
-    }
+    if (base_is_ecosystem_view(tc))
+        ensure_sysroot_complete(tc.base.root, *tc.base.payload);
 
     return tc;
+}
+
+bool base_is_ecosystem_view(const Toolchain& tc) {
+    if (tc.base.stated() || !tc.base.payload || tc.base.root.empty()) return false;
+    // A view is one of the home's SubOS roots, the parent of the compiler's
+    // environment. A sysroot a managed toolchain carries in its own payload
+    // (a musl cross toolchain's `<triple>/`) lives in the same home and is
+    // that toolchain's tree, not a view.
+    auto env = mcpp::provider::environment_of(tc.binaryPath);
+    return env && mcpp::fallback::path_is_under(tc.base.root, env->parent_path());
 }
 
 } // namespace mcpp::toolchain

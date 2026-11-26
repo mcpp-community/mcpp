@@ -29,3 +29,38 @@ hosts      = ["linux", "macos", "windows"]
 shard      = "12m"
 max_shards = 8
 unknown    = "30s"
+
+# THE PROCESSOR TIME A CASE MAY TAKE (design 2026-11-20 §5.17, mtest 0.11.0): `mtest gate` fails a
+# case whose `cpu_ms` passes it, unless a waiver names it with a reason; a waiver that excuses
+# nothing fails the gate too, so the list only shrinks. Compared within one class of machine.
+[budget]
+case_cpu = "10m"
+
+# THE SURFACE'S LEDGER (design 2026-11-20 §5.16): every item `mcpp emit surface` lists is used by a
+# passing case (its `exercise` events, which the kit writes from MCPP_SURFACE_RECORD), or a waiver
+# names it with a reason. A waiver of an item a case uses fails the gate. The items are the golden
+# surface, which the case `golden/1124` holds equal to what the binary under test emits.
+[ledger.surface]
+file     = "golden/surface.txt"
+evidence = "exercised"
+
+# A script writes no `exercise` events: what only a script runs is waived, naming it.
+[[ledger.surface.waiver]]
+item   = "flag --system"
+reason = "run by the script 915 (the system home is maintained and read), which records no use"
+
+# A refusal no input reaches: the code guards a shape the engine's own data does not take.
+[[ledger.surface.waiver]]
+item   = "reason ambiguous-request"
+reason = "no (arch, os) group of the built-in rows has two rows a request could mean, so the request is never ambiguous"
+[[ledger.surface.waiver]]
+item   = "reason layer-ordering"
+reason = "the resolution places the payload's C++ runtime only over the payload's C library or a base measured to fit it, the combination the check accepts; nothing resolved reaches the refusal"
+
+# Reached on a host no case of this kind runs on yet.
+[[ledger.surface.waiver]]
+item   = "reason host-tool-toolchain"
+reason = "reached on Windows only, by a build program under msvc@system with a cross target; no Windows case states it"
+[[ledger.surface.waiver]]
+item   = "reason msvc-redist-unavailable"
+reason = "reached on Windows only, by an MSVC toolset whose layout has no redistributable; no Windows case states it"

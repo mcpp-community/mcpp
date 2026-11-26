@@ -13,6 +13,66 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// SPEC-019 §9: the tip of a failure at a source built as two units. `toolchain` is the arguments
+// that choose the compiler; `check` is the value of `private_fragment` that checks the entry there
+// (GCC cannot build a fragment as written, so its check is the rule before the conditions).
+void fragment_tip(const std::vector<std::string>& toolchain, std::string_view check, bool gcc) {
+    auto p = s::project::scaffold("tipfrag");
+    const auto args = [&](std::vector<std::string> a) {
+        a.insert(a.end(), toolchain.begin(), toolchain.end());
+        return a;
+    };
+    // A condition before the fragment: only the rule before the conditions refuses it.
+    const auto unit = [](std::string_view fragment) {
+        return std::format("export module c;\n#ifndef NEVER_DEFINED\nexport int c_val();\n#endif\nmodule :private;\n{}\n", fragment);
+    };
+    p.write("src/c.cppm", unit("int c_val() { return 1; }"));
+    p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_val(); }\n");
+    p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+    auto r = p.mcpp(args({"build"}));
+    expect(fatal(e2e::succeeded(r))) << "A: " << s::text(r);
+    expect(s::lacks(s::text(r), "was built as two units")) << "A: a build that succeeded gave a tip: " << s::text(r);
+
+    p.write("src/c.cppm", unit("int c_val() { return undeclared_name; }"));
+    r = p.mcpp(args({"build"}));
+    expect(fatal(!e2e::succeeded(r))) << "B: a fragment that does not compile built";
+    const auto text = s::text(r);
+    expect(e2e::contains(text, "c.cppm was built as two units (private-fragment), and one of them failed")) << "B: the failure gives no tip: " << text;
+    expect(e2e::contains(text, std::format("MCPP_PRIVATE_FRAGMENT={} mcpp build", check))) << "B: the tip does not give the check: " << text;
+    expect(e2e::contains(text, std::format("[build] private_fragment = \"{}\" keeps it", check))) << "B: " << text;
+    expect(e2e::contains(text, "MCPP_BUILDOPT=off turns every optimization off for one run")) << "B: " << text;
+    r = p.mcpp(args({"build", "--quiet"}));
+    expect(s::lacks(s::text(r), "was built as two units")) << "C: --quiet gave a tip: " << s::text(r);
+
+    // The invocation the tip gives turns that entry off, and nothing else: the units are the
+    // source as written (clang), or the source under the rule before the conditions (GCC, which
+    // cannot build a fragment as written and says so).
+    p.write("src/c.cppm", unit("int c_val() { return 1; }"));
+    r = p.mcpp(args({"build", "--verbose"}), s::options{.env = {{"MCPP_PRIVATE_FRAGMENT", std::string(check)}}});
+    if (gcc) {
+        expect(e2e::contains(s::text(r), "this compiler does not build one as written")) << "D: " << s::text(r);
+        expect(e2e::contains(s::text(r), "built as written (line 2: a preprocessor directive")) << "D: " << s::text(r);
+    } else {
+        expect(fatal(e2e::succeeded(r))) << "D: " << s::text(r);
+        expect(s::lacks(s::text(r), "c.private")) << "D: the check left the fragment a unit of its own: " << s::text(r);
+    }
+
+    // An error of a file the entry did not act on says nothing of it.
+    p.write("src/c.cppm", unit("int c_val() { return 1; }"));
+    p.write("src/extra.cpp", "int broken( { }\n");
+    r = p.mcpp(args({"build"}));
+    expect(fatal(!e2e::succeeded(r))) << "E: " << s::text(r);
+    expect(s::lacks(s::text(r), "was built as two units") && s::lacks(s::text(r), "MCPP_PRIVATE_FRAGMENT")) << "E: an unrelated failure gave the tip: " << s::text(r);
+    p.remove("src/extra.cpp");
+
+    // A link says so weakly: it cannot say which unit.
+    p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport int missing();\nmodule :private;\nint c_val() { return 1; }\n");
+    p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_val() + missing(); }\n");
+    r = p.mcpp(args({"build"}));
+    expect(fatal(!e2e::succeeded(r))) << "F: " << s::text(r);
+    expect(e2e::contains(s::text(r), "the link failed, and 1 source(s) of this build are built as two units (private-fragment)")) << "F: " << s::text(r);
+}
+
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 // The first build.ninja of the project's target, outside the build program's tree.
@@ -69,7 +129,7 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
     return std::nullopt;
 }
 
-E2E basics{"basics", [] {
+E2E basics{"basics", s::home_fixture, [] {
     "02 new build run"_test[s::fresh_sandbox] = [] {
         // `mcpp new` writes a project that builds into target/ and runs, passing its arguments.
         auto p = s::project::scaffold("hello");
@@ -288,6 +348,92 @@ E2E basics{"basics", [] {
         q.write("src/main.cpp", "import std;\nimport hub;\nint main() { std::println(\"value {}\", hub_value() + deep()); }\n");
         r = q.mcpp({"run"});
         expect(fatal(e2e::contains(s::text(r), "value 2"))) << s::text(r);
+    };
+
+    "1161 the purview before a fragment holds conditions, and not what changes its meaning"_test[s::llvm] = [] {
+        // SPEC-019 §5. A condition only decides which declarations exist, and the
+        // implementation unit receives them from the BMI: the fragment is a unit of its own and an
+        // edit of it compiles that unit alone. A macro does not reach that unit: the source is
+        // built as written, and says why. `conservative` is the rule before the conditions were let
+        // through, and a value that changes the units changes the first build after it.
+        auto p = s::project::scaffold("cond");
+        const std::string tc = "llvm@" + s::llvm_version();
+        const std::string condition = "#ifndef NEVER_DEFINED\nexport inline int c_inl() { return 10; }\n#endif";
+        const auto unit = [](std::string_view before, int body) {
+            return std::format("export module c;\n{}\nexport int c_val();\nmodule :private;\nint c_val() {{ return {}; }}\n", before, body);
+        };
+        p.write("src/c.cppm", unit(condition, 1));
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_inl() + c_val(); }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        auto r = p.mcpp({"run", "--verbose", "--toolchain", tc});
+        expect(fatal(e2e::contains(s::text(r), "value 11"))) << "A: " << s::text(r);
+        expect(e2e::contains(s::text(r), "the private module fragment is a unit of its own")) << "A: a condition kept the fragment from being a unit: " << s::text(r);
+        p.write("src/c.cppm", unit(condition, 2));
+        r = p.mcpp({"build", "--verbose", "--toolchain", tc});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.private"))) << "B: the fragment's unit was not compiled: " << s::text(r);
+        expect(s::lacks(s::text(r), "--output obj/b.m.o")) << "B: an edit of the fragment compiled an importer: " << s::text(r);
+
+        p.write("src/c.cppm", unit("#define K 5\nexport inline int c_inl() { return K; }", 1));
+        r = p.mcpp({"run", "--verbose", "--toolchain", tc});
+        expect(fatal(e2e::contains(s::text(r), "value 6"))) << "C: " << s::text(r);
+        expect(e2e::contains(s::text(r), "built as written (line 2: a preprocessor directive")) << "C: a macro did not keep the source as written: " << s::text(r);
+
+        p.write("src/c.cppm", unit(condition, 3));
+        r = p.mcpp({"run", "--verbose", "--toolchain", tc}, s::options{.env = {{"MCPP_PRIVATE_FRAGMENT", "conservative"}}});
+        expect(fatal(e2e::contains(s::text(r), "value 13"))) << "D: " << s::text(r);
+        expect(e2e::contains(s::text(r), "built as written (line 2: a preprocessor directive")) << "D: `conservative` let a condition through: " << s::text(r);
+        expect(s::lacks(s::text(r), "invalid private_fragment")) << "D: `conservative` is not a value: " << s::text(r);
+        r = p.mcpp({"run", "--verbose", "--toolchain", tc});
+        expect(fatal(e2e::contains(s::text(r), "value 13"))) << "E: " << s::text(r);
+        expect(e2e::contains(s::text(r), "the private module fragment is a unit of its own")) << "E: the first build after the value changed kept the units of the other: " << s::text(r);
+    };
+
+    "1162 a failure at a source built as two units says how to check that entry alone"_test[s::llvm] = [] {
+        fragment_tip({"--toolchain", "llvm@" + s::llvm_version()}, "as-written", false);
+    };
+
+    "1163 a failure at a source built as two units says how to check that entry alone on GCC"_test[s::gcc] = [] {
+        fragment_tip({}, "conservative", true);
+    };
+
+    "1164 a unit that imports a BMI kept with earlier lines says how to check the cutoff"_test[s::gcc] = [] {
+        // SPEC-019 §9. A line inserted in `c` moves its line maps alone, and its BMI is kept; `b`
+        // imports it and fails in a later build. The tip names the module and the one invocation
+        // that checks the cutoff. Under `exact` the BMI is replaced, nothing is kept, and a failure
+        // of `b` says nothing of the cutoff.
+        auto p = s::project::scaffold("tipkept");
+        const auto c = [](std::string_view line) {
+            return std::format("export module c;\nexport int c_val();\nexport inline int c_inl() {{ return 10; }}\n"
+                               "int c_val() {{\n    int x = 1;\n{}    return x;\n}}\nint c_other() {{ return 7; }}\n", line);
+        };
+        const auto b = [](std::string_view body) {
+            return std::format("export module b;\nimport c;\nexport inline int b_inl() {{ return {}; }}\n", body);
+        };
+        p.write("src/c.cppm", c(""));
+        p.write("src/b.cppm", b("c_inl() + c_val()"));
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        p.write("src/c.cppm", c("    // a line\n"));
+        r = p.mcpp({"build", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.gcm changed in locations only and is kept"))) << "the BMI was not kept: " << s::text(r);
+        p.write("src/b.cppm", b("undeclared_name"));
+        r = p.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "A: a unit that does not compile built";
+        expect(e2e::contains(s::text(r), "the BMI of module c was kept although its source changed (bmi_cutoff), and a unit that imports it failed")) << "A: " << s::text(r);
+        expect(e2e::contains(s::text(r), "MCPP_BMI_CUTOFF=exact mcpp build")) << "A: " << s::text(r);
+        expect(e2e::contains(s::text(r), "[profile.<name>] bmi_cutoff = \"exact\" keeps it")) << "A: " << s::text(r);
+
+        r = p.mcpp({"build"}, s::options{.env = {{"MCPP_BMI_CUTOFF", "exact"}}});
+        expect(fatal(!e2e::succeeded(r))) << "B: " << s::text(r);
+        expect(s::lacks(s::text(r), "the BMI of module c was kept")) << "B: a tip names a BMI the exact cutoff replaced: " << s::text(r);
+
+        p.write("src/b.cppm", b("c_inl() + c_val()"));
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 11"))) << "C: " << s::text(r);
+        expect(s::lacks(s::text(r), "tip:")) << "C: a build that succeeded gave a tip: " << s::text(r);
     };
 
     "07 static library"_test[s::elf] = [] {

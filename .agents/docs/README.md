@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-366 records.
+374 records.
 
 ## By subject
 
@@ -30,12 +30,14 @@ Records that declare one. Everything else is listed by date below.
 
 ### build
 
+- [clang BMI 的截断与私有模块片段判定的收窄](2026-11-26-clang-bmi-cutoff-and-private-fragment-refinement-design.md) — active
 - [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [大型工作区的构建空间与复用（mcpp#874）](2026-10-31-workspace-space-and-reuse-design.md) — active
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 
 ### build-program
 
+- [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
 
@@ -59,6 +61,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active
+- [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
@@ -90,6 +94,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### ecosystem
 
+- [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active
+- [离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）](2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md) — active
 - [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — landed
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
 - [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active
@@ -131,6 +137,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### plan
 
+- [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
 - [Eight reports after 2026.9.27.1: implementation plan](2026-09-27-eight-reports-implementation-plan.md) — active
 - [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — landed
 - [工具链选择与载荷可信度：实施计划](2026-09-24-toolchain-selection-implementation-plan.md) — landed
@@ -172,6 +179,10 @@ Records that declare one. Everything else is listed by date below.
 - [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
 - [Where a platform's knowledge belongs: iOS, Android and Web across the engine, the index and the plugins](2026-09-11-platform-targets-design-review.md) — active
 
+### test
+
+- [生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）](2026-11-20-test-architecture-upgrade-design.md) — active
+
 ### toolchain
 
 - [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
@@ -205,6 +216,14 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [clang BMI 的截断与私有模块片段判定的收窄](2026-11-26-clang-bmi-cutoff-and-private-fragment-refinement-design.md) — active
+- [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
+- [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active
+- [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active
+- [离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）](2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md) — active
+- [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active
+- [生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）](2026-11-20-test-architecture-upgrade-design.md) — active
+- [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — landed
 - [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — active

@@ -28,6 +28,7 @@ import mcpp.toolchain.apple_sdk;
 import mcpp.runtime.search;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.gcc;          // binutils_prefix_dir: the one -B
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.hostflags;
@@ -1303,15 +1304,15 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // than something the reader has to re-derive from the return paths.
     f.ldRuntimeFallback = farm_ld;
 
-    std::filesystem::path binutilsBin;
-    // A self-contained cross payload finds its own assembler and linker under
-    // its prefix: musl, MinGW, and a payload a row names by its GCC target.
-    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++"
-        && !mcpp::toolchain::row_states_gcc_target(plan.toolchain)) {
-        auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
-        if (!ar.empty())
-            binutilsBin = ar.parent_path();
-    }
+    // THE BINUTILS GCC IS POINTED AT (`-B`) IS ONE ANSWER, the std module's
+    // compile's too: `gcc::binutils_prefix_dir`. A self-contained payload --
+    // musl, MinGW, a row's GCC target, clang -- carries its own; a GCC named
+    // by path is pointed at the `as` or `ld` its project states, else at none
+    // (mcpp#755). Derived here from the archive tool, such a GCC with only
+    // `tools.as` stated had no archive tool beside its driver, so no `-B`, and
+    // its driver ran the host's `as` from PATH, which cannot read gcc 16.2.0's
+    // `.base64` (bases 925).
+    const auto binutilsBin = mcpp::toolchain::gcc::binutils_prefix_dir(plan.toolchain);
     std::string b_flag;
     if (!binutilsBin.empty()) {
         b_flag = " -B" + escape_path(binutilsBin);
@@ -2424,11 +2425,13 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // graph-supplied-target replacement below, which assembles its own
         // `--target=` and `--no-default-config`, and appending them twice
         // would make the outcome depend on the driver's flag ordering.
-        std::string apple_cross_ld;
-        if (appleCross) {
-            apple_cross_ld = crossTarget;
-            if (isClangWithCfg) apple_cross_ld += " --no-default-config";
-        }
+        //
+        // The target is named whenever the compile named it, not only for an
+        // Apple cross SDK: `x86_64-macos` on an Apple-silicon host compiles
+        // x86_64 objects, and a link told nothing ran for arm64 and found no
+        // `main` among them (measured on macos-15-arm64).
+        std::string apple_cross_ld = crossTarget;
+        if (appleCross && isClangWithCfg) apple_cross_ld += " --no-default-config";
         platformAnchor = macos_sdk + version_min;
         f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
                            b_flag, apple_cross_ld, macos_sdk, version_min,
@@ -2722,8 +2725,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             // (mcpp#911 G4): the compiler driver then links, adding the start
             // files and libraries it knows for the target, where the row alone
             // would call ld.lld with its emulation.
-            const bool platformCompilerDriver = plan.platform.active
-                && plan.platform.fields.link.driver.set
+            const bool platformCompilerDriver = plan.platform.fields.link.driver.set
                 && plan.platform.fields.link.driver.value == "compiler";
             if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
@@ -2789,7 +2791,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // freestanding block gives: the artifact has no loader path, no crt files
     // and no system library of the toolchain's, and what it holds is the
     // graph's, reached through the graph's own `-L`/`-l`.
-    if (auto const& p = plan.platform; p.active) {
+    {
+        auto const& p = plan.platform;
         // Each element one word, quoted for the shell and `$` doubled for
         // ninja, as every other word of a command is.
         auto words = [](const std::vector<std::string>& v) {

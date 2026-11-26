@@ -41,6 +41,23 @@ mcpp build --target x86_64-linux-musl
 # → target/x86_64-linux-musl/.../bin/mcpp is a fully static ELF
 ```
 
+### Building on a machine without a network (2026.11.21.1+)
+
+An mcpp that has `mcpp fetch` writes everything the repository's build needs
+into a directory on a machine with a network, and builds from it on one
+without:
+
+```bash
+mcpp fetch --to ../mcpp-bundle                          # with a network
+mcpp fetch --from ../mcpp-bundle && mcpp build --offline # without one
+```
+
+The directory carries the toolchain and its declared payloads, the package
+index snapshots, the dependencies by `mcpp.lock` and the git clones the build
+uses ([05 — Dependencies](05-dependencies.md), "Offline builds and mcpp
+fetch"). CI holds this: a clean home fetches, and the build runs in a network
+namespace of its own.
+
 ## Source Layout
 
 mcpp is a **workspace**. `modules/` holds ten packages that the engine imports;

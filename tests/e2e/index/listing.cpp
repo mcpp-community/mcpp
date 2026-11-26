@@ -52,7 +52,7 @@ void pin_and_unpin(const s::project& p, const s::options& o) {
     expect(fatal(any_of_words(out, {"Unpinned", "unpinned", "Unpin", "no rev"}))) << "unpin output unexpected: " << out;
 }
 
-E2E listing{"listing", [] {
+E2E listing{"listing", s::home_fixture, [] {
     "06 emit xpkg"_test = [] {
         // `emit xpkg` writes a Lua entry from the manifest: the header, the name and the
         // pointer to the manifest in the archive (SPEC-001 §3.5); `--output` writes the file,

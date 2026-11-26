@@ -10,6 +10,7 @@ import :state;
 import std;
 import mcpp.diag;
 import mcpp.home;
+import mcpp.log;
 import mcpp.build.source_digest;
 import nlohmann.json;
 import mcpp.manifest;
@@ -82,12 +83,29 @@ static mcpp::graph::AdjacencyList key_graph(const PrepareState& state,
 
 namespace {
 
-// Each package's key and its inputs, and whether its upstream holds a package
-// whose sources are not named.
+// Each package's key and its inputs, whether its upstream holds a package
+// whose sources are not named, and the package each compile unit is filed
+// under (`state.packages.size()` for none): the key lists the sources of the
+// units filed under its package, and the entry holds those units and no others.
 struct PackageKeys {
     std::vector<std::string>    keys;
     std::vector<nlohmann::json> inputs;
     std::vector<char>           localTaint;
+    std::vector<std::size_t>    unitPackage;
+    // Dependencies before dependents, and each package's upstreams that
+    // provide a module: the interfaces its units may import.
+    std::vector<std::size_t>              order;
+    std::vector<std::vector<std::size_t>> interfaceUpstreams;
+};
+
+// How a package's units reach this build: from an entry, compiled here and
+// filled into an entry after the build, or compiled here and kept out of the
+// cache.
+enum class Supply { Served, Filled, Uncached };
+struct Supplies {
+    std::vector<Supply>                    of;
+    std::vector<std::string>               digest;   // a served entry's interfaces by content
+    std::vector<mcpp::bmi_cache::CacheKey> key;      // the entry, served or filled
 };
 
 } // namespace
@@ -133,12 +151,15 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
     std::map<std::string, std::size_t> moduleProvider;
     for (auto& cu : ctx.plan.compileUnits) {
         // Longest matching root wins. Package roots can nest — a workspace
-        // member lives under the workspace root — and taking the first match
-        // would file the member's sources under the outer package, putting
-        // them in the wrong key. (Index payloads live in the xpkgs store and
-        // cannot be shadowed this way, so no cached entry is affected today;
-        // resolving it by specificity rather than by iteration order is what
-        // keeps that true if roots ever move.)
+        // member lives under the workspace root, and a path dependency's tree
+        // can hold the workspace that builds it (mcpp-plugins' `tests/ws`,
+        // whose members' build programs import the repository's package) —
+        // and taking the first match would file the member's sources under
+        // the outer package, putting them in the wrong key. The entry reads
+        // this filing and no other (`serve_or_fill`): under 2026.11.19.1 it
+        // took every unit below the package's root, both members'
+        // `src/main.cpp` at the one address `obj/src/main.o`, and a build
+        // from the cache linked one member's object into the other (mcpp#979).
         std::size_t best = state.packages.size();
         std::size_t bestLen = 0;
         std::string bestRel;
@@ -182,7 +203,9 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
 
     PackageKeys out{std::vector<std::string>(state.packages.size()),
                     std::vector<nlohmann::json>(state.packages.size(), nlohmann::json::object()),
-                    std::vector<char>(state.packages.size(), 0)};
+                    std::vector<char>(state.packages.size(), 0),
+                    std::move(unitPackage), {},
+                    std::vector<std::vector<std::size_t>>(state.packages.size())};
     auto& pkgKeys = out.keys;
     auto& pkgInputs = out.inputs;
     // Does this package's own transitive upstream contain anything that is
@@ -221,7 +244,11 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
             pa.version     = state.dep_cache_identities[idx - 1].version;
             // A git or path dependency's sources by their own name (mcpp#974),
             // so its key, and every key that folds it in, moves with them.
-            if (sources_named(state, idx)) pa.version += source_identity_suffix(state, idx);
+            if (sources_named(state, idx)) {
+                const auto suffix = source_identity_suffix(state, idx);
+                pa.version += suffix;
+                pa.ownUnits = !suffix.empty();
+            }
         }
         if (pa.packageName.empty()) {
             // The root package, or a package with no resolution identity.
@@ -237,9 +264,7 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
         // dirs are relativized against it so a key survives a different
         // MCPP_HOME; a project-local payload falls back to the `<pkg>`
         // prefix inside fill_package_config and is equally stable.
-        ck::fill_package_config(pa, state.packages[idx],
-                                state.storeRoots.empty() ? std::filesystem::path{}
-                                                   : state.storeRoots.front());
+        ck::fill_package_config(pa, state.packages[idx], state.storeRoots, mcpp::build::program_out_root());
         pa.sources = pkgSources[idx];
         const auto qname = mcpp::build::qualified_package_name(state.packages[idx].manifest);
         // A GCC BMI records its imports' paths as the module map spells
@@ -271,6 +296,14 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
             if (!pkgKeys[q].empty()) pa.upstreamKeys.push_back(pkgKeys[q]);
             if (localTaint[q]) localTaint[idx] = 1;
         }
+        auto& ups = out.interfaceUpstreams[idx];
+        for (auto& e : state.dependencyEdges)
+            if (e.consumerPackageIndex == idx && !serves_root_tests(e) && pkgProvidesModule[e.dependencyPackageIndex])
+                ups.push_back(e.dependencyPackageIndex);
+        ups.insert(ups.end(), importedFrom[idx].begin(), importedFrom[idx].end());
+        std::ranges::sort(ups);
+        ups.erase(std::unique(ups.begin(), ups.end()), ups.end());
+        std::erase(ups, idx);
         std::ranges::sort(pa.upstreamKeys);
         pa.upstreamKeys.erase(std::unique(pa.upstreamKeys.begin(),
                                           pa.upstreamKeys.end()),
@@ -282,12 +315,24 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
         pkgKeys[idx]   = ck::key_hex(axes, pa);
         pkgInputs[idx] = ck::to_json(axes, pa);
     }
+    out.order.assign(keyOrder->begin(), keyOrder->end());
     return out;
+}
+
+// Why a package was not served, said once (design 2026-11-20 §5.4): kept for
+// the build record and printed under --verbose.
+static void not_served(BuildContext& ctx, const mcpp::modgraph::PackageRoot& pkg,
+                       std::string_view reason, std::string_view why) {
+    const auto name = mcpp::build::qualified_package_name(pkg.manifest);
+    ctx.cacheDecisions.push_back({name, pkg.manifest.package.version, std::string(reason)});
+    mcpp::log::verbose("cache", std::format("{} {} not served [{}]: {}", name,
+                                            pkg.manifest.package.version, reason, why));
 }
 
 // One package's entry: its units are served from the cache when the entry holds
 // what this build asks for; otherwise a task fills it after the build.
-static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i, const PackageKeys& keys) {
+static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i, const PackageKeys& keys,
+                          Supplies& sup) {
     const auto& pkgRoot   = state.packages[i];
     const auto* depIdent  = i - 1 < state.dep_cache_identities.size()
         ? &state.dep_cache_identities[i - 1]
@@ -314,9 +359,14 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     // resolved commit, or the digest of its tree's content, is in its
     // key (`sources_named`), so a change to the sources is a change of
     // key. The project's own trees are not named and stay out.
-    if (!depIdent || !sources_named(state, i)) return;
+    if (!depIdent)
+        return not_served(ctx, pkgRoot, "no-identity", "the resolution recorded no identity for it");
+    if (!sources_named(state, i))
+        return not_served(ctx, pkgRoot, "unnamed-sources",
+                          "its sources are the project's, or have no version, commit or content digest");
     // ...and neither may anything it was built against be unnamed.
-    if (keys.localTaint[i]) return;
+    if (keys.localTaint[i])
+        return not_served(ctx, pkgRoot, "unnamed-upstream", "a package it is built against has unnamed sources");
     // ...and the package's sources must ACTUALLY be in the immutable
     // store, not merely labelled as coming from it.
     //
@@ -347,7 +397,8 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     // statement about the path, not about the inode.
     const bool fromStore = depIdent->sourceKind == "version";
     if (fromStore && !mcpp::build::path_is_under_any(pkgRoot.root, state.storeRoots))
-        return;
+        return not_served(ctx, pkgRoot, "outside-store",
+                          std::format("its root {} is not below a store", pkgRoot.root.generic_string()));
 
     const auto& depName = depIdent->packageName;
     const auto depVer  = (depIdent->version.empty()
@@ -374,12 +425,11 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     std::vector<std::size_t> unitIdx;
     bool addressable = true;
     for (std::size_t u = 0; u < ctx.plan.compileUnits.size(); ++u) {
+        // The units the key files under this package (mcpp#979): a unit
+        // below a package nested in this one's tree is that package's.
+        if (keys.unitPackage[u] != i) continue;
         auto& cu = ctx.plan.compileUnits[u];
-        std::error_code ec;
-        auto rel = std::filesystem::relative(cu.source, pkgRoot.root, ec);
-        if (ec || rel.empty()) continue;
-        auto rels = rel.string();
-        if (rels.starts_with("..")) continue;       // not under depRoot
+        if (cu.entryUnit) continue;   // compiled with the image that links it
 
         // ALL OR NOTHING. A unit plan.cppm could not give a
         // machine-independent entry address to takes its whole package
@@ -406,14 +456,33 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
                                  cu.object});
         unitIdx.push_back(u);
     }
-    if (!addressable) return;
+    if (!addressable)
+        return not_served(ctx, pkgRoot, "unaddressable-unit", "a unit has no machine-independent address");
 
     // Validate the entry against THIS build's artifact list, not
     // against the entry's own (mcpp#344). Anything short of a full
     // match is a miss — never a failure: the stage edges below are
     // simply not emitted and the units compile normally.
-    auto probe = mcpp::bmi_cache::probe_cached(key, arts);
-    if (probe.ok) {
+    // THE INTERFACES IT IS COMPILED AGAINST (SPEC-001 §10.4 item 7). An entry
+    // holds BMIs compiled against its upstreams' interfaces as they were then,
+    // and a compiler refuses another build of them ("module 'globbing' CRC
+    // mismatch" once `mcpp cache gc` removed the upstream's entry and it was
+    // compiled again elsewhere). It is served only when every interface it
+    // imports is served too, as the build it was compiled in read them.
+    std::vector<mcpp::bmi_cache::CacheKey> interfaces;
+    bool upstreamFilled = false;
+    for (auto q : keys.interfaceUpstreams[i]) {
+        if (sup.of[q] == Supply::Uncached)
+            return not_served(ctx, pkgRoot, "uncached-upstream",
+                              "a module interface it imports is compiled in this build and stays out of the cache");
+        if (sup.of[q] == Supply::Filled) upstreamFilled = true;
+        else key.imports[keys.keys[q]] = sup.digest[q];
+        interfaces.push_back(sup.key[q]);
+    }
+    auto probe = upstreamFilled ? mcpp::bmi_cache::CacheProbe{}
+                                : mcpp::bmi_cache::probe_cached(key, arts);
+    const bool againstThese = probe.ok && probe.imports == key.imports;
+    if (againstThese) {
         // Mark the units. The backend turns each into a stage_file
         // edge; nothing is copied here. Copying behind ninja's back is
         // exactly what made the old cache a no-op: the staged file was
@@ -434,6 +503,9 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
             }
         }
         mcpp::bmi_cache::touch_accessed(key);
+        sup.of[i] = Supply::Served;
+        sup.digest[i] = probe.bmiDigest;
+        sup.key[i] = key;
         state.usedCacheRecords.insert(key.entryFile().string());
         // By the name the package report gives it: a dependency key
         // is not always its qualified name (`greet` for the default
@@ -450,7 +522,7 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     // cache silently never hits", and a cache that lies about its own
     // effectiveness went unnoticed for three months once already.
     if (!probe.layoutMismatch.empty()) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "build cache entry for {}@{} [{}] does not contain the "
             "artifacts this build needs ({} of {} missing, e.g. `{}`); "
             "treating it as a miss. Run `mcpp cache verify` for details.",
@@ -459,8 +531,19 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
             arts.bmiFiles.size() + arts.objFiles.size(),
             probe.layoutMismatch.front()));
     }
+    if (upstreamFilled)
+        not_served(ctx, pkgRoot, "upstream-filled",
+                   "a module interface it imports is compiled in this build; its entry is filled after the build, against that interface");
+    else if (probe.ok)
+        not_served(ctx, pkgRoot, "upstream-changed",
+                   std::format("the entry under key {} was compiled against other builds of the interfaces it imports; it is filled again after the build", key.keyHex));
+    else
+        not_served(ctx, pkgRoot, "miss", std::format("no entry under key {} yet; it is filled after the build", key.keyHex));
     for (auto u : unitIdx) ctx.plan.compileUnits[u].fillsCache = true;
+    sup.of[i] = Supply::Filled;
+    sup.key[i] = key;
     BuildContext::CacheTask task{ std::move(key), std::move(arts) };
+    task.interfaces = std::move(interfaces);
     // The tree is read again before its entry is written: a source
     // edited while it compiled is not stored under the digest of the
     // sources before the edit (mcpp#974).
@@ -502,8 +585,13 @@ std::expected<void, std::string> step13_dependency_cache(PrepareState& state, Bu
 
     auto keys = package_keys(state, ctx);
     if (!keys) return std::unexpected(keys.error());
-    for (std::size_t i = 1; i < state.packages.size(); ++i)  // skip [0] = main
-        serve_or_fill(state, ctx, i, *keys);
+    // Dependencies before dependents: a package asks how each interface it
+    // imports reaches this build. The root (0) is compiled here.
+    Supplies sup{std::vector<Supply>(state.packages.size(), Supply::Uncached),
+                 std::vector<std::string>(state.packages.size()),
+                 std::vector<mcpp::bmi_cache::CacheKey>(state.packages.size())};
+    for (auto i : keys->order)
+        if (i != 0) serve_or_fill(state, ctx, i, *keys, sup);
     return {};
 }
 
@@ -551,10 +639,15 @@ void populate_dependency_cache(BuildContext& ctx) {
                 continue;
             }
         }
+        // The interfaces as the entries now hold them: an upstream filled by
+        // this loop precedes its dependents (`depsToPopulate` follows the
+        // package order).
+        for (auto const& up : task.interfaces)
+            task.key.imports[up.keyHex] = mcpp::bmi_cache::entry_bmi_digest(up);
         auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
         if (pr && !task.treeRoot.empty()) replace_tree_siblings(task.key, task.treeRoot);
         if (!pr) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "bmi cache populate failed for {}@{}: {}",
                 task.key.packageName, task.key.version, pr.error()));
         }

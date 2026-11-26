@@ -66,6 +66,10 @@ struct Reader {
     std::expected<std::vector<Carrier>, std::string>
     carriers(const mcpp::libs::toml::Value& v, std::string_view where) const;
 
+    // A system's `kernel-abi` table: the measurement and the payload layout.
+    std::expected<SystemSpec::KernelAbi, std::string>
+    system_kernel_abi(const mcpp::libs::toml::Value& v, std::string_view where) const;
+
     // A list of `<os>-<arch>` pairs (`runner.hosts`, `carrier.hosts`).
     std::expected<std::vector<std::string>, std::string>
     host_pairs(const mcpp::libs::toml::Value& v, std::string_view where) const;
@@ -165,6 +169,12 @@ Reader::ref(const toml::Value& v, std::string_view where, bool allowOff, bool al
     if (v.is_string()) {
         auto parsed = parse_ref_text(v.as_string());
         if (!parsed) return std::unexpected(std::format("{}: {}", where, parsed.error()));
+        // A payload supplies a layer; a platform, a tool or a carrier is a
+        // package of the graph.
+        if (!parsed->payload.empty() && !allowOff)
+            return std::unexpected(std::format(
+                "{}: '{}' is an ecosystem payload, which supplies a target-side layer; name a "
+                "package here (\"<name>@<version>\")", where, parsed->payload));
         return std::move(*parsed);
     }
     if (!v.is_table())
@@ -524,6 +534,59 @@ Reader::tools(const toml::Value& v, std::string_view where,
     return {};
 }
 
+// `kernel-abi.packed = { macro, bits }`: the macro that packs the version and
+// the widths of its fields, stated together.
+std::expected<void, std::string> read_packed(const mcpp::libs::toml::Value& v, const std::string& key,
+                                            SystemSpec::KernelAbi& k) {
+    if (!v.is_table()) return std::unexpected(std::format("{} must be {{ macro, bits }}", key));
+    for (auto const& [pk, pv] : v.as_table()) {
+        if (pk == "macro" && pv.is_string()) { k.packed = pv.as_string(); continue; }
+        if (pk != "bits" || !pv.is_array())
+            return std::unexpected(std::format("{}: {{ macro = \"<name>\", bits = [<width>, ...] }}", key));
+        for (auto const& b : pv.as_array()) {
+            if (!b.is_int() || b.as_int() <= 0 || b.as_int() > 32)
+                return std::unexpected(std::format("{}.bits holds widths from 1 to 32", key));
+            k.bits.push_back(static_cast<int>(b.as_int()));
+        }
+    }
+    if (k.packed.empty() || k.bits.empty())
+        return std::unexpected(std::format("{}: `macro` and `bits` are stated together", key));
+    return {};
+}
+
+std::expected<SystemSpec::KernelAbi, std::string>
+Reader::system_kernel_abi(const toml::Value& v, std::string_view where) const {
+    if (!v.is_table()) return std::unexpected(std::format("{} must be a table", where));
+    SystemSpec::KernelAbi k;
+    for (auto const& [kk, kv] : v.as_table()) {
+        const auto key = std::format("{}.{}", where, kk);
+        if (!contains(kSystemKernelAbiKeys, kk))
+            return std::unexpected(std::format("{}: not a key of kernel-abi; the keys are {}", key,
+                                               list_of(kSystemKernelAbiKeys)));
+        if (kk == "version") {
+            auto w = strings(kv, key);
+            if (!w) return std::unexpected(w.error());
+            k.version = std::move(*w);
+        } else if (kk == "packed") {
+            if (auto r = read_packed(kv, key, k); !r) return std::unexpected(r.error());
+        } else {
+            if (!kv.is_string() || kv.as_string().empty())
+                return std::unexpected(std::format("{} must be a non-empty string", key));
+            (kk == "header" ? k.header : kk == "include" ? k.include
+             : kk == "package" ? k.package : k.archInclude) = kv.as_string();
+        }
+    }
+    if (k.header.empty())
+        return std::unexpected(std::format("{}: `header` names the header a probe includes", where));
+    if (k.version.empty() && k.packed.empty())
+        return std::unexpected(std::format("{}: `version` or `packed` says how the version is read", where));
+    if (!k.version.empty() && !k.bits.empty() && k.version.size() != k.bits.size())
+        return std::unexpected(std::format("{}: `version` and `packed.bits` name the same parts", where));
+    if (!k.archInclude.empty() && k.archInclude.find("{arch}") == std::string::npos)
+        return std::unexpected(std::format("{}.arch-include names the architecture as {{arch}}", where));
+    return k;
+}
+
 std::expected<std::vector<std::string>, std::string>
 Reader::host_pairs(const toml::Value& v, std::string_view where) const {
     auto w = strings(v, where);
@@ -629,12 +692,14 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
              {"code-model", &r.codeModel}, {"multilib", &r.multilib}, {"link-emulation", &r.linkEmulation}})
         if (auto e = text(key, *to); !e) return std::unexpected(e.error());
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::vector<std::string>*>>{
-             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions}})
+             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions},
+             {"link-without-main", &r.linkWithoutMain}, {"interfaces", &r.interfaces}})
         if (auto it = t.find(key); it != t.end()) {
             auto w = strings(it->second, std::format("{}.{}", where, key));
             if (!w) return std::unexpected(w.error());
             *to = std::move(*w);
         }
+    r.interfacesStated = t.find("interfaces") != t.end();
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, bool*>>{
              {"standard", &r.standard}, {"exact", &r.exact}, {"exe-suffix-fixed", &r.exeSuffixFixed}})
         if (auto it = t.find(key); it != t.end()) {
@@ -845,6 +910,19 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                         if (!sv.is_bool())
                             return std::unexpected(std::format("{}.resources must be a boolean", where));
                         sys.resources = sv.as_bool();
+                        continue;
+                    }
+                    if (sk == "interfaces") {
+                        auto w = strings(sv, std::format("{}.interfaces", where));
+                        if (!w) return std::unexpected(w.error());
+                        sys.interfaces = std::move(*w);
+                        sys.interfacesStated = true;
+                        continue;
+                    }
+                    if (sk == "kernel-abi") {
+                        auto r = system_kernel_abi(sv, std::format("{}.kernel-abi", where));
+                        if (!r) return std::unexpected(r.error());
+                        sys.kernelAbi = std::move(*r);
                         continue;
                     }
                     if (!sv.is_string())

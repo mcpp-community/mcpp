@@ -152,7 +152,7 @@ e2e::outcome run_clean(const fs::path& dir) {
     return s::run(dir / "app.exe", {}, dir, {{"PATH", root + "\\System32"}});
 }
 
-E2E placement{"placement", [] {
+E2E placement{"placement", s::home_fixture, [] {
     "819 the crt is placed by its rule not by search order"_test = [] {
         // L1 host-coupled (--crt system) places no copy of the runtime; L2 toolchain-coupled with the
         // set already placed by the plan: the dependency's older copy is neither placed nor stated per

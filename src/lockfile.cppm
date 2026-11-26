@@ -18,6 +18,7 @@ export namespace mcpp::lockfile {
 using LockedIndex   = mcpp::pm::LockedIndex;
 using LockedPackage = mcpp::pm::LockedPackage;
 using LockedTarget  = mcpp::pm::LockedTarget;
+using LockedToolchain = mcpp::pm::LockedToolchain;
 using Lockfile      = mcpp::pm::Lockfile;
 using LockError     = mcpp::pm::LockError;
 

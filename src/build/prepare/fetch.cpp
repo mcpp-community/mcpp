@@ -31,6 +31,7 @@ import mcpp.config;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.fetcher;
+import mcpp.pm.package_fetcher;   // the offline refusals every install path says alike
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
@@ -301,12 +302,11 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 mcpp::log::verbose("xlings", std::format(
                     "{}: recorded as provisioned in {}, but no payload is "
                     "installed for: {}", label, stamp.string(), list));
-                if (mcpp::effects::offline_mode()
+                if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None
                     || mcpp::effects::no_auto_install()) {
-                    std::string_view release =
-                        mcpp::effects::offline_mode()
-                        ? "drop --offline / unset MCPP_OFFLINE"
-                        : "unset MCPP_NO_AUTO_INSTALL";
+                    const std::string release =
+                        mcpp::effects::no_auto_install() ? std::string("unset MCPP_NO_AUTO_INSTALL")
+                                                         : mcpp::effects::offline_remedy();
                     refusal::record(refusal::Code::OfflineDownloadRequired);
                     return std::unexpected(std::format(
                         "{} are recorded as provisioned, but these payloads "
@@ -335,7 +335,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 // not the block: a project whose packages are already
                 // provisioned still builds offline, which is the behaviour
                 // that would otherwise regress.
-                if (mcpp::effects::offline_mode()
+                if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None
                     || mcpp::effects::no_auto_install()) {
                     // THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
                     // reason is that relocating a record must not refuse a
@@ -353,10 +353,9 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                     // The registry stamp is NOT written — nothing here
                     // verified anything.
                     if (!legacy_stamp_matches()) {
-                        std::string_view release =
-                            mcpp::effects::offline_mode()
-                            ? "drop --offline / unset MCPP_OFFLINE"
-                            : "unset MCPP_NO_AUTO_INSTALL";
+                        const std::string release =
+                            mcpp::effects::no_auto_install() ? std::string("unset MCPP_NO_AUTO_INSTALL")
+                                                             : mcpp::effects::offline_remedy();
                         refusal::record(refusal::Code::OfflineDownloadRequired);
                         return std::unexpected(std::format(
                             "{} are declared but not provisioned, "
@@ -478,6 +477,8 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                     // it is the whole of the actionable content.
                     if (called && r->error && !r->error->hint.empty())
                         why += "\n       " + r->error->hint;
+                    if (called && mcpp::effects::offline_mode())
+                        return std::unexpected(mcpp::pm::offline_unavailable(label, why));
                     // xlings' own diagnostic, with its hint, IS the report
                     // (design 2026-10-26 D17). This used to end with "you can
                     // install them manually with: xlings install …" -- the
@@ -506,6 +507,9 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 std::filesystem::create_directories(stamp.parent_path(), sec);
                 if (std::ofstream out{stamp}; out) out << want;
             }
+            // Payloads this run used (`mcpp fetch --to`), as declared: the
+            // provider resolves an address that names no version.
+            for (auto const& d : declaredDeps) mcpp::effects::note_package_used(d);
     return {};
 }
 

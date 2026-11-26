@@ -1,0 +1,20 @@
+# mcpp.notice -- the kinds of user-visible notice whose policy is not the default, and what a
+# project has already been told (design 2026-11-21, build programs' inputs §3.6).
+#
+# A leaf: a notice is identified by its diagnostic domain (`build-program/includes-header`), the
+# same identity `mcpp.diag` records and the machine envelope turns into a code. A domain that has
+# no row here is said every time it is reported (`always`); a row states `once`: said once per
+# project and key, recorded in `target/.mcpp-notices`, which `mcpp clean` removes with `target/`;
+# a command that plans in a directory of its own reads the record and does not write it.
+# The record also keeps named facts a caller compares against (the default toolchain a project
+# last built with). Rendering stays in `mcpp.diag`; this package knows nothing of the terminal.
+
+[package]
+name        = "notice"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The policies of user-visible notices and the record of what a project was told"
+license     = "Apache-2.0"
+
+[dev-dependencies]
+mcpplibs.mtest = "0.11.3"

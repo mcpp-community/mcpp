@@ -60,6 +60,18 @@ std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,
                    const mcpp::toolchain::platform::PlatformKey& platform);
 
+// THE PACKAGES A DESCRIPTOR'S PAYLOAD RUNS WITH on `platform`
+// (`xpm.<platform>.deps`): its `runtime` list when the table splits `build`
+// from `runtime`, else the list itself, as written (`xim:binutils@2.42.1`,
+// `xim:glibc@>=2.39`). The companions of a toolchain -- the binutils a GCC
+// assembles and links with, the kernel headers its C library includes -- are
+// the versions its payload declares here, not whichever the store holds
+// (design 2026-11-21, offline and toolchain defaults §3.5). Empty when the
+// platform's table has no `deps`.
+std::vector<std::string>
+xpkg_runtime_deps(std::string_view luaContent,
+                  const mcpp::toolchain::platform::PlatformKey& platform);
+
 // Union of per-OS version-key lists, semver-descending, deduplicated — the
 // display shape behind `mcpp add` suggestions and `mcpp search` (#487). See
 // the definition for the ordering rules applied to unparsable keys.
@@ -1038,20 +1050,15 @@ list_xpkg_version_entries(std::string_view luaContent,
 }
 
 namespace {
-std::vector<XpkgVersionEntry>
-entries_of_first_block(std::string_view luaContent,
-                       const mcpp::toolchain::platform::PlatformKey& platformAxis) {
-    // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`, the
-    // platform being the first of the axis's keys the table has a block for.
-    // We work on a sanitized copy so quoted version keys remain locatable
-    // by their offsets in the original text.
-    auto sanitized = strip_lua_comments_and_strings(luaContent);
-    std::string_view text { sanitized };
-    std::vector<XpkgVersionEntry> versions;
+// THE STRUCTURE OF A SANITIZED DESCRIPTOR (strip_lua_comments_and_strings):
+// comments and string contents are blanks, so a brace or a key found here is
+// the descriptor's, and a position here is the same position in the original
+// text, where a string's contents are read.
+struct LuaScan {
+    std::string_view text;
 
-    auto find_word_at_lhs = [&](std::string_view name, std::size_t from)
-        -> std::size_t
-    {
+    // The position of `name` written as a key (`name =`) at or after `from`.
+    std::size_t word_at_lhs(std::string_view name, std::size_t from) const {
         std::size_t p = from;
         while ((p = text.find(name, p)) != std::string_view::npos) {
             bool word_start = (p == 0 ||
@@ -1067,16 +1074,16 @@ entries_of_first_block(std::string_view luaContent,
             ++p;
         }
         return std::string_view::npos;
-    };
+    }
 
-    auto skip_to_open_brace = [&](std::size_t from) -> std::size_t {
+    std::size_t open_brace(std::size_t from) const {
         std::size_t q = from;
         while (q < text.size() && text[q] != '{') ++q;
         return q < text.size() ? q : std::string_view::npos;
-    };
+    }
 
-    // Match braces to find table extent.
-    auto find_table_end = [&](std::size_t open) -> std::size_t {
+    // The brace that closes the table opened at `open`.
+    std::size_t table_end(std::size_t open) const {
         int depth = 1;
         std::size_t q = open + 1;
         while (q < text.size() && depth > 0) {
@@ -1089,26 +1096,68 @@ entries_of_first_block(std::string_view luaContent,
             ++q;
         }
         return std::string_view::npos;
-    };
-
-    auto xpm_pos = find_word_at_lhs("xpm", 0);
-    if (xpm_pos == std::string_view::npos) return versions;
-    auto xpm_open = skip_to_open_brace(xpm_pos);
-    if (xpm_open == std::string_view::npos) return versions;
-    auto xpm_end = find_table_end(xpm_open);
-    if (xpm_end == std::string_view::npos) return versions;
-
-    auto plat_pos = std::string_view::npos;
-    for (auto const& key : platformAxis.keys()) {
-        plat_pos = find_word_at_lhs(key, xpm_open + 1);
-        if (plat_pos != std::string_view::npos && plat_pos < xpm_end) break;
-        plat_pos = std::string_view::npos;
     }
-    if (plat_pos == std::string_view::npos) return versions;
-    auto plat_open = skip_to_open_brace(plat_pos);
-    if (plat_open == std::string_view::npos || plat_open >= xpm_end) return versions;
-    auto plat_end = find_table_end(plat_open);
-    if (plat_end == std::string_view::npos) return versions;
+
+    // The table `key = { ... }` written directly inside the table [open, end],
+    // as its braces; none when the table does not hold it at its own level.
+    std::optional<std::pair<std::size_t, std::size_t>>
+    table_in(std::string_view key, std::size_t open, std::size_t end) const {
+        for (std::size_t from = open + 1; from < end;) {
+            const auto at = word_at_lhs(key, from);
+            if (at == std::string_view::npos || at >= end) return std::nullopt;
+            if (depth_at(open, at) == 1) {
+                const auto o = open_brace(at);
+                if (o == std::string_view::npos || o >= end) return std::nullopt;
+                const auto e = table_end(o);
+                if (e == std::string_view::npos || e > end) return std::nullopt;
+                return std::pair{o, e};
+            }
+            from = at + key.size();
+        }
+        return std::nullopt;
+    }
+
+    // How deep `at` is below the table opened at `open` (1: directly inside it).
+    int depth_at(std::size_t open, std::size_t at) const {
+        int depth = 0;
+        for (std::size_t q = open; q < at; ++q) {
+            if (text[q] == '{') ++depth;
+            else if (text[q] == '}') --depth;
+        }
+        return depth;
+    }
+
+    // `xpm.<platform>`, the platform being the first of the axis's keys the
+    // xpm table has a block for.
+    std::optional<std::pair<std::size_t, std::size_t>>
+    platform_table(const mcpp::toolchain::platform::PlatformKey& platformAxis) const {
+        const auto xpm_pos = word_at_lhs("xpm", 0);
+        if (xpm_pos == std::string_view::npos) return std::nullopt;
+        const auto xpm_open = open_brace(xpm_pos);
+        if (xpm_open == std::string_view::npos) return std::nullopt;
+        const auto xpm_end = table_end(xpm_open);
+        if (xpm_end == std::string_view::npos) return std::nullopt;
+        for (auto const& key : platformAxis.keys())
+            if (auto t = table_in(key, xpm_open, xpm_end)) return t;
+        return std::nullopt;
+    }
+};
+
+std::vector<XpkgVersionEntry>
+entries_of_first_block(std::string_view luaContent,
+                       const mcpp::toolchain::platform::PlatformKey& platformAxis) {
+    // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`.
+    // We work on a sanitized copy so quoted version keys remain locatable
+    // by their offsets in the original text.
+    auto sanitized = strip_lua_comments_and_strings(luaContent);
+    std::string_view text { sanitized };
+    const LuaScan scan{ text };
+    std::vector<XpkgVersionEntry> versions;
+    auto find_table_end = [&](std::size_t open) { return scan.table_end(open); };
+
+    const auto plat = scan.platform_table(platformAxis);
+    if (!plat) return versions;
+    const auto [plat_open, plat_end] = *plat;
 
     // Does this entry body declare `ref = ...` at its own top level? Nested
     // tables are skipped so a `url = { ref = ... }` (no such shape today, but
@@ -1192,6 +1241,31 @@ list_xpkg_versions(std::string_view luaContent,
     std::vector<std::string> out;
     for (auto& e : list_xpkg_version_entries(luaContent, platformAxis))
         out.push_back(std::move(e.version));
+    return out;
+}
+
+std::vector<std::string>
+xpkg_runtime_deps(std::string_view luaContent,
+                  const mcpp::toolchain::platform::PlatformKey& platformAxis) {
+    std::vector<std::string> out;
+    const auto sanitized = strip_lua_comments_and_strings(luaContent);
+    const LuaScan scan{ sanitized };
+    const auto plat = scan.platform_table(platformAxis);
+    if (!plat) return out;
+    auto list = scan.table_in("deps", plat->first, plat->second);
+    if (!list) return out;
+    if (auto runtime = scan.table_in("runtime", list->first, list->second)) list = runtime;
+    // The strings directly inside the list; a nested table (`build = {...}`)
+    // is another list.
+    for (std::size_t q = list->first + 1; q < list->second; ++q) {
+        const char c = scan.text[q];
+        if (c == '{') { q = scan.table_end(q); if (q == std::string_view::npos) break; continue; }
+        if (c != '"' && c != '\'') continue;
+        const auto close = scan.text.find(c, q + 1);
+        if (close == std::string_view::npos || close > list->second) break;
+        out.emplace_back(luaContent.substr(q + 1, close - q - 1));
+        q = close;
+    }
     return out;
 }
 
@@ -1943,6 +2017,14 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');
+                    } else if (sub == "description") {
+                        // mcpp#992: one line for a reader of the features, a
+                        // string as in `mcpp.toml` (SPEC-004 §16).
+                        if (cur.peek() != '"' && cur.peek() != '\'')
+                            return std::unexpected(ManifestError{
+                                std::format("features.{}.description must be a string", fname),
+                                m.sourcePath, 0, 0});
+                        m.featureDescriptions[fname] = cur.read_string();
                     } else if (sub == "requires_abi" && cur.peek() == '{') {
                         // `requires_abi = { threads = true }` -- see
                         // Manifest::featureRequiresAbiThreads. An older mcpp

@@ -62,11 +62,14 @@ bool version_less(std::string_view a, std::string_view b) {
 
 }  // namespace
 
-// It holds the machine (P7.1): each case states that a build is replayed, and a build is planned
-// again when the runtime environment description changed -- another program installing into the
-// shared home beside it rewrites that description (measured on Linux CI, 2026-11-14).
-E2E fastpath{"fastpath", resource{"machine"}, [] {
+// The cases whose assertion holds only while nothing else writes their home (design 2026-11-20
+// §5.10): each states that a build is replayed, and a build is planned again when the runtime
+// environment description changed -- another program installing into the shared home beside it
+// rewrote that description (measured on Linux CI, 2026-11-14). Each runs mcpp in a home of its own
+// whose payloads are the user's, as upstreams (`own_home`), instead of holding the machine.
+E2E fastpath{"fastpath", s::home_fixture, [] {
     "173 build profile isolation"_test[s::gcc][s::fresh_sandbox] = [] {
+        s::own_home();
         // The profile is an invalidation axis: --dev, --release and --profile dist have three build
         // directories (-O0, -O2, -O3, read from build.ninja), each announced as built; a bare
         // build after --release is dev, not the release graph's fast path; and switching back is
@@ -130,6 +133,7 @@ E2E fastpath{"fastpath", resource{"machine"}, [] {
     };
 
     "324 fast path sees path deps"_test[s::gcc] = [] {
+        s::own_home();
         // A new file in a `path` dependency is compiled (the staleness sweep reaches the
         // dependency's tree), and an edit of the dependency's manifest plans again.
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
@@ -159,6 +163,7 @@ E2E fastpath{"fastpath", resource{"machine"}, [] {
     };
 
     "645 the fast path compares the toolchain request"_test = [] {
+        s::own_home();
         // T1 of the 2026-09-12 engine-gaps record: the fast path replays a build only for the
         // toolchain request that recorded it, A-B-A through `build` and `run`, and a changed
         // machine default resolves again.
@@ -247,6 +252,7 @@ E2E fastpath{"fastpath", resource{"machine"}, [] {
     };
 
     "832 the fast path resumes after an edit"_test[s::unix_shell] = [] {
+        s::own_home();
         // #734: after an edit and one build, the next build is replayed by the fast path, and the
         // replay still sees the next edit.
         s::project p({{"mcpp.toml", "[package]\nname = \"resume832\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "#include <cstdio>\nint main() { std::puts(\"one\"); return 0; }\n"}});
@@ -265,6 +271,7 @@ E2E fastpath{"fastpath", resource{"machine"}, [] {
     };
 
     "878 an upgraded engine does not replay the old graph"_test[s::unix_shell] = [] {
+        s::own_home();
         // #757: the record carries the engine that wrote it, and every fast path compares it; the
         // graph runs the engine through the build directory's link (design 2026-11-12 §17). The
         // same binary run from another path is what a reinstall looks like to the record.
@@ -376,6 +383,7 @@ E2E fastpath{"fastpath", resource{"machine"}, [] {
     };
 
     "879 a providers module extension reaches the fast path"_test[s::unix_shell] = [] {
+        s::own_home();
         // #756: the sweep classifies a path dependency's files with that package's own extension
         // table, so an edit to a provider's `.ixx` re-runs the consumer's build program, as a
         // project (build and run) and as a workspace member.

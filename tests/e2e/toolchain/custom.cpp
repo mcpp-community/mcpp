@@ -34,7 +34,7 @@ fs::path llvm_tree(const fs::path& at) {
     return root;
 }
 
-E2E custom{"custom", [] {
+E2E custom{"custom", s::home_fixture, [] {
     "875 toolchain by path"_test[s::llvm][s::unix_shell][s::symlink] = [] {
         // `[toolchain] default = { path = ... }` (mcpp#755): a toolchain tree named by path builds
         // with its launcher and its stated linker, is reported as custom, writes nothing into the
@@ -218,6 +218,18 @@ int main() {{
         const auto ninja_lines = s::lines_with(env, "MCPP_NINJA");
         if (!ninja_lines.empty())
             expect(fatal(std::ranges::any_of(ninja_lines, [](const std::string& l) { return l.contains("/ninja"); }))) << "FAIL: MCPP_NINJA is not an absolute ninja: " << env;
+    };
+
+    "1139 a toolchain for this system is refused for a target of another"_test[s::gcc][s::elf] = [] {
+        // A gcc named by path builds for the system it targets: asked for x86_64-windows-gnu it is
+        // refused, naming both systems, and nothing is substituted.
+        s::project p({{"mcpp.toml", "[package]\nname = \"osprobe\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "int main() { return 0; }\n"}});
+        const auto gcc = "path:" + s::payload_root("xim-x-gcc", s::gcc_version()).string();
+        auto r = p.mcpp({"build", "--toolchain", gcc, "--target", "x86_64-windows-gnu"});
+        expect(fatal(r.started && r.status != 0)) << "a Linux gcc built for Windows\n" << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(target 'x86_64-windows-gnu' resolved to a toolchain for '[a-z0-9_]+-[a-z]+-linux-gnu')")))
+            << "the refusal does not name both systems\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "will not substitute the host's"))) << s::text(r);
     };
 }};
 

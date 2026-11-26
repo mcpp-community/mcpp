@@ -337,6 +337,9 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
             if (auto it = layer.toolchain.lineByPlatform.find(platform);
                 it != layer.toolchain.lineByPlatform.end())
                 tc.lineByPlatform[platform] = it->second;
+            if (auto it = layer.toolchain.companionsByPlatform.find(platform);
+                it != layer.toolchain.companionsByPlatform.end())
+                tc.companionsByPlatform[platform] = it->second;
             tc.fileByPlatform[platform] = wsManifest;
         }
     }
@@ -378,6 +381,10 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
         if (!to.dependencyLinkageDeclared && from.dependencyLinkageDeclared) {
             to.dependencyLinkage = from.dependencyLinkage;
             to.dependencyLinkageDeclared = true;
+        }
+        if (!to.dependencyDebugDeclared && from.dependencyDebugDeclared) {
+            to.dependencyDebug = from.dependencyDebug;
+            to.dependencyDebugDeclared = true;
         }
         to.cflags.insert(to.cflags.begin(), from.cflags.begin(), from.cflags.end());
         to.cxxflags.insert(to.cxxflags.begin(), from.cxxflags.begin(), from.cxxflags.end());
@@ -460,6 +467,22 @@ export void inherit_workspace_xlings_overrides(mcpp::manifest::Manifest& member,
                                                const mcpp::manifest::Manifest& workspace) {
     static const std::vector<mcpp::manifest::ConditionalConfig> none;
     using detail::XlingsPart;
+    // `[workspace.xlings] archives`, a key of the whole run: the member's
+    // statement, else the workspace's, its relative directories written
+    // against the workspace root.
+    auto inherit_archives = [&](const mcpp::manifest::XlingsConfig& from) {
+        if (member.xlings.archivesStated || !from.archivesStated) return;
+        const auto wsRoot = workspace.sourcePath.parent_path();
+        member.xlings.archives.clear();
+        for (auto const& d : from.archives) {
+            const std::filesystem::path p = d;
+            member.xlings.archives.push_back(p.is_absolute() ? d : (wsRoot / p).lexically_normal().string());
+        }
+        member.xlings.archivesStated = true;
+    };
+    if (auto const* layer = workspace.layer.get();
+        layer && detail::lists(workspace.workspace.layerTables, "xlings"))
+        inherit_archives(layer->xlings);
     if (auto const* layer = workspace.layer.get()) {
         auto const& tables = workspace.workspace.layerTables;
         detail::merge_xlings(member,
@@ -472,6 +495,7 @@ export void inherit_workspace_xlings_overrides(mcpp::manifest::Manifest& member,
     const bool top = detail::lists(position, "xlings");
     const bool rows = detail::lists(position, "target");
     if (!top && !rows) return;
+    if (top) inherit_archives(workspace.xlings);
     const bool received = detail::merge_xlings(member, top ? &workspace.xlings : nullptr,
                                                rows ? workspace.conditionalConfigs : none,
                                                XlingsPart::Overrides);
@@ -691,6 +715,13 @@ export void inherit_workspace_build(mcpp::manifest::Manifest& member,
         if (b.linkage.empty())              b.linkage              = w.linkage;
         if (b.target.empty())               b.target               = w.target;
         if (b.cxxRuntime.empty())           b.cxxRuntime           = w.cxxRuntime;
+        // The keys of the whole run (SPEC-004 §2): the member's statement,
+        // else the workspace's.
+        if (!b.offline)                     b.offline              = w.offline;
+        if (!b.allowHostToolsStated && w.allowHostToolsStated) {
+            b.allowHostTools = w.allowHostTools;
+            b.allowHostToolsStated = true;
+        }
         if (b.dependencyLinkage.empty())    b.dependencyLinkage    = w.dependencyLinkage;
         if (b.macosDeploymentTarget.empty())
             b.macosDeploymentTarget = w.macosDeploymentTarget;
@@ -961,7 +992,7 @@ resolve_member_dir(const mcpp::manifest::Manifest& rootManifest,
         const auto& picked = members[byName.front()];
         if (!byPath.empty() && byPath.front() != byName.front()) {
             const auto& other = members[byPath.front()];
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("manifest", std::format(
                 "-p '{}' is the package name of member '{}' ({}) and also the "
                 "directory of member '{}' ({}); the package is selected. Write "
                 "'{}' to select the other member.",
@@ -977,7 +1008,7 @@ resolve_member_dir(const mcpp::manifest::Manifest& rootManifest,
             for (std::size_t k = 1; k < byPath.size(); ++k)
                 others += std::format("{}'{}'", others.empty() ? "" : ", ",
                                       members[byPath[k]].memberPath);
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("manifest", std::format(
                 "-p '{}' matches more than one member's directory; '{}' is "
                 "selected (the first listed in [workspace] members). Also "
                 "matched: {}.",
@@ -1137,8 +1168,13 @@ export std::string root_position_key(
     field("bmi_schedule", b.bmiSchedule);
     field("private_fragment", b.privateFragment);
     field("jobs", b.jobs);
+    field("memory_threshold", b.memoryThreshold);
     field("cache", b.cacheMode);
     field("allow_host_libs", b.allowHostLibs ? "1" : "0");
+    // The keys of the whole run (SPEC-004 §9 items 21, 22): a plan states its
+    // root's, so members that differ in one are not one plan.
+    field("offline", b.offline ? (*b.offline ? "1" : "0") : "-");
+    list("allow_host_tools", b.allowHostToolsStated ? b.allowHostTools : std::vector<std::string>{"-"});
     field("platform_dependencies", b.platformDependencies);
     field("default_profile", b.defaultProfile);
     list("runner", b.runner);
@@ -1149,6 +1185,7 @@ export std::string root_position_key(
         field("profile." + name, std::format("{}/{}/{}/{}/{}", pr.optLevel,
               pr.debug ? (pr.debugLines ? "lines" : "1") : "0", pr.lto ? 1 : 0, pr.strip ? 1 : 0,
               pr.dependencyLinkageDeclared ? pr.dependencyLinkage : std::string("-")));
+        if (pr.dependencyDebugDeclared) field("profile." + name + ".dependency_debug", pr.dependencyDebug);
         list("profile." + name + ".cflags", pr.cflags);
         list("profile." + name + ".cxxflags", pr.cxxflags);
         list("profile." + name + ".ldflags", pr.ldflags);
@@ -1194,8 +1231,13 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     // Where a payload comes from is a root-position statement, received from
     // `[workspace.xlings.overrides]` as the tables above are (mcpp#797, R4).
     v.xlings.overrides = first.xlings.overrides;
+    v.xlings.archives = first.xlings.archives;
+    v.xlings.archivesStated = first.xlings.archivesStated;
     auto& b = v.buildConfig;
     auto const& f = first.buildConfig;
+    b.offline = f.offline;
+    b.allowHostTools = f.allowHostTools;
+    b.allowHostToolsStated = f.allowHostToolsStated;
     b.sourcesDeclared = true;
     b.runner = f.runner;
     b.namedRunners = f.namedRunners;

@@ -20,7 +20,7 @@ std::string slash(std::string p) {
 std::string prefix_of(const std::string& n) { return n.contains('/') ? n.substr(0, n.find('/')) : std::string(); }
 std::string base_of(const std::string& n) { return n.substr(n.rfind('/') + 1); }
 
-E2E sets{"sets", [] {
+E2E sets{"sets", s::home_fixture, [] {
     "840 a workspace database describes each package once"_test[s::python3] = [] {
         // A: one configuration: each set and each source once, names unprefixed; B: two
         // configurations: names prefixed by their fingerprint, core once in each, the root

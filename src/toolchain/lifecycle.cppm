@@ -5,6 +5,7 @@
 export module mcpp.toolchain.lifecycle;
 
 import std;
+import mcpp.provider.roots;
 import mcpp.config;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
@@ -20,6 +21,7 @@ import mcpp.toolchain.target_rows;
 import mcpp.toolchain.target_schema;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.wire;
 import nlohmann.json;
 import mcpp.log;
@@ -146,6 +148,63 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
     for (const auto& cand : mcpp::provider::layout().descriptor_candidates(data, ximName))
         if (auto v = try_load(cand); v) return std::move(*v);
     return {};
+}
+
+// THE ONE RESOLUTION OF A TOOLCHAIN REQUEST (mcpp#988; design 2026-11-21,
+// offline and toolchain defaults §3.4). `mcpp toolchain install`, `mcpp
+// toolchain default` and a build all ask it, and it gives one answer: a
+// partial version (`gcc@16`, `gcc@16.2`) is the newest RELEASE of the local
+// index that it is a prefix of, installed when it is not; a prerelease
+// (`17.0.0-20261108`) is selected only by its full key. They answered three
+// ways before -- the index's newest, the newest installed, and whatever the
+// payload manager kept active -- so `gcc@16` built with one version and was
+// installed as another. With no readable index (offline, or never synced) the
+// newest installed version answers, and the build says it did less.
+//
+// `installed` is the versions this home holds. Returns the version, or none
+// when neither the index nor the home has a match.
+export
+std::optional<std::string>
+resolve_toolchain_version(std::string_view requested,
+                          const std::vector<std::string>& indexed,
+                          const std::vector<std::string>& installed,
+                          std::string_view what = {})
+{
+    auto is_prerelease = [](std::string_view v) { return v.find('-') != std::string_view::npos; };
+    auto candidates = [&](const std::vector<std::string>& from) {
+        std::vector<std::string> out;
+        for (auto const& v : from)
+            if (v == requested || !is_prerelease(v)) out.push_back(v);
+        return out;
+    };
+    if (std::ranges::find(indexed, requested) != indexed.end()
+        || std::ranges::find(installed, requested) != installed.end())
+        return std::string(requested);
+    if (!indexed.empty()) return resolve_version_match(requested, candidates(indexed));
+    auto picked = resolve_version_match(requested, candidates(installed));
+    if (picked && !what.empty() && *picked != requested)
+        mcpp::diag::degraded("toolchain/resolution", std::format(
+            "{} was resolved among the installed versions to {}: the local index has no entry for it",
+            what, *picked),
+            "a newer release in the index, if there is one, is not considered",
+            "run `mcpp index update` with network, or state the full version");
+    return picked;
+}
+
+// The same, for a spec: its version resolved against this home's index and store.
+export
+mcpp::toolchain::ToolchainSpec
+resolve_toolchain_spec(const mcpp::config::GlobalConfig& cfg, const mcpp::toolchain::ToolchainSpec& spec)
+{
+    auto pkg = mcpp::toolchain::to_xim_package(spec);
+    if (pkg.ximName.empty()) return spec;
+    const auto store = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->store();
+    if (auto picked = resolve_toolchain_version(pkg.ximVersion,
+                                                list_available_xpkg_versions(cfg, pkg.ximName),
+                                                list_installed_versions(store, pkg.ximName),
+                                                spec.spec_str()))
+        return mcpp::toolchain::with_resolved_xim_version(spec, *picked);
+    return spec;
 }
 
 // ─── M4 #3: mcpp remove / mcpp update ───────────────────────────────────
@@ -390,7 +449,7 @@ void msvc_warn_if_sdk_missing(const mcpp::toolchain::msvc::MsvcInstallation& ins
         if (!choice.note.empty()) mcpp::ui::info("note", choice.note);
         return;
     }
-    mcpp::ui::warning(
+    mcpp::diag::warning("toolchain", 
         "the toolset installed, but no Windows SDK was found next to it.\n"
         "         cl.exe cannot compile anything without the ucrt/um headers.\n"
         "         The toolset declares `xim:windows-sdk` as a dependency, so this\n"
@@ -486,7 +545,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 // simply absent from `toolchain list` -- the reading the
                 // descriptor was added to prevent, in the one command a user
                 // runs to find out what is installed.
-                if (!bin) { mcpp::ui::warning(bin.error()); continue; }
+                if (!bin) { mcpp::diag::warning("toolchain", bin.error()); continue; }
                 if (bin->empty()) continue;
                 payloads.push_back({ *id, s.version, *bin, {entry.ns, entry.name, entry.version} });
             }
@@ -526,8 +585,9 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     };
 
     if (payloads.empty()) {
-        std::println("(no toolchains installed — run `mcpp toolchain install gcc 16.1.0` "
-                     "or just `mcpp build` to auto-install the default)");
+        std::println("(no toolchains installed — run `mcpp toolchain install {}` "
+                     "or just `mcpp build` to auto-install the default)",
+                     mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc));
     } else {
         if (!json) std::println("Toolchains:");
         for (auto& f : famvers) {
@@ -972,8 +1032,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // bootstrap, and an invalid spec should not report a bootstrap error)
         std::string pos0Eff = pos0;
         if (pos0Eff.empty() && !targetArg.empty()) {
-            // Family omitted: take the target's convention pin (gcc@16.1.0
-            // for musl / windows-gnu targets).
+            // Family omitted: take the target's convention pin (the row's
+            // provider's toolchain for musl / windows-gnu targets).
             if (auto t = mcpp::toolchain::triple::parse(targetArg)) {
                 if (auto* info = mcpp::toolchain::triple::find_known_target(*t);
                     info && !info->pin.empty())
@@ -984,7 +1044,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             pos0Eff, pos1);
         if (!spec) {
             mcpp::ui::error(std::format(
-                "{}; e.g. `mcpp toolchain install gcc 16.1.0`", spec.error()));
+                "{}; e.g. `mcpp toolchain install {}`", spec.error(),
+                mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc)));
             return 2;
         }
         mcpp::toolchain::print_compat_hint(*spec);
@@ -1022,16 +1083,10 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
-        // Partial-version resolution: `gcc 15` → highest available 15.x.y in
-        // the synced index. Empty version → latest of any major.
-        if (auto picked = resolve_version_match(
-                pkg.ximVersion, list_available_xpkg_versions(cfg, pkg.ximName))) {
-            if (*picked != pkg.ximVersion) {
-                mcpp::ui::info("Resolved",
-                    std::format("{} → {}@{}", spec->spec_str(),
-                                mcpp::toolchain::family_name(spec->family), *picked));
-            }
-            spec = mcpp::toolchain::with_resolved_xim_version(*spec, *picked);
+        // The one resolution of a request (resolve_toolchain_spec).
+        if (auto resolved = resolve_toolchain_spec(cfg, *spec); resolved.version != spec->version) {
+            mcpp::ui::info("Resolved", std::format("{} → {}", spec->spec_str(), resolved.spec_str()));
+            spec = resolved;
             pkg = mcpp::toolchain::to_xim_package(*spec);
         }
 
@@ -1142,6 +1197,9 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
                 }
         }   // a binding that cannot be resolved degrades, as on the build path
 
+        // Held from its install, before a build names it: the store's
+        // collection keeps what a root names (design 2026-11-22 §3.11).
+        mcpp::provider::roots::use_dirs({payload->root});
         mcpp::ui::status("Installed",
             std::format("{} → {}", pkg.display_spec(), bin.string()));
         if (cfg.defaultToolchain.empty()) {
@@ -1171,7 +1229,8 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
             pos0, pos1);
         if (!spec) {
             mcpp::ui::error(std::format(
-                "{}; e.g. `mcpp toolchain default gcc@16.1.0`", spec.error()));
+                "{}; e.g. `mcpp toolchain default {}`", spec.error(),
+                mcpp::toolchain::triple::pins::kFirstRunNoMsvc));
             return 2;
         }
         mcpp::toolchain::print_compat_hint(*spec);
@@ -1236,12 +1295,10 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
-        // Partial-version resolution against installed payloads.
-        if (auto picked = resolve_version_match(
-                pkg.ximVersion, list_installed_versions(pkgsDir, pkg.ximName))) {
-            spec = mcpp::toolchain::with_resolved_xim_version(*spec, *picked);
-            pkg = mcpp::toolchain::to_xim_package(*spec);
-        }
+        // The one resolution of a request (resolve_toolchain_spec): the same
+        // version `mcpp toolchain install` and a build select.
+        spec = resolve_toolchain_spec(cfg, *spec);
+        pkg = mcpp::toolchain::to_xim_package(*spec);
 
         auto installDir = mcpp::provider::open(xlEnv)->pinned(pkg.ximName, pkg.ximVersion);
         // A RESOLVABLE COMPILER, not a directory that exists. A removal that
@@ -1303,7 +1360,8 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
         auto parsedSpec = mcpp::toolchain::parse_toolchain_spec(pos0, pos1);
         if (!parsedSpec) {
             mcpp::ui::error(std::format(
-                "{}; e.g. `mcpp toolchain remove gcc 16.1.0`", parsedSpec.error()));
+                "{}; e.g. `mcpp toolchain remove {}`", parsedSpec.error(),
+                mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc)));
             return 2;
         }
         if (mcpp::toolchain::is_system_toolchain(*parsedSpec)) {
@@ -1364,7 +1422,7 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             def && def->family == parsedSpec->family
                 && def->version == parsedSpec->version
                 && def->target == parsedSpec->target) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("toolchain", std::format(
                 "default toolchain '{}' was just removed; consider `mcpp toolchain default <other>`",
                 spec));
         }

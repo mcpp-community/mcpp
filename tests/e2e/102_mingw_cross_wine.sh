@@ -64,7 +64,7 @@ ALIAS_TRIPLE=x86_64-w64-mingw32
 # ── build for the Windows PE target (canonical spelling) ────────────────────
 "$MCPP" build --target "$TRIPLE" > "$TMP/build.log" 2>&1 || {
     echo "cross build failed:"; cat "$TMP/build.log"; exit 1; }
-grep -q "Resolved gcc@16.1.0 → x86_64-windows-gnu" "$TMP/build.log" || {
+grep -q "Resolved gcc@16.2.0 → x86_64-windows-gnu" "$TMP/build.log" || {
     echo "missing canonical Resolved line:"; cat "$TMP/build.log"; exit 1; }
 
 # ── alias spelling: same canonical directory, no second toolchain ──────────

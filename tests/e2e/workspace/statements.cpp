@@ -34,7 +34,7 @@ std::vector<fs::path> graphs(const fs::path& root) {
     return out;
 }
 
-E2E statements{"statements", [] {
+E2E statements{"statements", s::home_fixture, [] {
     "836 a members own statements reach its build"_test = [] {
         // M1 a member whose tests import std is tested, from the root and from its directory;
         // M2 a member's unknown `mcpp:` capability is refused naming its manifest; M3 a member's

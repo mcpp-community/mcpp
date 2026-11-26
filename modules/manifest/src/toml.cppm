@@ -12,6 +12,7 @@ import mcpp.targetside;
 import std;
 import mcpp.invocation;
 import mcpp.source_kind;
+import mcpp.surface;
 import mcpp.libs.toml;
 import mcpp.toolchain.triple;
 import mcpp.pm.dep_spec;
@@ -471,6 +472,43 @@ read_local_toolchain(const mcpp::libs::toml::Value& val) {
     return lt;
 }
 
+// The companions a toolchain may state: the binutils GCC assembles and links
+// with. The kernel headers belong to the target's `kernel-abi` layer, not to
+// the toolchain.
+inline constexpr std::string_view kToolchainCompanions[] = { "binutils" };
+
+// One `[toolchain]` entry naming a managed toolchain by table:
+// `{ package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`.
+inline std::expected<std::pair<std::string, std::vector<Toolchain::Companion>>, std::string>
+read_package_toolchain(const mcpp::libs::toml::Value& val) {
+    std::pair<std::string, std::vector<Toolchain::Companion>> out;
+    for (auto const& [k, v] : val.as_table()) {
+        if (k == "package") {
+            if (!v.is_string() || v.as_string().empty())
+                return std::unexpected(std::string("`package` must be a managed spec such as \"gcc@16.2.0\""));
+            out.first = v.as_string();
+        } else if (k == "companions") {
+            if (!v.is_table())
+                return std::unexpected(std::string(
+                    "`companions` must be a table, e.g. `companions = { binutils = \"xim:binutils@2.47\" }`"));
+            for (auto const& [name, ref] : v.as_table()) {
+                if (std::ranges::find(kToolchainCompanions, std::string_view(name)) == std::end(kToolchainCompanions))
+                    return std::unexpected(std::format(
+                        "companions.{} is not a companion of a toolchain; the companion is binutils "
+                        "(kernel headers are the target's: [target.<triple>] layers = {{ kernel-abi = … }})", name));
+                if (!ref.is_string() || ref.as_string().find('@') == std::string::npos)
+                    return std::unexpected(std::format(
+                        "companions.{} must be a package with its version, e.g. \"xim:{}@<version>\"", name, name));
+                out.second.push_back({ name, ref.as_string() });
+            }
+        } else {
+            return std::unexpected(std::format(
+                "unknown key '{}'; a table naming a managed toolchain has `package` and `companions`", k));
+        }
+    }
+    return out;
+}
+
 // An entry's value, split into the part that names a version and the tier that
 // part belongs to.
 //
@@ -774,8 +812,8 @@ bool is_array_of_tables(const t::Value& v) {
 // A key as a TOML header has to spell it: bare when every character is one a
 // bare key admits, quoted otherwise. Messages name a conditional section with
 // it, so that the name a reader sees can be pasted back into a manifest:
-// `[target.'cfg(os = "android")'.dependencies]`, not
-// `[target.cfg(os = "android").dependencies]`, which does not parse.
+// `[target.'cfg(env = "android")'.dependencies]`, not
+// `[target.cfg(env = "android").dependencies]`, which does not parse.
 std::string toml_header_key(std::string_view key) {
     const bool bare = !key.empty() && std::ranges::all_of(key, [](char c) {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-';
@@ -1045,6 +1083,38 @@ namespace {
 std::expected<Manifest, ManifestError> parse_document(const t::Document& document,
                                                       const std::filesystem::path& origin,
                                                       LoadContext ctx);
+
+// Whether `at` holds `key` of the registry table `table` ("" for the table itself); a segment
+// `<sel>` or `<name>` matches each child table.
+bool declares(const t::Table& at, std::string_view table, std::string_view key) {
+    if (table.empty()) return key.empty() || at.find(key) != at.end();
+    const auto dot  = table.find('.');
+    const auto seg  = table.substr(0, dot);
+    const auto rest = dot == std::string_view::npos ? std::string_view{} : table.substr(dot + 1);
+    if (seg.starts_with('<')) {
+        for (auto const& [_, v] : at)
+            if (v.is_table() && declares(v.as_table(), rest, key)) return true;
+        return false;
+    }
+    auto it = at.find(seg);
+    return it != at.end() && it->second.is_table() && declares(it->second.as_table(), rest, key);
+}
+
+// The registry's keys a manifest states are the keys this invocation used: each is recorded
+// for the test run that asked (SPEC-017 P5.6 `exercise`, design 2026-11-20 §5.16). A key is
+// one item wherever it is written: under `[target.<sel>.build]` when it is conditional, under
+// `[workspace.<table>]` when it is shared.
+void record_declared_keys(const t::Document& doc) {
+    for (auto const& row : kKeyRegistry) {
+        const bool here = declares(doc.root(), row.table, row.key)
+            || (row.conditional && row.table == "build"
+                && declares(doc.root(), "target.<sel>.build", row.key))
+            || (row.shared && declares(doc.root(), std::format("workspace.{}", row.table), row.key));
+        if (here)
+            mcpp::surface::exercised(mcpp::surface::kKey, row.key.empty()
+                ? std::string(row.table) : std::format("{}.{}", row.table, row.key));
+    }
+}
 }
 
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
@@ -1056,6 +1126,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
     auto m = parse_document(*doc, origin, ctx);
     if (!m && m.error().line == 0) locate_named_key(m.error(), *doc);
+    if (m) record_declared_keys(*doc);
     return m;
 }
 
@@ -1347,6 +1418,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 pr.dependencyLinkage = it->second.as_string();
                 pr.dependencyLinkageDeclared = true;
             }
+            if (auto it = tt.find("dependency_debug"); it != tt.end() && it->second.is_bool()) {
+                pr.dependencyDebug = it->second.as_bool() ? "true" : "false";
+                pr.dependencyDebugDeclared = true;
+            } else if (it != tt.end() && it->second.is_string()) {
+                pr.dependencyDebug = it->second.as_string();
+                pr.dependencyDebugDeclared = true;
+            }
             read_list("cflags",   pr.cflags);
             read_list("cxxflags", pr.cxxflags);
             read_list("ldflags",  pr.ldflags);
@@ -1397,6 +1475,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 read_str_array(ft, "requires", reqs);
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
+                if (auto dit = ft.find("description"); dit != ft.end()) {
+                    if (!dit->second.is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "features.{}.description must be a string", fname)));
+                    m.featureDescriptions[fname] = dit->second.as_string();
+                }
                 // `requires_abi = { threads = true, exceptions = true }`:
                 // this feature needs the artefact's ABI switch(es) on. See
                 // Manifest::featureRequiresAbiThreads /
@@ -1524,6 +1608,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "device_extensions", "rule_module",
                     // mcpp#709: the host tools a feature makes available.
                     "tools",
+                    // mcpp#992: one line for a reader of the package's features.
+                    "description",
                 };
                 for (auto& [fkey, fignored] : fval.as_table()) {
                     (void)fignored;
@@ -2093,14 +2179,26 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     return std::unexpected(error(origin, std::format(
                         "targets.{}.main: {}", tname, msg)));
                 t.mainFrom = fit->second.as_string();
+            } else if (mit != tt.end() && mit->second.is_bool() && t.kind != Target::Entry) {
+                // `main = false` (mcpp#981): the image has no program start.
+                // Whether the row being built admits that is the plan's to
+                // decide; `true` states nothing a file does not.
+                if (mit->second.as_bool())
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.main = true states nothing: `main` is a file, "
+                        "`{{ from = \"<dependency>/<entry>\" }}`, or `false` for an image "
+                        "with no program start", tname)));
+                t.mainNone = true;
             } else if (t.kind == Target::Entry) {
                 return std::unexpected(error(origin, std::format(
                     "targets.{} (kind=entry) requires 'main', the file that is the "
                     "translation unit; `from` names another package's entry and an "
                     "entry is not one", tname)));
             } else {
-                return std::unexpected(error(origin,
-                    std::format("targets.{} (kind={}) requires 'main' field", tname, kind_s)));
+                return std::unexpected(error(origin, std::format(
+                    "targets.{} (kind={}) requires 'main' field: the file the program begins "
+                    "in, `{{ from = \"<dependency>/<entry>\" }}`, or `false` where the image "
+                    "has no program start", tname, kind_s)));
             }
             t.mainDeclaredBy = std::format("[targets.{}] main", tname);
         }
@@ -2372,6 +2470,15 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 "in [build] for the code that is this package's",
                 tname, !t.cflags.empty() ? "cflags" : !t.cxxflags.empty() ? "cxxflags" : "defines",
                 t.mainFrom)));
+        // `main = false` (mcpp#981): with no program start, the keys that
+        // describe one -- its entry symbol, its PE entry function, the flags of
+        // its translation unit -- would apply to nothing.
+        if (t.mainNone) {
+            if (auto key = beginning_key_of(t); !key.empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.{} describes the program start, and `main = false` states "
+                    "that the image has none", tname, key)));
+        }
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
         for (auto const& flag : t.cxxflags) {
@@ -2928,7 +3035,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     //
     // TWO NAMES, BECAUSE THEY ANSWER TWO QUESTIONS. `section` is the table's
     // name as a reader writes it, used in every message and recorded on each
-    // edge (`DependencySpec::declaredIn`): `target.'cfg(os = "android")'.
+    // edge (`DependencySpec::declaredIn`): `target.'cfg(env = "android")'.
     // dependencies` for a conditional table. `lookup` is the path the
     // explicit-namespace-table test builds (`is_namespace_table`), which a
     // conditional table has always resolved against `dependencies`; empty
@@ -3045,6 +3152,19 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.toolchain.bootstrapLine = static_cast<int>(val.position.line);
                 continue;
             }
+            // `{ package = "<spec>", companions = { … } }`: a managed spec
+            // and the companions that replace the ones its payload declares
+            // (SPEC-006 §2.9).
+            if (val.is_table() && val.as_table().contains("package")) {
+                auto stated = read_package_toolchain(val);
+                if (!stated) return std::unexpected(error(origin,
+                    std::format("[toolchain].{}: {}", platform, stated.error())));
+                m.toolchain.byPlatform[platform] = stated->first;
+                m.toolchain.lineByPlatform[platform] = static_cast<int>(val.position.line);
+                if (!stated->second.empty())
+                    m.toolchain.companionsByPlatform[platform] = std::move(stated->second);
+                continue;
+            }
             if (val.is_table()) {
                 auto lt = read_local_toolchain(val);
                 if (!lt) return std::unexpected(error(origin,
@@ -3112,6 +3232,22 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         }
     }
     if (auto v = doc->get_bool("build.allow_host_libs")) m.buildConfig.allowHostLibs = *v;
+    if (doc->contains("build.allow_host_tools")) {
+        auto v = doc->get_string_array("build.allow_host_tools");
+        if (!v) return std::unexpected(error(origin,
+            "[build].allow_host_tools must be a list of tool names, e.g. [\"ninja\", \"patchelf\"]"));
+        for (auto const& t : *v)
+            if (t != "ninja" && t != "patchelf")
+                return std::unexpected(error(origin, std::format(
+                    "[build].allow_host_tools: '{}' is not a bootstrap tool; the tools are ninja and patchelf", t)));
+        m.buildConfig.allowHostTools = *v;
+        m.buildConfig.allowHostToolsStated = true;
+    }
+    if (doc->contains("build.offline")) {
+        auto v = doc->get_bool("build.offline");
+        if (!v) return std::unexpected(error(origin, "[build].offline must be true or false"));
+        m.buildConfig.offline = *v;
+    }
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.defines"))  m.buildConfig.defines  = *v;
@@ -3198,6 +3334,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // the whole manifest unloadable. (A published package carrying an unknown
     // key must never break an older mcpp — same rule the dependency keys follow.)
     if (auto v = doc->get_string("build.bmi_schedule")) m.buildConfig.bmiSchedule = *v;
+    if (auto v = doc->get_string("build.memory_threshold")) m.buildConfig.memoryThreshold = *v;
+    else if (auto n = doc->get_int("build.memory_threshold")) m.buildConfig.memoryThreshold = std::to_string(*n);
     if (auto v = doc->get_string("build.private_fragment")) m.buildConfig.privateFragment = *v;
     if (auto v = doc->get_string("build.jobs")) m.buildConfig.jobs = *v;
     else if (auto n = doc->get_int("build.jobs")) m.buildConfig.jobs = std::to_string(*n);
@@ -3347,6 +3485,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "write it once", o->first, prev->second.key, k)));
             m.xlings.overrides.emplace(std::move(o->first), std::move(o->second));
         }
+    }
+    if (doc->contains("xlings.archives")) {
+        auto v = doc->get_string_array("xlings.archives");
+        if (!v) return std::unexpected(error(origin,
+            "[xlings].archives must be a list of directories, e.g. [\"vendor/archives\"]"));
+        m.xlings.archives = *v;
+        m.xlings.archivesStated = true;
     }
     if (doc->get("xlings.subos")) {
         m.xlings.subosDeclared = true;
@@ -4527,10 +4672,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         toml_header_key(triple), key, tables));
                     continue;
                 }
-                const std::span<const std::string_view> known = value.is_array()
-                    ? std::span<const std::string_view>(kKnownTargetArrays)
-                    : std::span<const std::string_view>(kKnownTargetScalars);
-                if (std::ranges::find(known, key) != known.end()) continue;
+                // A known key's type is its parse site's to check (above): the
+                // sweep asks the name. Asking by the value's type reported
+                // `runner = true`, a form the parser reads (2026.11.17.1), as an
+                // unsupported key, because a boolean is not an array.
+                if (std::ranges::find(kKnownTargetScalars, key) != std::end(kKnownTargetScalars)
+                    || std::ranges::find(kKnownTargetArrays, key) != std::end(kKnownTargetArrays))
+                    continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
                     "cxx_runtime, linkage, min_api_level, platform, run_under, runner, sysroot, "
@@ -4663,10 +4811,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 return std::unexpected(error(origin, std::format(
                                     "{} main: {}", header, msg)));
                             rowTarget.mainFrom = from;
+                        } else if (mit->second.is_bool() && !mit->second.as_bool()) {
+                            // mcpp#981: on this row the image has no program
+                            // start; the plan decides whether the row admits it.
+                            rowTarget.mainNone = true;
                         } else {
                             return std::unexpected(error(origin, std::format(
-                                "{} main is a file, or `{{ from = \"<dependency>/<entry>\" }}`",
-                                header)));
+                                "{} main is a file, `{{ from = \"<dependency>/<entry>\" }}`, or "
+                                "`false` for an image with no program start", header)));
                         }
                     }
                     if (auto sit = row.find("start"); sit != row.end()) {
@@ -4679,6 +4831,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 "{} start: {}", header, msg)));
                         rowTarget.start = sit->second.as_string();
                     }
+                    // mcpp#981: a row with no program start replaces the
+                    // target's beginning on that row, and with it what
+                    // [targets.<n>] states about that beginning; in the row
+                    // itself, `start` contradicts it.
+                    if (rowTarget.mainNone && rowTarget.start)
+                        return std::unexpected(error(origin, std::format(
+                            "{}: `main = false` states that the image has no program start, "
+                            "and `start` names the symbol one is entered at", header)));
                     rowTarget.beginningStatement = header;
                     auto kit = row.find("kind");
                     auto lit = row.find("linkage");
@@ -4725,13 +4885,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 "forms only, `lib` and `shared`", header, kindText)));
                         rowTarget.statesForm = true;
                         rowTarget.statement = std::format("{} kind = \"{}\"", header, kindText);
-                    } else if (!rowTarget.main && !rowTarget.mainFrom && !rowTarget.start) {
+                    } else if (!rowTarget.main && !rowTarget.mainFrom && !rowTarget.mainNone && !rowTarget.start) {
                         return std::unexpected(error(origin, std::format(
                             "{} must set `kind = \"lib\" | \"shared\"` or "
                             "`linkage = \"static\" | \"shared\"` for a library, or "
                             "`main` or `start` for a program or an entry", header)));
                     }
-                    if (rowTarget.statesForm && (rowTarget.main || rowTarget.mainFrom || rowTarget.start))
+                    if (rowTarget.statesForm && (rowTarget.main || rowTarget.mainFrom || rowTarget.mainNone
+                                                  || rowTarget.start))
                         return std::unexpected(error(origin, std::format(
                             "{} states a library's form and a program's beginning; a "
                             "target is one or the other", header)));
@@ -5863,7 +6024,7 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
                         "{}: '{}' is a library target, and `main` and `start` describe "
                         "the beginning of a program or an entry",
                         row.beginningStatement, name), path, 0, 0});
-                if (row.mainFrom && target->kind == Target::Entry)
+                if ((row.mainFrom || row.mainNone) && target->kind == Target::Entry)
                     return std::unexpected(ManifestError{std::format(
                         "{}: '{}' is an entry target, which is itself the translation "
                         "unit; its `main` names a file", row.beginningStatement, name),

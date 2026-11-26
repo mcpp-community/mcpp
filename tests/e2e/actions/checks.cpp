@@ -18,7 +18,7 @@ std::optional<fs::path> ninja_file(const fs::path& target) {
     return std::nullopt;
 }
 
-E2E checks{"checks", [] {
+E2E checks{"checks", s::home_fixture, [] {
     "313 check stamp on every platform"_test = [] {
         // A `role = "check"` whose command never touches its stamp, on every platform: the
         // engine writes the stamp (one), and a no-op rebuild does not run the check again.

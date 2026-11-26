@@ -1,5 +1,6 @@
 // Test programs that speak mtest's test protocol: their cases, live case records, the spec's
-// launch, capabilities, checks and output (formerly tests/e2e/1035, 1065 and 1070).
+// launch, capabilities, checks and output (formerly tests/e2e/1035, 1065 and 1070); run fixtures;
+// the time the kit gives a command within its case; a suite counted by its cases.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -28,7 +29,7 @@ std::vector<std::string> ids(const json& rec) {
 
 std::string generic(const fs::path& p) { return p.generic_string(); }
 
-E2E protocol{"protocol", [] {
+E2E protocol{"protocol", s::home_fixture, [] {
     "1035 a test program reports its cases"_test[s::gcc] = [] {
         // mcpp runs the runner's side of the mtest protocol, version 1; every other program is one
         // case judged by its exit status and is told none of the variables.
@@ -294,6 +295,15 @@ bool cases(std::ofstream& r, bool list, const std::set<std::string>& selected) {
     if (on("plain")) {
         std::println("written by plain");
         r << R"({"e":"begin","id":"plain","t":0})" << "\n";
+        r << R"({"e":"step","id":"plain","name":"mcpp build","t":1,"ms":5,"cpu_ms":4,"status":0,"build":"b1"})" << "\n";
+        r << R"({"e":"exercise","id":"plain","items":["flag build --target","command build"]})" << "\n";
+        r << R"({"e":"exercise","id":"plain","items":["command build"]})" << "\n";
+        // The level the run stated (P10.1): its processor time where it is `basic`.
+        const char* level = std::getenv("MTEST_MONITOR");
+        if (level && std::string_view(level) == "basic") {
+            r << R"({"e":"metric","id":"plain","name":"cpu.user","value":3,"unit":"ms"})" << "\n";
+            r << R"({"e":"metric","id":"plain","name":"cpu.sys","value":1,"unit":"ms"})" << "\n";
+        }
         r << R"({"e":"end","id":"plain","status":"pass","ms":0})" << "\n";
     }
     return on("stated");
@@ -340,16 +350,146 @@ bool cases(std::ofstream& r, bool list, const std::set<std::string>& selected) {
         expect(rec["cases"][0].value("output", "") == "said by the case\n" || rec["cases"][0].value("output", "") == "said by the case")
             << "the case's stated output: " << rec["cases"][0].dump();
         expect(!rec["cases"][1].contains("output")) << "the output of a program of two cases was divided";
+        // P5.6 (SPEC-017 2.5): the steps in order, the items once each and sorted, and the case's
+        // processor time from the metrics of the `basic` level the run stated (P10.1).
+        const auto& plain = rec["cases"][1];
+        expect(plain["steps"] == json::parse(R"([{"name":"mcpp build","t":1.0,"ms":5.0,"cpu_ms":4.0,"status":0,"build":"b1"}])"))
+            << plain.dump();
+        expect(plain["exercised"] == json::parse(R"(["command build","flag build --target"])")) << plain.dump();
+        expect(plain.value("cpu_ms", 0.0) == 4.0) << "the case's processor time: " << plain.dump();
         bool kept = false;
         for (const auto& f : s::glob(t.at("app/target/mtest/runs"), "*/cases.ndjson")) {
             const auto c = s::read_file(f);
             kept = kept || c.contains(R"("checks":{"failed":1,"held":4})") || c.contains(R"("checks":{"held":4,"failed":1})");
         }
         expect(kept) << "the kept run has no checks";
+        // P12.4: the machine the run was on, and the level it stated.
+        const auto index = s::json_lines(s::read_file(t.at("app/target/mtest/index.ndjson")));
+        expect(fatal(!index.empty()));
+        expect(!index.back().value("machine", "").empty() && index.back().value("processors", 0) > 0
+               && index.back().value("monitor", "") == "basic") << index.back().dump();
         // O8: one case run alone.
         auto one = app({"test", "--case", "plain", "--message-format", "json"});
         expect(fatal(e2e::succeeded(one)));
         expect(e2e::contains(record(one.out, "t")["cases"][0].value("output", ""), "written by plain"));
+    };
+
+    "293 a run fixture is served once, before its first user and until its last"_test[s::gcc] = [] {
+        // SPEC-017 P11 (design 2026-11-20 §5.10): the program that declares the fixture serves it
+        // under MTEST_SERVE; both programs whose cases use it receive its endpoint; it ends after
+        // them; its preparation is its own row. A fixture that is not ready is the machine's
+        // failure: its users do not run, and the store says `infra` (P11.4).
+        const auto root = s::case_dir() / "t";
+        s::project t(root, {{"fw/mcpp.toml", R"([package]
+name    = "fw"
+version = "0.1.0"
+
+[targets.main]
+kind          = "entry"
+main          = "src/main.cpp"
+test-protocol = 1
+test-main     = true
+)"},
+                            {"fw/src/main.cpp", std::format(R"CPP(import std;
+extern std::string case_id();
+int main() {{
+    const std::filesystem::path root{{"{}"}};
+    if (const char* serve = std::getenv("MTEST_SERVE")) {{
+        if (std::getenv("MTEST_PROTOCOL") || std::getenv("MTEST_REPORT")) return 5;
+        std::ofstream(root / "served.txt", std::ios::app) << serve << "\n";
+        if (std::filesystem::exists(root / "not-ready")) return 3;
+        std::filesystem::create_directories(root / "home");
+        std::cout << "mtest-ready " << (root / "home").generic_string() << std::endl;
+        for (std::string line; std::getline(std::cin, line);) {{}}
+        std::ofstream(root / "ended.txt") << "ended\n";
+        return 0;
+    }}
+    const char* path = std::getenv("MTEST_REPORT");
+    if (!path) return 4;
+    std::ofstream r(path, std::ios::app);
+    const auto id = case_id();
+    r << R"({{"e":"program","protocol":1,"level":1,"framework":"fw","version":"0.1.0"}})" << "\n";
+    if (std::string_view(std::getenv("MTEST_MODE")) == "list") {{
+        r << R"({{"e":"component","fixture":"home","scope":"run"}})" << "\n";
+        r << std::format(R"({{{{"e":"case","id":"{{}}","name":"{{}}","file":"{{}}.cpp","line":1,"uses":["home"]}}}})", id, id, id) << "\n";
+    }} else {{
+        r << std::format(R"({{{{"e":"begin","id":"{{}}","t":0}}}})", id) << "\n";
+        const char* home = std::getenv("MTEST_FIXTURE_HOME");
+        const bool ok = home && std::filesystem::path(home) == root / "home"
+                     && !std::filesystem::exists(root / "ended.txt");
+        if (ok) std::ofstream(root / "home" / "users.txt", std::ios::app) << id << "\n";
+        r << std::format(R"({{{{"e":"end","id":"{{}}","status":"{{}}","ms":0}}}})", id, ok ? "pass" : "fail") << "\n";
+    }}
+    r << R"({{"e":"done","status":"pass","counts":{{}}}})" << "\n";
+    return 0;
+}}
+)CPP", generic(root))},
+                            {"app/tests/a.cpp", "import std;\nstd::string case_id() { return \"a\"; }\n"},
+                            {"app/tests/b.cpp", "import std;\nstd::string case_id() { return \"b\"; }\n"}});
+        t.write("app/mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\nfw = {{ path = \"{}\" }}\n",
+                                              generic(t.at("fw"))));
+        auto r = t.mcpp_in("app", {"test", "--message-format", "json"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(eq(s::read_file(root / "served.txt"), std::string("home\n"))) << "the fixture is served once";
+        expect(fs::exists(root / "ended.txt")) << "the fixture ended after its last user";
+        const auto users = s::read_file(root / "home" / "users.txt");
+        expect(users.contains("a\n") && users.contains("b\n")) << users;
+        const auto fixtures = s::glob(t.at("app/target/mtest/runs"), "*/fixtures.ndjson");
+        expect(fatal(eq(fixtures.size(), std::size_t{1})));
+        const auto rows = s::json_lines(s::read_file(fixtures.front()));
+        expect(fatal(eq(rows.size(), std::size_t{1})));
+        expect(rows[0]["name"] == "home" && rows[0]["status"] == "ready"
+               && rows[0]["ready_ms"].get<long long>() >= rows[0]["started_ms"].get<long long>()
+               && rows[0]["ended_ms"].get<long long>() >= rows[0]["ready_ms"].get<long long>()) << rows[0].dump();
+        // P11.4
+        std::ofstream(root / "not-ready").put('\n');
+        fs::remove(root / "ended.txt");
+        auto nr = t.mcpp_in("app", {"test"});
+        expect(nr.started && nr.status != 0) << "a run whose fixture was not ready passed";
+        expect(e2e::contains(s::text(nr), "the run fixture home ended before it was ready")) << s::text(nr);
+        bool infra = false;
+        for (const auto& f : s::glob(t.at("app/target/mtest/runs"), "*/programs.ndjson"))
+            for (const auto& p : s::json_lines(s::read_file(f)))
+                infra = infra || (p.value("status", "") == "infra" && p["fixtures"] == json::parse(R"(["home"])"));
+        expect(infra) << "no program's record says infra";
+    };
+
+    "1141 a command of the kit has the time its case has left"_test[timeout{std::chrono::minutes{45}}] = [] {
+        // Design 2026-11-20 §5.8 (K1): a command that states no time takes what its case has left
+        // of the time its scopes state, not ten minutes below it; a command that states one keeps
+        // it. The case states 45 minutes, so a command composed at its start has more than 44.
+        const auto cwd = s::case_dir();
+        const auto left = s::mcpp_command({"--version"}, cwd).timeout;
+        expect(fatal(left > std::chrono::minutes{44} && left <= std::chrono::minutes{45})) << "the command's time is " << left.count() << " ms";
+        expect(fatal(s::mcpp_command({"--version"}, cwd, {.timeout = std::chrono::seconds{60}}).timeout == std::chrono::seconds{60}));
+        expect(fatal(e2e::succeeded(s::mcpp({"--version"}, cwd))));
+    };
+
+    "1142 a command of the kit takes ten minutes where no scope states a time"_test = [] {
+        // Where neither the case nor a scope around it states a time, the runner's limit would end
+        // the program without the case's report of a hung command: ten minutes bound it.
+        expect(fatal(s::mcpp_command({"--version"}, s::case_dir()).timeout == std::chrono::minutes{10}));
+    };
+
+    "1143 a suite is told by its cases on the program's line and in the summary"_test = [] {
+        // An mtest program of one suite of two cases and one case alone reports four cases, the
+        // suite among them; the suite is told by its cases, so the program's line and the run's
+        // summary both count three (an mtest program of one suite and seven cases read `8 cases`
+        // on its line and `7 passed` in the summary, 2026.11.21.1).
+        auto p = s::project::scaffold("suites");
+        for (const auto& f : s::glob(p.at("tests"), "*.cpp")) fs::remove(f);
+        p.write("tests/cases.cpp", R"(import mcpplibs.mtest;
+using namespace mcpplibs::mtest;
+UTest suite{"suite", [] {
+    "first"_test = [] { expect(eq(1, 1)); };
+    "second"_test = [] { expect(eq(2, 2)); };
+}};
+UTest alone{"alone", [] { expect(eq(3, 3)); }};
+)");
+        auto r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::has_line(s::text(r), R"(cases \.\.\. ok \([0-9.]+s, 3 cases\))")) << "the program's line counts the suite: " << s::text(r);
+        expect(e2e::contains(s::text(r), "cases: 3 passed, 0 failed, 0 skipped")) << s::text(r);
     };
 }};
 

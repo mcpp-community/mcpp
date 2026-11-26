@@ -166,7 +166,8 @@ pip install mcpp-bin
 
 ```bash
 nix run github:mcpp-community/nix-mcpp -- --version      # 试用
-nix profile install github:mcpp-community/nix-mcpp       # 安装
+nix profile add github:mcpp-community/nix-mcpp           # 安装（Nix 2.30 起）
+nix profile install github:mcpp-community/nix-mcpp       # 同上，Nix 2.30 之前
 ```
 
 [`mcpp-community/nix-mcpp`](https://github.com/mcpp-community/nix-mcpp) 中的 flake 打包的是同一份预编译 release 二进制，支持 Linux x86_64 / aarch64 与 Apple 芯片上的 macOS，并跟随每个稳定版更新。它的 overlay 提供 `pkgs.mcpp-bin`，因为 nixpkgs 中的 `mcpp` 是一个无关的 C 预处理器。每个用户的数据仍在各自的 `~/.mcpp/` 中。
@@ -393,6 +394,7 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `aarch64-linux-musl`  | gcc 16，全静态；从 x86_64 交叉编译（qemu）或原生构建 | verified |
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64；Windows 上原生构建，Linux 上交叉编译（wine）（*无 Visual Studio 时的 Windows 默认*） | verified |
 | `x86_64-windows-msvc` | `msvc@system`（探测 VS/BuildTools）或 llvm ¹（*有 Visual Studio 时的 Windows 默认*） | verified |
+| `i686-windows-msvc` | `msvc@system` 或 llvm ¹；32 位 x86，在 x86_64 Windows 上由 WOW64 运行 | preview |
 | `x86_64-windows-musl` | llvm 23；带 musl C 库的 PE，gcc 无法产出；系统部分由依赖图提供 | preview |
 | `aarch64-macos`       | llvm（*macOS 默认*） | verified |
 | `aarch64-macos-musl` · `x86_64-macos-musl` | llvm 23；带 musl C 库的 Mach-O，系统部分由依赖图提供，任意宿主可构建（*非 macOS 宿主上的 `aarch64-macos`*） | preview |
@@ -406,7 +408,8 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `aarch64-windows-gnu` | llvm 23 加 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧）；任意宿主可构建；没有 gcc 载荷之处同一基座也服务 `x86_64-windows-gnu` | preview |
 | `x86_64-freebsd` · `aarch64-freebsd` | 服务它们的平台，基于 `xim:<arch>-freebsd-sysroot`（[22](docs/zh/22-target-side.md)） | preview |
 | `x86_64-freebsd-musl` · `aarch64-freebsd-musl` | llvm 23；openkal-freebsd 之上带 musl C 库的静态 FreeBSD 程序，任意宿主可构建 *（未选平台时 `<arch>-freebsd` 即此身份）* | preview |
-| `riscv64-linux-musl` · `x86_64-macos` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
+| `riscv64-linux-musl` | gcc 16 musl 交叉工具链，宿主为 Linux x86_64；`mcpp run` 经 qemu-user（`xim:qemu-user-riscv64`）启动 | preview |
+| `x86_64-macos` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
 | `x86_64-openkal` · `aarch64-openkal` | llvm 23；ok 映像：每种架构一个产物，由 `okrun` 在 Linux、macOS 与 Windows 上运行；映像内的 C 库与 C++ 运行时是包（[24](docs/zh/24-openkal-cross.md)） | verified |
 | `wasm32-emscripten` | `emsdk@6.0.9`；Emscripten 自带 sysroot 与 libc++ 模块接口；`mcpp run` 使用 payload 声明的 `node`（`xim:node`）运行模块，不使用 PATH 上的 `node` | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370`；bionic 来自 NDK，一个 payload 服务两个 ABI；已在 API 24 的 x86_64 模拟器镜像上运行 | verified |

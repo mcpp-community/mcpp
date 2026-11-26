@@ -42,7 +42,7 @@ std::string renamed_asio(std::string_view ns, std::string_view name) {
     return out;
 }
 
-E2E names{"names", [] {
+E2E names{"names", s::home_fixture, [] {
     "161 xpkg name form"_test = [] {
         // SPEC-001 §3.2: `package.name` is a single atomic segment; the hierarchy belongs in
         // `package.namespace` (the legacy fully qualified `compat.zlib` keeps working). A dotted
@@ -81,11 +81,12 @@ E2E names{"names", [] {
         // INV-RESOLVE (#278): a bare name resolves in exactly one place (mcpplibs; compat during
         // the migration window, with a warning naming the exact replacement); every other
         // namespace is written out; a refused add writes nothing and names what exists.
-        s::project p{{"idx/pkgs/a/acme.widget.lua", descriptor("acme", "acme.widget", "1.0.0")},
-                     {"idx/pkgs/c/compat.gadget.lua", descriptor("compat", "gadget", "2.0.0")},
+        // One directory per index name: a location under two names is refused (SPEC-004 §9).
+        s::project p{{"idx-acme/pkgs/a/acme.widget.lua", descriptor("acme", "acme.widget", "1.0.0")},
+                     {"idx-compat/pkgs/c/compat.gadget.lua", descriptor("compat", "gadget", "2.0.0")},
                      {"app/src/main.cpp", "int main() { return 0; }\n"}};
         auto write_manifest = [&](std::string_view deps) {
-            p.write("app/mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"../idx\" }}\ncompat = {{ path = \"../idx\" }}\n{}\n", deps));
+            p.write("app/mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"../idx-acme\" }}\ncompat = {{ path = \"../idx-compat\" }}\n{}\n", deps));
         };
         auto build = [&] { return p.mcpp_in("app", {"build"}); };
         write_manifest("[dependencies]\nwidget = \"1.0.0\"");

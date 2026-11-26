@@ -30,39 +30,49 @@ printf 'extern "C" int main(int, char**, char**) { return 0; }\n' > src/main.cpp
 
 json_for() { "$MCPP" why toolchain --target "$1" --format json 2>/dev/null; }
 
-# ── Half one: a registered-but-planned family ────────────────────────────
+# ── Half one: registered families ─────────────────────────────────────────
+# `riscv64-linux`, whose one row is riscv64-linux-musl (preview since the row
+# was measured), resolves to that row; whatever the answer is, it is not
+# `unknown-target` and it quotes no triple the reader never typed.
 j="$(json_for riscv64-linux)"
 reason="$(printf '%s' "$j" | jq -r '.data.reason // "-"' | tr -d '\r')"
-msg="$(printf '%s' "$j" | jq -r '.diagnostics[].message' | tr -d '\r')"
+msg="$(printf '%s' "$j" | jq -r '.diagnostics[]?.message' | tr -d '\r')"
 
-if [ "$reason" != tier-planned ]; then
-    echo "FAIL: riscv64-linux refused as '$reason', expected tier-planned"
+if [ "$reason" = unknown-target ] || [ "$reason" = tier-planned ]; then
+    echo "FAIL: riscv64-linux refused as '$reason'"
     printf '%s\n' "$msg" | sed 's/^/        /'
     exit 1
 fi
-echo "  ok  a registered family refuses as planned, not as unknown"
-
-# AND THE MESSAGE NAMES A ROW THAT EXISTS. Telling someone their target is
-# planned is only actionable once they can see which spelling is the registered
-# one — the same rule that made `x86_64-linux` have to work before the
-# name/fact warning was worth printing.
-if printf '%s\n' "$msg" | grep -q 'riscv64-linux-musl'; then
-    echo "  ok  and it names the row that exists"
-else
-    echo "FAIL: the refusal does not name riscv64-linux-musl"
-    printf '%s\n' "$msg" | sed 's/^/        /'
-    exit 1
-fi
+echo "  ok  a registered family is not refused as unknown"
 
 # AND IT DOES NOT QUOTE A TRIPLE THE READER NEVER TYPED. The old message was
 # about `riscv64-linux-gnu`, a string that appears nowhere in the command and
 # nowhere in the vocabulary.
 if printf '%s\n' "$msg" | grep -q 'riscv64-linux-gnu'; then
-    echo "FAIL: the refusal quotes 'riscv64-linux-gnu', which the reader never wrote"
+    echo "FAIL: the answer quotes 'riscv64-linux-gnu', which the reader never wrote"
     printf '%s\n' "$msg" | sed 's/^/        /'
     exit 1
 fi
 echo "  ok  and it does not quote a triple nobody wrote"
+
+# A family whose rows are planned (`i686-linux`) refuses as planned, and the
+# message names the row the request resolves to: telling someone their target
+# is planned is only actionable once they can see which spelling is registered.
+jp="$(json_for i686-linux)"
+reasonp="$(printf '%s' "$jp" | jq -r '.data.reason // "-"' | tr -d '\r')"
+msgp="$(printf '%s' "$jp" | jq -r '.diagnostics[]?.message' | tr -d '\r')"
+if [ "$reasonp" != tier-planned ]; then
+    echo "FAIL: i686-linux refused as '$reasonp', expected tier-planned"
+    printf '%s\n' "$msgp" | sed 's/^/        /'
+    exit 1
+fi
+if printf '%s\n' "$msgp" | grep -q 'i686-linux-gnu'; then
+    echo "  ok  a planned family refuses as planned and names its row"
+else
+    echo "FAIL: the refusal does not name i686-linux-gnu"
+    printf '%s\n' "$msgp" | sed 's/^/        /'
+    exit 1
+fi
 
 # ── Half two: a genuine typo is still unknown, and now carries its code ──
 j2="$(json_for x86_64-linux-mus)"

@@ -57,7 +57,7 @@ void placed_and_closed(const fs::path& image, std::string_view address) {
     expect(fatal(s::count_matching(undefined, R"(\S)") == 0)) << "the image expects symbols nothing provides: " << undefined;
 }
 
-E2E rows{"rows", [] {
+E2E rows{"rows", s::home_fixture, [] {
     "136 aarch64 zero libc target"_test[s::llvm] = [] {
         // A the row builds with no C library anywhere in the project; B the image is aarch64 and
         // starts where the script says; C nothing is undefined; D the ABI flag is the measured

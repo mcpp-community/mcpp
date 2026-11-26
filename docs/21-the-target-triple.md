@@ -106,7 +106,7 @@ what every `else` branch in the tree assumes. So the format is now one answer:
 |---|---|
 | `x86_64-linux-gnu`, `aarch64-linux-android`, `riscv64-none-elf`, `x86_64-openkal` | ELF |
 | `aarch64-macos`, `aarch64-ios` | Mach-O |
-| `x86_64-windows-gnu`, `x86_64-windows-msvc` | PE |
+| `x86_64-windows-gnu`, `x86_64-windows-msvc`, `i686-windows-msvc` | PE |
 | `wasm32-emscripten` | wasm |
 
 It is **not** the same question as "is there an operating system to link
@@ -132,12 +132,14 @@ spec sets `exe_suffix: ".js"`.
 | `lib` | `lib/lib<name>.a` | — |
 | `shared` | refused, naming `-sSIDE_MODULE` | a wasm side module needs a link contract mcpp does not render |
 
-`--no-entry` is not a switch mcpp interprets. It is an ordinary
-`[target.'cfg(os = "emscripten")'.build] ldflags` entry, and `main` keeps
-naming a translation unit as it does on every other row — so a modularised
-Web program whose page calls an exported factory is a `bin` target whose
-`main` file defines no `main()`, linked with `--no-entry` on its own `ldflags`
-line.
+A modularised Web program whose page calls an exported factory has no
+program start: it states `main = false` on the Web row (2026.11.20.1+), and
+mcpp links it with `--no-entry`, the row's `link-without-main`
+([04 — `main = false`](04-mcpp-toml.md)). `-sMODULARIZE`,
+`-sEXPORT_NAME` and `-sEXPORTED_FUNCTIONS` stay ordinary
+`[target.'cfg(os = "emscripten")'.build] ldflags` entries; mcpp does not
+interpret `ldflags`, so a `main` file that defines no `main()` linked with
+`--no-entry` on its own `ldflags` line builds the same module.
 
 The runner that executes `bin/<name>.js` comes from the payload descriptor
 (`.mcpp-toolchain.json`), the project's `[target.<triple>] runner`, or a
@@ -210,7 +212,7 @@ this mcpp builds. The environment is completed as above (`linux` is
 | Set | Members (2026.10.30.1, openkal-platform 0.18.0) |
 |---|---|
 | `openkal` | `x86_64-openkal`, `aarch64-openkal` |
-| `linux-musl` | `x86_64-linux-musl`, `aarch64-linux-musl` |
+| `linux-musl` | `x86_64-linux-musl`, `aarch64-linux-musl`, `riscv64-linux-musl` |
 | `linux` | `x86_64-linux-gnu`, `aarch64-linux-gnu` |
 
 Every member must select the same platform; a set whose members select
@@ -288,6 +290,20 @@ aarch64-macos      →  aarch64-unknown-macos
 
 A three-field spelling is a four-field one with a field elided, and which field
 was elided follows from what parses.
+
+The vendor field is any word (2026.11.21.1+), as GNU `config.sub` reads it: the
+field after the architecture, when a system field follows, names whoever built
+the compiler. A distribution's compiler reports its own (`x86_64-redhat-linux`,
+`x86_64-suse-linux`), and that is `x86_64-linux-gnu`. The fields after it are
+read strictly. A compiler named by path whose target mcpp cannot read is
+reported as a degradation (`toolchain/triple`): the settings that follow the
+target are not applied to that build.
+
+A compiler's version is the one its driver states for machines: GCC's
+`-dumpfullversion` (GCC 7 and later, else `-dumpversion`) and clang's
+`-dumpversion`. The `--version` banner names the family; a distribution's banner
+ends in its own release number (`(Red Hat 16.2.1-3)`), which is not the
+compiler's version.
 
 ### GCC and clang do not select targets the same way
 
@@ -529,12 +545,13 @@ provider's runner ([41](41-devices.md)).
 | `aarch64-linux-gnu` | preview | `llvm@23.1.3` | base package | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
-| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `riscv64-linux-musl` | preview | `gcc@16.1.0` | payload | — | — | — |
 | `i686-linux-musl`, `i686-linux-gnu` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | base | payload |
 | `aarch64-windows-gnu` | preview | `llvm@23.1.3` | base | base | base | base |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | graph | graph | graph | payload |
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
+| `i686-windows-msvc` | preview | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
 | `aarch64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
@@ -583,6 +600,7 @@ vocabulary, nothing wired yet.
 | `*-freebsd` | every host, through a platform | the rows are built-in; a platform names each identity's FreeBSD base package (`xim:x86_64-freebsd-sysroot`, `xim:aarch64-freebsd-sysroot`) and is selected with `[target.<row>] platform`, or by any selector the row meets (`[target.freebsd]`, `cfg(os = "freebsd")`); another platform package's provider does not compete with the chosen platform |
 | `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.28.0): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
+| `i686-windows-msvc` | Windows | the same; x86_64 Windows runs the programs (WOW64), and under clang 23 its `import std` builds at C++20 only ([20](20-toolchains.md)) |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
 | `*-none-elf` | every host | clang and lld are cross-compilers by construction |

@@ -638,6 +638,36 @@ own resolution, say — use `--mode vendored` instead. It repoints `PT_INTERP`
 at the host loader, at the cost of requiring the host's glibc to be at least
 as new as the one the artifact was built against.
 
+### What the build deploys beside the program (2026.11.23.1+)
+
+A file that `[runtime] deploy`, `deploy_files` or a build program's `mcpp::deploy` places beside
+the program is staged at the same path below `bin/`. When that file is an object of the program's
+own format and machine (a plugin the program loads at run time, a helper program it starts, or,
+under `--all-programs`, another program of the package), it is a root of the runtime closure as
+the program is. The libraries it needs are carried by the same mode rules, including the ones the
+program itself does not link (mcpp#1011):
+
+| Format | Resolution of a deployed object's needs | Staging location |
+|---|---|---|
+| ELF, this machine's | a shared object is preloaded into the program's loader trace (`LD_PRELOAD`), so its names resolve in the program's process, as a `dlopen` from the program resolves them; a deployed program is traced as the program is | `lib/`; the object's search path becomes `$ORIGIN/<path to lib/>` |
+| ELF, another system | its `DT_NEEDED`, by the rule of the program (beside it, or in `../lib`) | `lib/` |
+| PE | its import table, in the program's search directories | beside the program, where the loader searches for a loaded DLL's imports |
+| Mach-O | its load commands; `@rpath` through its own rpaths and then the program's | as for the program's own dylibs |
+| Android | its `DT_NEEDED`, in the leg's directories | the leg's `lib/<abi>/` |
+
+```
+target/dist/viewer-0.1.0-x86_64-linux-gnu/
+├── bin/viewer
+├── bin/platforms/libqxcb.so     ← deployed; RUNPATH=$ORIGIN/../../lib
+└── lib/libQt6XcbQpa.so.6        ← needed only by the plugin
+```
+
+A deployed file of another format is a file the program opens and has no closure. A program with
+no loader (a static program) loads no object into its process, so its deployed objects are not
+roots. `LD_PRELOAD` separates its entries by `:` and white space, so an object whose path below the
+program's directory holds one of them cannot be traced; the pack names it rather than shipping it
+without its libraries.
+
 ### WebAssembly (`wasm32-emscripten`): the stem family
 
 ```
@@ -725,6 +755,13 @@ The reverse direction — packing a Linux artifact *from* Windows — still does
 not work: an ELF program's closure is resolved by the target's own dynamic
 linker, which a Windows host has no way to run. A Mach-O program's closure is
 read from the file, so a macOS program packs from any host.
+
+A program whose format is none of the three (a DJGPP program is COFF under a
+go32 stub) has a closure only when it is linked statically: then it has none,
+and the default mode packs it. The row's linkage is the one its provider
+states, a provider of a platform package included (`linkage = "static"` in
+`[[platform.provider]]`). A dynamic program of such a format is refused, and
+the refusal names the format.
 
 ### macOS (Mach-O): the dylibs beside the program
 

@@ -57,6 +57,17 @@ struct ElfRuntimeFacts {
     std::vector<std::string> definedGlibcVersions;
     std::filesystem::path resolvedLibc;
     std::vector<std::filesystem::path> resolvedObjects;
+    // The DT_RPATH entries of the objects that loaded this one, on its first
+    // arrival in a closure walk: what the loader adds to its own search when
+    // it carries no DT_RUNPATH. Empty for the walk's artifact.
+    std::vector<std::string> inheritedRpaths;
+    // The directory `$ORIGIN` names in this object's search paths: that of the
+    // path the loader opened it by, which glibc does not resolve through a
+    // link. Empty for the walk's artifact, whose own directory it is. Measured
+    // with a farm of links (compat.curand): `libcurand.so.10`, reached as a
+    // link in the farm, found its `libgcc_s.so.1` in the farm by `$ORIGIN`,
+    // while a model that expanded `$ORIGIN` at the link's target refused it.
+    std::filesystem::path origin;
 
     // "Is this an executable" is PT_INTERP, not ET_EXEC: a PIE executable is
     // ET_DYN and therefore indistinguishable from a shared library by type
@@ -242,6 +253,24 @@ RuntimeVerdict validate_runtime_artifact(
     const mcpp::runtime::RuntimeBinding& binding,
     const RuntimeResolution& resolution,
     bool hostLibsAllowed = false);
+
+// A LIBRARY LOADED BY `dlopen` IS LOOKED UP FROM THE OBJECT THAT LOADS IT
+// (design 2026-11-21, offline and toolchain defaults §3.10). `soname` is
+// required by a package whose shared objects are in `originDirs`; the objects
+// of `resolution` there load it, or the executable when the closure holds none
+// of them. A SONAME already in the closure is the loaded object and answers.
+// Returns the object that cannot reach it and the directories it searches, or
+// none when every origin reaches it.
+struct DlopenUnreachable {
+    std::filesystem::path              object;
+    std::vector<std::filesystem::path> searched;
+};
+std::optional<DlopenUnreachable> dlopen_unreachable(
+    const RuntimeResolution& resolution,
+    const mcpp::runtime::RuntimeBinding& binding,
+    std::span<const std::filesystem::path> additionalSearchDirs,
+    std::string_view soname,
+    std::span<const std::filesystem::path> originDirs);
 
 // THE SURFACE NOTHING ELSE WALKS.
 //
@@ -471,9 +500,9 @@ std::string canonical_text(const std::filesystem::path& path) {
     return comparable_path(path).generic_string();
 }
 
-std::string expand_origin(std::string value,
-                          const std::filesystem::path& object) {
-    const auto origin = object.parent_path().generic_string();
+std::string expand_origin(std::string value, const ElfRuntimeFacts& object) {
+    const auto origin = (object.origin.empty() ? object.artifact.parent_path() : object.origin)
+                            .generic_string();
     for (auto token : {std::string_view("${ORIGIN}"), std::string_view("$ORIGIN")}) {
         for (auto pos = value.find(token); pos != std::string::npos;
              pos = value.find(token, pos + origin.size()))
@@ -506,25 +535,23 @@ std::vector<std::filesystem::path> host_library_dirs() {
     return out;
 }
 
-std::optional<std::filesystem::path> resolve_needed(
-    std::string_view soname,
+// THE DIRECTORIES THE LOADER SEARCHES FOR A LIBRARY `requester` LOADS, by
+// DT_NEEDED or by `dlopen` (glibc's rule, design 2026-11-21, offline and
+// toolchain defaults §3.10): its DT_RUNPATH when it has one, else its own
+// DT_RPATH and those of the objects that loaded it; then the loader's own
+// directories. `additionalSearchDirs` are entries of the executable's DT_RPATH
+// the plan states (the SubOS farm), so an object with DT_RUNPATH does not see
+// them either: measured with two minimal objects, a library carrying
+// DT_RUNPATH does not find, by `dlopen`, a library only the executable's
+// DT_RPATH names, and finds it without DT_RUNPATH.
+std::vector<std::filesystem::path> search_dirs_of(
     const ElfRuntimeFacts& requester,
     const mcpp::runtime::RuntimeBinding& binding,
     std::span<const std::filesystem::path> additionalSearchDirs,
     std::span<const std::string> inheritedRpaths) {
-    std::filesystem::path named(soname);
-    std::error_code ec;
-    if (named.has_parent_path()) {
-        auto candidate = named.is_absolute()
-            ? named : requester.artifact.parent_path() / named;
-        if (std::filesystem::is_regular_file(candidate, ec))
-            return comparable_path(candidate);
-        return std::nullopt;
-    }
-
     std::vector<std::filesystem::path> dirs;
     for (auto const& raw : requester.runpaths)
-        append_unique_path(dirs, expand_origin(raw, requester.artifact));
+        append_unique_path(dirs, expand_origin(raw, requester));
     // DT_RPATH IS INHERITED DOWN THE DEPENDENCY CHAIN; DT_RUNPATH IS NOT.
     //
     // The loader searches the DT_RPATH of every object on the chain that
@@ -544,8 +571,11 @@ std::optional<std::filesystem::path> resolve_needed(
     if (requester.searchPathTag != SearchPathTag::Runpath
         && requester.searchPathTag != SearchPathTag::Both)
         for (auto const& raw : inheritedRpaths)
-            append_unique_path(dirs, expand_origin(raw, requester.artifact));
-    for (auto const& dir : additionalSearchDirs) append_unique_path(dirs, dir);
+            append_unique_path(dirs, expand_origin(raw, requester));
+    const bool honoursRpath = requester.searchPathTag != SearchPathTag::Runpath
+                              && requester.searchPathTag != SearchPathTag::Both;
+    if (honoursRpath)
+        for (auto const& dir : additionalSearchDirs) append_unique_path(dirs, dir);
     for (auto const& dir : binding.libraryDirs) append_unique_path(dirs, dir);
     // NOTE: the SubOS farm is NOT read from the binding here.
     //
@@ -569,11 +599,31 @@ std::optional<std::filesystem::path> resolve_needed(
     if (!binding.hermetic())
         for (auto const& dir : host_library_dirs()) append_unique_path(dirs, dir);
 
+    return dirs;
+}
+
+std::optional<std::filesystem::path> resolve_needed(
+    std::string_view soname,
+    const ElfRuntimeFacts& requester,
+    const mcpp::runtime::RuntimeBinding& binding,
+    std::span<const std::filesystem::path> additionalSearchDirs,
+    std::span<const std::string> inheritedRpaths) {
+    std::filesystem::path named(soname);
+    std::error_code ec;
+    if (named.has_parent_path()) {
+        auto candidate = named.is_absolute()
+            ? named : requester.artifact.parent_path() / named;
+        if (std::filesystem::is_regular_file(candidate, ec))
+            return candidate.lexically_normal();
+        return std::nullopt;
+    }
+
+    const auto dirs = search_dirs_of(requester, binding, additionalSearchDirs, inheritedRpaths);
     for (auto const& dir : dirs) {
         auto candidate = dir / named;
         ec.clear();
         if (std::filesystem::is_regular_file(candidate, ec))
-            return comparable_path(candidate);
+            return candidate.lexically_normal();
     }
     return std::nullopt;
 }
@@ -1195,6 +1245,32 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
     return out;
 }
 
+std::optional<DlopenUnreachable> dlopen_unreachable(
+    const RuntimeResolution& resolution,
+    const mcpp::runtime::RuntimeBinding& binding,
+    std::span<const std::filesystem::path> additionalSearchDirs,
+    std::string_view soname,
+    std::span<const std::filesystem::path> originDirs) {
+    auto loaded = [&](const ElfRuntimeFacts& o) {
+        return o.soname == soname || o.artifact.filename() == std::filesystem::path(soname);
+    };
+    if (std::ranges::any_of(resolution.objects, loaded)) return std::nullopt;
+    std::vector<const ElfRuntimeFacts*> origins;
+    for (auto const& o : resolution.objects)
+        for (auto const& dir : originDirs)
+            if (detail::same_path(o.artifact.parent_path(), dir)) { origins.push_back(&o); break; }
+    if (origins.empty()) origins.push_back(&resolution.artifact);
+    for (const auto* origin : origins) {
+        auto dirs = detail::search_dirs_of(*origin, binding, additionalSearchDirs, origin->inheritedRpaths);
+        std::error_code ec;
+        const bool found = std::ranges::any_of(dirs, [&](auto const& d) {
+            return std::filesystem::exists(d / std::string(soname), ec);
+        });
+        if (!found) return DlopenUnreachable{ origin->artifact, std::move(dirs) };
+    }
+    return std::nullopt;
+}
+
 RuntimeResolution resolve_runtime_closure(
     const std::filesystem::path& artifact,
     const mcpp::runtime::RuntimeBinding& binding,
@@ -1244,19 +1320,24 @@ RuntimeResolution resolve_runtime_closure(
                 if (std::ranges::find(childRpaths, raw) == childRpaths.end())
                     childRpaths.push_back(raw);
         for (auto const& soname : requester.needed) {
+            // The object is identified by the file it is (`path`), and
+            // searches from the directory it was opened in (`opened`).
             std::optional<std::filesystem::path> path;
+            std::filesystem::path opened;
             if (auto loaded = loadedBySoname.find(soname);
                 loaded != loadedBySoname.end()) {
                 path = loaded->second;
             } else {
-                path = detail::resolve_needed(
+                auto found = detail::resolve_needed(
                     soname, requester, binding, additionalSearchDirs,
                     pending.inheritedRpaths);
-                if (!path) {
+                if (!found) {
                     resolution.unresolved.push_back(soname);
                     resolution.unresolvedSonames.push_back(soname);
                     continue;
                 }
+                opened = *found;
+                path = detail::comparable_path(*found);
                 loadedBySoname.emplace(soname, *path);
             }
             if (soname == "libc.so.6") {
@@ -1286,6 +1367,8 @@ RuntimeResolution resolve_runtime_closure(
                 }
                 loadedBySoname.emplace(parsed->soname, *path);
             }
+            parsed->inheritedRpaths = childRpaths;
+            if (!opened.empty()) parsed->origin = opened.parent_path();
             queue.push_back({*parsed, childRpaths});
             resolution.objects.push_back(std::move(*parsed));
         }

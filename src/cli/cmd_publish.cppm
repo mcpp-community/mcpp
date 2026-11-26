@@ -20,7 +20,10 @@ import mcpp.ui.terminal;
 import mcpp.project;          // resolve_member_dir, for `pack -p` (#734 E3)
 import mcpp.manifest;
 import mcpp.publish.pipeline;
+import mcpp.pm.publisher;        // archived_files: what the archive carries
+import mcpp.build.refusal;       // the reason token of a refusal
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.wire;
 import mcpp.bmi_cache.maintenance;  // plan_work_dir: --list-formats and the pin check plan outside the project
 import mcpp.pack.stage_tree;       // the built-in formats
@@ -87,46 +90,84 @@ export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
         parsed.option_or_empty("namespace").value());
 }
 
+// WHAT A PACKAGE'S PLAN DECIDES ABOUT PUBLISHING IT. The package's graph is
+// planned (nothing is built; its build program runs, as any plan's does) and
+// two things a consumer would inherit are refused.
+//
 // A LIBRARY DOES NOT CHOOSE A SHARED PACKAGE'S RELEASE FOR ITS USERS (design
 // 2026-11-10 supplement, T3). A library that pins one release of a package
 // every consumer shares -- one that provides a target-side layer or a kernel
-// ABI -- holds every project that uses it to that release. Its graph is
-// planned (nothing is built) and such a pin is refused, naming the range that
-// replaces it. A plan that cannot be made here leaves the check to the
-// consumers' builds, which note the pin, and says so.
-static int refuse_shared_exact_pins() {
-    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
-    if (!root) return 0;
-    auto m = mcpp::manifest::load(*root / "mcpp.toml");
-    if (!m || m->dependencies.empty()) return 0;
+// ABI -- holds every project that uses it to that release.
+//
+// A BUILD PROGRAM READS ONLY WHAT THE ARCHIVE CARRIES (design 2026-11-21,
+// build programs' inputs §3.4). A file its compile read outside the package's
+// directory, or one HEAD does not track, is absent from the archive, and the
+// consumer's copy of `build.mcpp` does not compile.
+//
+// A plan that cannot be made here leaves both to the consumers' builds, and
+// says so.
+static int refuse_before_publish(const std::filesystem::path& root) {
+    auto m = mcpp::manifest::load(root / "mcpp.toml");
+    if (!m) return 0;   // publish_one reports the manifest
     const bool library = m->targets.empty()
-        ? !std::filesystem::exists(*root / "src" / "main.cpp")
+        ? !std::filesystem::exists(root / "src" / "main.cpp")
         : std::ranges::any_of(m->targets, [](auto const& t) {
               return t.kind == mcpp::manifest::Target::Library || t.kind == mcpp::manifest::Target::SharedLibrary;
           });
-    if (!library) return 0;
+    const bool pins = library && !m->dependencies.empty();
+    const bool program = std::filesystem::exists(root / "build.mcpp");
+    if (!pins && !program) return 0;
     mcpp::build::BuildOverrides ov;
     ov.intent = mcpp::build::PrepareIntent::Describe;
+    ov.project_root = root;
     ov.work_dir = mcpp::bmi_cache::plan_work_dir(
         mcpp::bmi_cache::PlanArea::PublishPlan,
-        mcpp::toolchain::hash_string(root->lexically_normal().generic_string()), *root);
+        mcpp::toolchain::hash_string(root.lexically_normal().generic_string()), root);
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
     {
         mcpp::ui::terminal::StdoutToStderr narration;
         ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false, {}, ov);
     }
     if (!ctx) {
-        mcpp::ui::note(std::format("the library's pins of shared packages were not checked: its graph could not "
-                                   "be planned here ({})", ctx.error().substr(0, ctx.error().find('\n'))));
+        mcpp::diag::note("publish", std::format(
+            "{} were not checked: its graph could not be planned here ({})",
+            pins && program ? "the library's pins of shared packages and the files its build program reads"
+                            : pins ? "the library's pins of shared packages" : "the files its build program reads",
+            ctx.error().substr(0, ctx.error().find('\n'))));
         return 0;
     }
-    if (ctx->sharedExactPins.empty()) return 0;
+    if (pins && !ctx->sharedExactPins.empty()) {
+        std::string lines;
+        for (auto const& l : ctx->sharedExactPins) lines += "\n         " + l;
+        mcpp::ui::error(std::format(
+            "{} pins one release of a package every consumer shares:{}\n"
+            "       A library that pins it holds every project that uses the library to that release.\n"
+            "       State a range; a project that needs one release chooses it with `override = true`.",
+            m->package.name, lines));
+        return 2;
+    }
+    if (ctx->rootProgramReads.empty()) return 0;
+    auto archived = mcpp::pm::archived_files(root);
+    if (!archived) {
+        mcpp::diag::note("publish", std::format("the files the build program reads were not compared with "
+                                                "the archive: {}", archived.error()));
+        return 0;
+    }
+    std::vector<std::string> outside, untracked;
+    for (auto const& f : ctx->rootProgramReads) {
+        const auto rel = f.lexically_normal().lexically_relative(root.lexically_normal());
+        if (rel.empty() || *rel.begin() == "..") outside.push_back(f.generic_string());
+        else if (!archived->contains(rel.generic_string())) untracked.push_back(rel.generic_string());
+    }
+    if (outside.empty() && untracked.empty()) return 0;
     std::string lines;
-    for (auto const& l : ctx->sharedExactPins) lines += "\n         " + l;
+    for (auto const& f : outside) lines += std::format("\n         {} (outside the package)", f);
+    for (auto const& f : untracked) lines += std::format("\n         {} (not tracked by HEAD)", f);
+    mcpp::build::refusal::record(mcpp::build::refusal::Code::BuildProgramUnpublishedInput);
     mcpp::ui::error(std::format(
-        "{} pins one release of a package every consumer shares:{}\n"
-        "       A library that pins it holds every project that uses the library to that release.\n"
-        "       State a range; a project that needs one release chooses it with `override = true`.",
+        "build.mcpp of {} reads files the package's archive does not carry:{}\n"
+        "       A consumer's copy of build.mcpp would not compile. Move each file into the package and\n"
+        "       commit it, or into a path package listed in [build-dependencies].",
         m->package.name, lines));
     return 2;
 }
@@ -146,8 +187,10 @@ export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (!*sel) { mcpp::ui::error("-p and --workspace name members of a workspace, and this directory is not in one"); return 2; }
         req.workspaceRoot = (*sel)->root;
         req.members = (*sel)->members;
-    } else if (int rc = refuse_shared_exact_pins(); rc != 0) {
-        return rc;
+        for (auto const& member : req.members)
+            if (int rc = refuse_before_publish(req.workspaceRoot / member); rc != 0) return rc;
+    } else if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path())) {
+        if (int rc = refuse_before_publish(*root); rc != 0) return rc;
     }
     return mcpp::publish::publish_package(req);
 }
@@ -317,10 +360,10 @@ std::optional<std::string> pack_format_option(const mcpplibs::cmdline::ParsedArg
     static bool warned = false;
     if (old && !std::exchange(warned, true)) {
         if (pkg && *pkg != *old) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("publish", std::format(
                 "--format '{}' and --pkg-format '{}' disagree; --pkg-format is used", *old, *pkg));
         } else if (!pkg) {
-            mcpp::ui::warning("`mcpp pack --format` is the earlier spelling of --pkg-format, "
+            mcpp::diag::warning("publish", "`mcpp pack --format` is the earlier spelling of --pkg-format, "
                               "the package format; --format names an output encoding elsewhere");
         }
     }
@@ -972,7 +1015,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                             "--no-universal out");
             return 2;
         }
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("publish", std::format(
             "--no-universal is what a pack of one target does ({}); an image of a platform with a "
             "runner is packed as its tree (bin/<name>, bin/<name>.exe, lib/<arch>/), and one program "
             "carrying the image is --pkg-format single-file",
@@ -986,7 +1029,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                             "targets are its legs.\n  use: [pack] targets = [\"openkal\"]");
             return 2;
         }
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("publish", std::format(
             "[pack] universal = false is what a pack of one target does; it is ignored ({})",
             mcpp::pm::compat::deprecation_clause(*mcpp::pm::compat::find_deprecation("pack-universal"))));
     }
@@ -1048,7 +1091,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
             return 2;
         }
         if (modeFromUser) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("publish", std::format(
                 "--mode is an application-bundle depth and does not apply to the "
                 "library target '{}' yet; ignoring it", route->targetName));
         }

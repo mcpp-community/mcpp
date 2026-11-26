@@ -58,10 +58,35 @@ on:
         description: the run stage's cases of `mcpp-tests-<host>` that need the MinGW cross toolchain, one per line
         type: string
         default: ''
+      select:
+        description: the run stage's cases, one `mcpp test --case` pattern per line; empty for every case
+        type: string
+        default: ''
+      jitter:
+        description: the jitter of the run stage's shards, in milliseconds (jitter.yml); empty for none
+        type: string
+        default: ''
+      jitter-seed:
+        description: the seed of the jitter
+        type: string
+        default: ''
+      form:
+        description: the run stage's program under test, `host` or `release` (use-built-mcpp `form`)
+        type: string
+        default: host
+      toolchains:
+        description: >
+          The toolchains the run stage's cases probe, installed before the shards run, separated
+          by ';', each as `mcpp toolchain install` takes it (`llvm 23.1.3`); empty for none.
+        type: string
+        default: ''
     outputs:
       archived:
         description: the number of tests the archive holds
         value: ${{ jobs.archive.outputs.archived }}
+      shards:
+        description: the run stage's shards, from the shards of main's last run and the longest of them
+        value: ${{ jobs.archive.outputs.shards }}
 
 env:
   MCPP_HOME: /home/runner/.mcpp
@@ -77,6 +102,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       archived: ${{ steps.archive.outputs.archived }}
+      shards: ${{ steps.shards.outputs.shards }}
     steps:
       - uses: actions/checkout@v4
 
@@ -111,8 +137,7 @@ jobs:
           HOST: ${{ inputs.host }}
         run: |
           set -uo pipefail
-          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
-                  --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          run=$(bash .github/tools/main_run.sh)  # main's, or the run it registered (design 2026-11-20 §5.22)
           [ -n "$run" ] || { echo "no successful run of main: the tests are built whole"; exit 0; }
           if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -n "mcpp-unit-build-$HOST" -D "$RUNNER_TEMP/build" 2>/dev/null; then
             echo "main's run $run kept no test build for $HOST: the tests are built whole"; exit 0
@@ -165,14 +190,54 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/unit/history"
-          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
-                  --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          run=$(bash .github/tools/main_run.sh)  # main's, or the run it registered (design 2026-11-20 §5.22)
           if [ -z "$run" ]; then echo "no successful run of main: the shards divide by count"; exit 0; fi
           d="$RUNNER_TEMP/unit-stores"
           if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -p "mtest-unit-$KEY*" -D "$d" 2>/dev/null; then
             echo "main's run $run kept no store for $KEY: the shards divide by count"; exit 0
           fi
           python3 .github/tools/test_history.py take "$RUNNER_TEMP/unit/history" "$d" "$d"/*/
+
+      # THE SHARDS FROM THE PLAN (design 2026-11-20 §5.17, CI4): main's last run took N shards and
+      # the longest of them W, so the run is N × W of shard time; this one takes as many shards as
+      # that is in 30 minutes each, at least one, at most eight. N and W are read from the stores
+      # the shard jobs kept (`mtest-unit-<name>-<shard>-a<attempt>`, each holding that shard's
+      # runs, test_history.py): the store's import (test-report) keeps a run in the form of
+      # mtest's records, which state no shard, and the subsystems' store beside them is another
+      # job's. A shard's time is that of its longest programs and of those that
+      # run beside one another, not its programs' durations over four workers: the openkal
+      # programs build in parallel within the machine's one budget, and in fewer shards they run
+      # beside one another and each takes longer. A run of three shards (1236, 834 and 1438 s)
+      # gave two by its durations summed, and the two took 2544 and 2432 s, `trees` 1369 s in the
+      # first run and past the 40 minutes it states in the second (CI, 2026-11-21). With no
+      # history of shards, four.
+      - name: The run stage's shards
+        id: shards
+        shell: bash
+        env:
+          KEY: ${{ inputs.name }}
+        run: |
+          set -uo pipefail
+          # A re-run's store (`-a2`) holds the attempt before it and its `--failed` run: the
+          # shards are counted by number, and the longest run is the whole shard's.
+          was=0; longest=0
+          for s in "$RUNNER_TEMP"/unit-stores/mtest-unit-"$KEY"-*-a*/; do
+            [[ "$(basename "$s")" =~ ^mtest-unit-"$KEY"-([0-9]+)-a[0-9]+$ ]] || continue
+            [ -f "$s/index.ndjson" ] || continue
+            [ "${BASH_REMATCH[1]}" -le "$was" ] || was=${BASH_REMATCH[1]}
+            ms=$(jq -s 'map(.ms // 0) | max // 0 | floor' "$s/index.ndjson" 2>/dev/null || echo 0)
+            [ "${ms:-0}" -le "$longest" ] || longest=$ms
+          done
+          if [ "$was" -le 0 ] || [ "$longest" -le 0 ]; then
+            echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"; echo "no measured shards: four shards"; exit 0
+          fi
+          per=$((30 * 60 * 1000))
+          n=$(( (was * longest + per - 1) / per ))
+          [ "$n" -ge 1 ] || n=1
+          [ "$n" -le 8 ] || n=8
+          list=$(seq -s, 1 "$n")
+          echo "shards=[$list]" >> "$GITHUB_OUTPUT"
+          echo "main's last run: $was shard(s), the longest $((longest / 1000)) s: $n shard(s)"
 
       - name: Upload the tests and their history
         if: steps.archive.outputs.archived != '0'
@@ -246,6 +311,7 @@ jobs:
       - uses: ./.github/actions/use-built-mcpp
         with:
           host: ${{ inputs.host }}
+          form: ${{ inputs.form }}
 
       - name: The tests of this run
         uses: actions/download-artifact@v4
@@ -253,13 +319,34 @@ jobs:
           name: mcpp-unit-${{ inputs.host }}
           path: ${{ runner.temp }}/unit
 
-      # The program the tests run is this commit's, as build.yml built it: an
-      # archive written with --no-programs takes it from MCPP_BIN_MCPP.
+      # The program the tests run is this commit's, as build.yml built it or, in
+      # ci.yml's `full` tier, as its release archive holds it: an archive
+      # written with --no-programs takes it from MCPP_BIN_MCPP.
       - name: The program under test
         shell: bash
         run: |
           echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
           echo "MCPP_BIN_MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      # THE TOOLCHAINS THE CASES PROBE, installed and not assumed (ci-linux-e2e.yml does the
+      # same): the restored sandbox holds the ones build.yml's `prewarm` installed only while its
+      # lineage is main's, and a case whose capability does not hold skips on every runner. On a
+      # run that changed the xlings version, the fourteen cases that need llvm ran nowhere.
+      # Warm runs install nothing.
+      - name: The toolchains the cases probe
+        if: inputs.toolchains != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=';' read -ra specs <<< "${{ inputs.toolchains }}"
+          for spec in "${specs[@]}"; do
+            spec="$(echo "$spec" | xargs)"
+            [ -n "$spec" ] || continue
+            echo "::group::mcpp toolchain install $spec"
+            # shellcheck disable=SC2086 -- a spec is `<name> <version>`
+            "$MCPP" toolchain install $spec
+            echo "::endgroup::"
+          done
 
       # THE HOST'S GATE (build.yml): a new program scaffolded, built and run by
       # this commit's mcpp, seconds of running, from the archive. A red commit
@@ -300,6 +387,9 @@ jobs:
           name: ${{ inputs.name }}-${{ matrix.shard }}
           archive: ${{ runner.temp }}/unit/unit.tar.gz
           shard: ${{ matrix.shard }}/${{ strategy.job-total }}
+          cases: ${{ inputs.select }}
+          jitter: ${{ inputs.jitter }}
+          jitter-seed: ${{ inputs.jitter-seed }}
 
       # A compiler that did not start is a state of the home, not of a test:
       # the loader its payload is bound through (<home>/registry/abi), the
@@ -340,13 +430,14 @@ jobs:
       - uses: ./.github/actions/use-built-mcpp
         with:
           host: ${{ inputs.host }}
+          form: ${{ inputs.form }}
       # llvm beside it: the case that pairs clang with the MinGW payload reads
       # the program's resources with the payload's llvm-readobj (`llvm`).
       - name: Install mingw-cross toolchain
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP" toolchain install mingw-cross 16.1.0
+          "$MCPP" toolchain install mingw-cross 16.2.0
           "$MCPP" toolchain install llvm 23.1.3
           echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
       - uses: ./.github/actions/e2e-cases

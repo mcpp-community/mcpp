@@ -55,6 +55,12 @@ struct Row {
     // `app.js`). Removed before each link and staged when the link wrote one;
     // their absence is not an error (`-sSINGLE_FILE=1` writes none).
     std::span<const std::string_view> companions;
+    // HOW A PROGRAM WITH NO PROGRAM START IS LINKED (`main = false`, mcpp#981):
+    // the link words that make an executable image whose starter enters it
+    // through its exports alone (`--no-entry` on wasm32-emscripten, where the
+    // page calls the module's exported functions). Empty: on this row an
+    // executable image has a program start, and `main = false` is refused.
+    std::span<const std::string_view> linkWithoutMain;
     // THE EXCEPTION MODEL OF THE ROW'S BUILDS when the project states none
     // (`[target.<sel>.abi] exceptions`; design 2026-11-15 N26): `wasm` on
     // wasm32-emscripten. Empty: the toolchain's default.
@@ -64,6 +70,12 @@ struct Row {
     // its module. A name template (`artifact_name("exe", "{name}")`) decides what
     // precedes it; the suffix ends the name, once.
     bool             exeSuffixFixed = false;
+    // THE INTERFACES THE ROW PROVIDES where its kernel-abi layer is the system
+    // itself (design 2026-11-22 §3.17), when its C library or its system
+    // narrows them for this row (an iOS application starts no program).
+    // Read before the system's `interfaces`; unstated: the system's.
+    std::span<const std::string_view> interfaces;
+    bool             interfacesStated = false;
     bool             defined = false; // stated by a platform package
 };
 
@@ -130,6 +142,21 @@ struct Offer {
     std::span<const std::string_view> hosts;
 };
 
+// A DEFAULT (design 2026-11-21, offline and toolchain defaults §3.7): what a
+// build that states nothing takes on a host -- the first run's toolchain, or a
+// bootstrap tool. `of` names it (`toolchain`, `ninja`, `patchelf`), `use` is
+// `<package>@<version>`; `when` narrows a Windows toolchain to a machine with
+// (`msvc`) or without (`no-msvc`) a usable MSVC; `target` is the target the
+// toolchain builds for when it is not the host's. The last entry whose hosts
+// match stands, so a general entry precedes the narrower ones.
+struct Default {
+    std::string_view of;
+    std::string_view use;
+    std::span<const std::string_view> hosts;
+    std::string_view when;
+    std::string_view target;
+};
+
 // A SYSTEM (SPEC-016 §2.3): the facts of an operating system that no single
 // row states. `uname` is the word `uname -s` answers there, which a file that
 // carries one program per system selects by; a system without it joins no
@@ -154,6 +181,37 @@ struct System {
     std::string_view objectFormat;    // elf | mach-o | pe | wasm | coff; empty: unstated
     std::string_view exeSuffix;
     std::string_view sharedSuffix;
+    // THE KERNEL INTERFACE AS A PACKAGE OF ITS OWN (design 2026-11-22 §3.4,
+    // §3.9). A system whose kernel headers are published apart from its C
+    // library (Linux) states how they are measured and laid out; a system
+    // whose kernel interface belongs to one SDK or base with its C library
+    // states nothing, and its rows accept no prebuilt `kernel-abi` statement.
+    struct KernelAbi {
+        // The header a probe unit includes (`__has_include`) to measure the
+        // headers in effect; empty: the system has no such package.
+        std::string_view header;
+        // The macros of the version's parts, most significant first; read
+        // when every one is defined.
+        std::span<const std::string_view> version;
+        // The macro of the packed version and its parts' widths in bits,
+        // most significant first: read when the macros above are absent.
+        std::string_view packed;
+        std::span<const int> bits;
+        // A payload's layout, relative to its root: the headers common to
+        // every architecture, and one architecture's (`{arch}` the target
+        // architecture), searched first when present.
+        std::string_view include;
+        std::string_view archInclude;
+        // The ecosystem package of the headers, which a toolchain's payload
+        // declares as the headers its own runtime was built against.
+        std::string_view package;
+        bool stated() const { return !header.empty(); }
+    } kernelAbi;
+    // THE INTERFACES THE SYSTEM PROVIDES (design 2026-11-22 §3.17): the
+    // answer of `cfg(interface = "<name>")` on rows whose kernel-abi layer is
+    // the system itself, in openkal's vocabulary. Unstated: every interface.
+    std::span<const std::string_view> interfaces;
+    bool interfacesStated = false;
 };
 
 // AN ARCHITECTURE A MACHINE EXECUTES BESIDES ITS OWN (design 2026-11-15 N23):
@@ -214,6 +272,34 @@ constexpr bool hosts_allow(std::span<const std::string_view> patterns, std::stri
         if (host_matches(exclude ? p.substr(1) : p, host, targetArch)) allowed = !exclude;
     }
     return allowed;
+}
+
+// THE DEFAULT OF `of` ON THE HOST `os`-`arch`: the last entry whose hosts
+// match and whose `when` is empty or `when`; none when no entry matches.
+constexpr const Default* default_of(std::span<const Default> defaults, std::string_view of,
+                                    std::string_view os, std::string_view arch, std::string_view when = {}) {
+    auto matches = [&](std::string_view p) {
+        if (p == "*") return true;
+        const auto dash = p.find('-');
+        if (dash == std::string_view::npos) return false;
+        const auto po = p.substr(0, dash), pa = p.substr(dash + 1);
+        return (po == "*" || po == os) && (pa == "*" || pa == arch);
+    };
+    const Default* found = nullptr;
+    for (auto const& d : defaults) {
+        if (d.of != of || (!d.when.empty() && d.when != when)) continue;
+        bool allowed = false;
+        for (auto p : d.hosts)
+            if (matches(p.starts_with('!') ? p.substr(1) : p)) allowed = !p.starts_with('!');
+        if (allowed) found = &d;
+    }
+    return found;
+}
+
+// The version of `<package>@<version>`.
+constexpr std::string_view version_of(std::string_view use) {
+    const auto at = use.rfind('@');
+    return at == std::string_view::npos ? std::string_view{} : use.substr(at + 1);
 }
 
 constexpr bool available_on(const Provider& p, std::string_view host, std::string_view targetArch) {

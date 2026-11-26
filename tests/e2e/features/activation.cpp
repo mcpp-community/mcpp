@@ -26,7 +26,7 @@ e2e::outcome run_app(const s::project& p) {
     return s::run(*bin);
 }
 
-E2E activation{"activation", [] {
+E2E activation{"activation", s::home_fixture, [] {
     "67 features strict"_test = [] {
         // Feature activation, `backend=` sugar, and the --strict schema gate: an unknown feature
         // or platform warns, and --strict refuses; the six platform names are known.
@@ -147,11 +147,15 @@ E2E activation{"activation", [] {
                                      {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[features]\ndefault = []\nextra   = []\n\n# `widget` is declared ONLY under the feature, so it is optional: resolved only\n# when --features extra is active.\n[feature-deps.extra]\nwidget = { path = \"../widget\" }\n"}}};
         auto b1 = app.mcpp({"build", "-v"});
         expect(fatal(e2e::succeeded(b1))) << "baseline build failed";
-        expect(s::no_line(s::text(b1), "Compiling widget ")) << "widget must NOT be pulled when feature inactive";
+        // A package of the build is named by its summary line, compiled or taken from the cache:
+        // a path dependency's objects are named by its content (SPEC-001 §10.4), so a home that
+        // built this widget before takes them and does not compile it again.
+        constexpr auto inBuild = R"(^ *Compil(ing|ed) widget )";
+        expect(s::no_line(s::text(b1), inBuild)) << "widget must NOT be pulled when feature inactive";
         app.remove("target");
         auto b2 = app.mcpp({"build", "-v", "--features", "extra"});
         expect(fatal(e2e::succeeded(b2))) << "feature build failed (widget not pulled?)";
-        expect(s::has_line(s::text(b2), "Compiling widget ")) << "widget was not pulled when feature active";
+        expect(s::has_line(s::text(b2), inBuild)) << "widget was not pulled when feature active";
     };
 
     "83 feature defines propagate"_test = [] {

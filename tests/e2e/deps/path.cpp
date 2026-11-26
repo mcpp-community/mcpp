@@ -28,7 +28,7 @@ std::string index_package(std::string_view ns, std::string_view name, std::strin
 )lua", ns, name, description, version);
 }
 
-E2E path{"path", [] {
+E2E path{"path", s::home_fixture, [] {
     "09 path dependency"_test[s::elf][s::gcc] = [] {
         // Package B imports modules of package A through `[dependencies.A] path`: the
         // multi-package scanner and link; a path whose manifest names another package is refused.

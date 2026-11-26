@@ -6,6 +6,12 @@ description: >
   `--shard` divides the suite by measured time and a run orders its tests
   longest first. Exports E2E_MTEST for run_all.sh. A run with no store of main
   divides by count, and its own store becomes the next run's history.
+  Every shard computes its own part, so the parts cover the suite only when
+  every shard reads the same history and the same coverage map: ci.yml's plan
+  resolves both runs once (outputs `history`, `coverage`) and passes them to
+  each shard, and a run that kept them but cannot be read fails the step
+  rather than dividing by other data (CI, 2026-11-23: one macOS shard divided
+  by count, three by history, and test 1033 fell in no part).
 
 inputs:
   host:
@@ -13,10 +19,30 @@ inputs:
       the host's name in the stores' artifact names (linux, macos, windows), or
       `*` for every host's (the plan of ci.yml)
     required: true
+  history:
+    description: >
+      the run whose stores are the history (the plan's `history` output);
+      `none` when main has no such run; empty to resolve it here
+    required: false
+    default: ''
+  coverage:
+    description: >
+      the run whose coverage map selects the `pr` set (the plan's `coverage`
+      output); `none` when there is no map; empty to resolve it here
+    required: false
+    default: ''
   token:
     description: a token that reads this repository's actions
     required: false
     default: ${{ github.token }}
+
+outputs:
+  history:
+    description: the run whose stores were read, or `none`
+    value: ${{ steps.history.outputs.run }}
+  coverage:
+    description: the run whose coverage map was read, or `none`
+    value: ${{ steps.coverage.outputs.run }}
 
 runs:
   using: composite
@@ -35,37 +61,51 @@ runs:
         git fetch --no-tags --depth=1 origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || true
         git fetch --no-tags --deepen=1 origin || true
     - name: The stores of main's last CI run
+      id: history
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         HOST: ${{ inputs.host }}
+        RUN: ${{ inputs.history }}
       run: |
         set -euo pipefail
-        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
-                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
-        if [ -z "$run" ]; then echo "no successful run of main: the suite is divided by count"; exit 0; fi
+        # main's, or the run it registered (design 2026-11-20 §5.22)
+        [ -n "$RUN" ] || RUN=$(bash .github/tools/main_run.sh)
+        [ -n "$RUN" ] || RUN=none
+        echo "run=$RUN" >> "$GITHUB_OUTPUT"
+        if [ "$RUN" = none ]; then echo "no successful run of main: the suite is divided by count"; exit 0; fi
         rm -rf "$RUNNER_TEMP/e2e-stores"
-        if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -p "e2e-store-$HOST-*" -D "$RUNNER_TEMP/e2e-stores" 2>/dev/null; then
-          echo "main's run $run kept no store for $HOST: the suite is divided by count"; exit 0
+        bash .github/tools/run_artifacts.sh "$RUN" "e2e-store-$HOST-*" "$RUNNER_TEMP/e2e-stores"
+        if [ ! -d "$RUNNER_TEMP/e2e-stores" ]; then
+          echo "main's run $RUN kept no store for $HOST: the suite is divided by count"; exit 0
         fi
         for store in "$RUNNER_TEMP"/e2e-stores/*/; do
           (cd tests/e2e && "$E2E_MTEST" store import --from "$store")
         done
-        echo "history of main's run $run: $(ls "$RUNNER_TEMP/e2e-stores" | wc -l) store(s)"
+        echo "history of main's run $RUN: $(ls "$RUNNER_TEMP/e2e-stores" | wc -l) store(s)"
     # The coverage map of the last nightly measurement (e2e-coverage.yml), on
     # the host it was measured on: the sources each test's run executed there.
     # Another host's own sources (src/native/windows/...) run on no Linux test,
     # so its suite has no map and every test of it is affected.
     - name: The coverage map
+      id: coverage
       if: inputs.host == 'linux' || inputs.host == '*'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        RUN: ${{ inputs.coverage }}
       run: |
         set -euo pipefail
-        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow e2e-coverage.yml --status success --limit 1 \
-                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
-        if [ -z "$run" ]; then echo "no coverage map: every test is affected"; exit 0; fi
+        if [ -z "$RUN" ]; then
+          RUN=$(gh run list -R "$GITHUB_REPOSITORY" --workflow e2e-coverage.yml --status success --limit 1 \
+                  --json databaseId -q '.[0].databaseId')
+          [ -n "$RUN" ] || RUN=none
+        fi
+        echo "run=$RUN" >> "$GITHUB_OUTPUT"
+        if [ "$RUN" = none ]; then echo "no coverage map: every test is affected"; exit 0; fi
         rm -rf "$RUNNER_TEMP/e2e-coverage"
-        gh run download "$run" -R "$GITHUB_REPOSITORY" -n e2e-coverage-linux -D "$RUNNER_TEMP/e2e-coverage" || exit 0
-        (cd tests/e2e && "$E2E_MTEST" coverage import --from "$RUNNER_TEMP/e2e-coverage/coverage.json")
+        bash .github/tools/run_artifacts.sh "$RUN" "e2e-coverage-linux" "$RUNNER_TEMP/e2e-coverage"
+        if [ ! -d "$RUNNER_TEMP/e2e-coverage" ]; then
+          echo "the coverage run $RUN kept no map: every test is affected"; exit 0
+        fi
+        (cd tests/e2e && "$E2E_MTEST" coverage import --from "$RUNNER_TEMP"/e2e-coverage/*/coverage.json)

@@ -53,6 +53,9 @@ struct SourceUnit {
     // reads this field).
     std::filesystem::path           relPath;
     std::string                     packageName;
+    // An action's generated unit: the authored source it is a transformed
+    // copy of, as the action stated it (mcpp#1004); empty otherwise.
+    std::filesystem::path           origin;
     std::vector<std::filesystem::path> localIncludeDirs;
     // #249: dirs emitted as -idirafter — searched after the toolchain's
     // system dirs, so a dep's source root can't shadow standard headers.

@@ -1,4 +1,5 @@
-// A program that begins in a dependency's `kind = "entry"` target (formerly tests/e2e/946).
+// A program that begins in a dependency's `kind = "entry"` target, and one whose image has no program
+// start (formerly tests/e2e/946; 981 is mcpp#981).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -54,7 +55,7 @@ int main() {
 }
 )cpp";
 
-E2E entry{"entry", [] {
+E2E entry{"entry", s::home_fixture, [] {
     "946 a program begins in a dependency entry"_test[s::gcc][s::elf] = [] {
         // A framework supplies `main` as an entry target; the application writes only the
         // callback. The entry is in no image that does not select it; required features gate
@@ -132,6 +133,30 @@ E2E entry{"entry", [] {
         auto i = notes.mcpp({"build", "--message-format", "json"});
         expect(fatal(e2e::succeeded(i))) << "I: the json build failed";
         expect(e2e::contains(i.out, "\"entry\":{\"from\":\"fw/player\"}")) << "I: the result record does not name where the program begins";
+    };
+
+    "981 a program states that its image has no program start"_test = [] {
+        // mcpp#981: `main = false` states that an image has no program start. On the machine's
+        // own row a C runtime calls `main`: 1 the statement is refused, naming that runtime and
+        // the remedy; 2 a row that does not match this machine leaves the program beginning in
+        // its file; 3 the program without a statement is refused as before.
+        s::project p(s::case_dir() / "app", {
+            {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"app\"\nmain = false\n"},
+            {"src/lib.cpp", "int app_value() { return 7; }\n"},
+            {"platform/desktop/main.cpp", "int app_value();\nint main() { return app_value() == 7 ? 0 : 1; }\n"}});
+        auto r = p.mcpp({"build"});
+        expect(fatal(failed(r))) << "1: main = false on the machine's own row was accepted: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "[targets.app] main = false:"))) << "1: the refusal does not name the statement: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "the C runtime"))) << "1: the refusal does not name what enters the image: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "main = { from"))) << "1: the refusal does not name the remedy: " << s::text(r);
+        p.write("mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"app\"\nmain = \"platform/desktop/main.cpp\"\n\n"
+                             "[target.'cfg(os = \"emscripten\")'.targets.app]\nmain = false\n\n[target.'cfg(env = \"android\")'.targets.app]\nmain = false\n");
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "2: the program did not begin in its file on this machine: " << s::text(r);
+        p.write("mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"app\"\n");
+        r = p.mcpp({"build"});
+        expect(fatal(failed(r))) << "3: a program without `main` was accepted: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "requires 'main' field"))) << "3: " << s::text(r);
     };
 }};
 

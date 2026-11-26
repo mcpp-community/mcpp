@@ -12,7 +12,7 @@ namespace {
 
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
-E2E floors{"floors", [] {
+E2E floors{"floors", s::home_fixture, [] {
     "326 dependency standard floor"_test[s::gcc] = [] {
         // A module graph has one standard, the root's; a dependency that declared a higher one is
         // built at the root's, and that is reported (degraded, an error under --strict), naming
@@ -84,7 +84,7 @@ E2E floors{"floors", [] {
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E floors_machine{"floors-machine", resource{"machine"}, [] {
+E2E floors_machine{"floors-machine", s::home_fixture, resource{"machine"}, [] {
     "822 a package states the oldest mcpp it supports"_test[s::unix_shell] = [] {
         // `[package] mcpp = ">=V"` states the oldest mcpp release a package supports: an engine
         // below it stops first, naming the package, the floor, its own release and the way to

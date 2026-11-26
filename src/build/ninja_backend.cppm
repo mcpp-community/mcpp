@@ -46,12 +46,18 @@ import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.provider.roots;
 import mcpp.buildopt.keep;
 import mcpp.buildopt.advice;
+import mcpp.buildopt.registry;
 import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
+import mcpp.effects;
+import mcpp.build.record;     // what a build ran, edge by edge (design 2026-11-20 §5.6)
+import mcpp.build.unit_cache; // the variables of the unit cache (design 2026-11-20 §5.3)
+import mcpplibs.os.fs;          // the usage file's spelling for the executor
 import mcpp.runtime.launch_env;
 import mcpp.build.command_line;
 import mcpp.run;
@@ -347,6 +353,26 @@ read_consumer_include_sidecar(const std::filesystem::path& outputDir);
 // graph runs no compiler through the capped executor; 0 when absent.
 void write_compiler_cap_sidecar(const std::filesystem::path& outputDir, int cap);
 int read_compiler_cap_sidecar(const std::filesystem::path& outputDir);
+// The memory threshold the plan resolved (design 2026-11-20 §5.5), beside the
+// cap: the fast path replays the graph without a plan and states it to the
+// executors as the full path does.
+void write_memory_threshold_sidecar(const std::filesystem::path& outputDir, std::uint64_t bytes);
+std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputDir);
+// The unit cache the plan states (design 2026-11-20 §5.3), as the variables the
+// compiler executor reads: nothing when the build uses no global cache. Kept
+// beside build.ninja for the fast path, which has no plan.
+void write_unit_cache_sidecar(const std::filesystem::path& outputDir, const std::filesystem::path& cacheDir,
+                              const std::vector<std::filesystem::path>& roots);
+std::vector<std::pair<std::string, std::string>> read_unit_cache_sidecar(const std::filesystem::path& outputDir);
+
+// SPEC-019 §9: what the entries of the register acted on, beside build.ninja
+// (`buildopt-applied.tsv`), for the tip a failure gives. The plan writes it;
+// the fast path, which has no plan, reads it as well.
+void write_buildopt_sidecar(const BuildPlan& plan);
+// After a failed run, in either path: says, as a tip of the failed run, how to
+// check whether an entry is the cause, when an entry acted on the step that
+// failed. `ninjaOutput` is the run's raw output.
+void report_buildopt_failure(const std::filesystem::path& outputDir, std::string_view ninjaOutput);
 
 // #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
 //
@@ -628,7 +654,7 @@ std::string pe_link_flag(const BuildPlan& plan, bool sep,
 // The platform links with `ld.lld` itself (`[platform.link] driver = "lld"`):
 // a flag is the linker's own spelling, not the driver's `-Wl,` form.
 bool links_with_lld(const BuildPlan& plan) {
-    return plan.platform.active && plan.platform.fields.link.driver.value == "lld";
+    return plan.platform.fields.link.driver.value == "lld";
 }
 
 std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
@@ -918,8 +944,7 @@ std::string action_phony_name(std::string_view pkg) {
 // same edge: the guard once took the seal edge for the link and refused every ok
 // image whose graph declares a `prepare` action.
 std::filesystem::path link_edge_output(const BuildPlan& plan, const LinkUnit& lu) {
-    if (!plan.platform.active || plan.platform.fields.link.seal.empty()
-        || lu.kind == LinkUnit::StaticLibrary)
+    if (plan.platform.fields.link.seal.empty() || lu.kind == LinkUnit::StaticLibrary)
         return lu.output;
     auto unsealed = std::filesystem::path("obj/platform") / lu.output.relative_path();
     unsealed += ".unsealed";
@@ -1280,6 +1305,88 @@ int read_compiler_cap_sidecar(const std::filesystem::path& outputDir) {
     std::ifstream f(outputDir / kCompilerCapSidecar, std::ios::binary);
     int cap = 0;
     return f >> cap && cap > 0 ? cap : 0;
+}
+
+constexpr std::string_view kMemoryThresholdSidecar = ".mcpp-memory-threshold";
+
+void write_memory_threshold_sidecar(const std::filesystem::path& outputDir, std::uint64_t bytes) {
+    std::ofstream(outputDir / kMemoryThresholdSidecar, std::ios::binary | std::ios::trunc) << bytes << '\n';
+}
+
+std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kMemoryThresholdSidecar, std::ios::binary);
+    std::uint64_t bytes = 0;
+    return f >> bytes ? bytes : 0;
+}
+
+constexpr std::string_view kUnitCacheSidecar = ".mcpp-unit-cache";
+
+void write_unit_cache_sidecar(const std::filesystem::path& outputDir, const std::filesystem::path& cacheDir,
+                              const std::vector<std::filesystem::path>& roots) {
+    std::string text;
+    if (!cacheDir.empty()) {
+        text = mcpplibs::os::fs::utf8(cacheDir) + "\n";
+        for (const auto& r : roots) text += mcpplibs::os::fs::utf8(r) + "\n";
+    }
+    std::ofstream(outputDir / kUnitCacheSidecar, std::ios::binary | std::ios::trunc) << text;
+}
+
+void write_buildopt_sidecar(const BuildPlan& plan) {
+    namespace advice = mcpp::buildopt::advice;
+    advice::Applied applied;
+    std::map<std::string, advice::Fragment> fragments;
+    // As the step record spells a source: with forward slashes, whatever the host.
+    const auto spelled = [](const std::filesystem::path& p) {
+        auto s = mcpplibs::os::fs::utf8(p);
+        std::ranges::replace(s, '\\', '/');
+        return s;
+    };
+    for (auto const& cu : plan.compileUnits) {
+        const auto source = spelled(cu.source);
+        if (!cu.writtenAs.empty()) {
+            auto& f = fragments[spelled(cu.writtenAs)];
+            f.written = spelled(cu.writtenAs);
+            f.units.push_back(source);
+        }
+        if (!cu.imports.empty() && !cu.servedFromCache) applied.importers.push_back({source, cu.imports});
+    }
+    for (auto& [written, f] : fragments) applied.fragments.push_back(std::move(f));
+    if (const auto* entry = mcpp::buildopt::registry::find(mcpp::buildopt::registry::kPrivateFragment))
+        applied.fragmentCheck = std::string(plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC
+                                            && !entry->checkGcc.empty() ? entry->checkGcc : entry->check);
+    advice::write_applied(plan.outputDir, applied);
+}
+
+void report_buildopt_failure(const std::filesystem::path& outputDir, std::string_view ninjaOutput) {
+    namespace advice = mcpp::buildopt::advice;
+    if (mcpp::buildopt::registry::standard_only()) return;
+    const auto applied = advice::read_applied(outputDir);
+    const auto kept = mcpp::buildopt::keep::kept(outputDir);
+    if (applied.fragments.empty() && kept.empty()) return;
+    advice::Failed failed;
+    failed.linked = advice::linker_failed(ninjaOutput);
+    // The step that failed, by the source it reads (the step record).
+    if (const auto record = mcpp::build::progress::read_record(outputDir)) {
+        for (auto const& outputs : advice::failed_outputs(ninjaOutput)) {
+            for (auto const& o : outputs) {
+                const auto step = record->step.find(mcpp::build::progress::normalise(o));
+                if (step == record->step.end()) continue;
+                if (const auto source = record->sources.find(step->second); source != record->sources.end())
+                    failed.sources.push_back(source->second);
+                break;
+            }
+        }
+    }
+    for (auto const& tip : advice::suspects(applied, kept, failed)) mcpp::diag::on_failure(tip.domain, tip.text);
+}
+
+std::vector<std::pair<std::string, std::string>> read_unit_cache_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kUnitCacheSidecar, std::ios::binary);
+    std::string dir, roots;
+    if (!std::getline(f, dir) || dir.empty()) return {};
+    for (std::string line; std::getline(f, line);) roots += line + "\n";
+    return {{std::string(mcpp::build::unit_cache::kDirEnv), dir},
+            {std::string(mcpp::build::unit_cache::kRootsEnv), roots}};
 }
 
 std::vector<std::filesystem::path>
@@ -1817,8 +1924,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // seal steps run on the linked file, written beneath `obj/platform/`, and
     // only a file every step accepted is published under the artifact's name.
     auto const& pf = plan.platform;
-    const bool platformLld  = pf.active && pf.fields.link.driver.value == "lld";
-    const bool platformSeal = pf.active && !pf.fields.link.seal.empty();
+    const bool platformLld  = pf.fields.link.driver.value == "lld";
+    const bool platformSeal = !pf.fields.link.seal.empty();
     // A program a platform names, as the platform resolved it, or its name for
     // PATH at build time.
     auto platform_program = [&](const std::string& name) {
@@ -1826,7 +1933,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         return it == pf.tools.end() ? name : it->second;
     };
     std::vector<std::filesystem::path> platformInputs;
-    if (pf.active && !pf.fields.link.inputs.empty()) {
+    if (!pf.fields.link.inputs.empty()) {
         const auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
         const bool clangDriver = plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang;
         append("rule platform_capture\n");
@@ -2224,10 +2331,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const bool gnuDepfile = dial.inputsRecord == std::string_view("make");
     const bool needsGnuModuleFilter =
         gnuDepfile && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
+    // A C++ compile's depfile names the BMIs it read too, where the compiler needs to be told
+    // (BmiTraits::moduleFileDepsFlag): ninja and the unit cache then read the imports from it.
     const std::string mmd_flag =
-        gnuDepfile ? (needsGnuModuleFilter ? "-MMD -MF $out.d.raw "
-                                           : "-MMD -MF $out.d ")
-                   : "";
+        gnuDepfile ? (needsGnuModuleFilter ? std::string("-MMD -MF $out.d.raw ")
+                                           : std::format("-MMD -MF $out.d{} ", traits.moduleFileDepsFlag))
+                   : std::string{};
     const std::string mmd_filter =
         (needsGnuModuleFilter && !mcpplibs::os::is_windows)
         ? " && awk 'NR==1{print;next} /^[^ ]/{exit} {print}' "
@@ -3747,7 +3856,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // this plan links; with seal steps, the artifact is written beneath
         // obj/ and published by its own edge (above). Not beside the name:
         // what bin/ holds is what was published, and an unsealed file is not.
-        const bool platformUnit = pf.active && lu.kind != LinkUnit::StaticLibrary;
+        const bool platformUnit = lu.kind != LinkUnit::StaticLibrary;
         if (platformUnit)
             for (auto const& in : platformInputs) add_in(in);
         const bool sealUnit = platformSeal && lu.kind != LinkUnit::StaticLibrary;
@@ -4901,6 +5010,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                  : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
     write_compiler_cap_sidecar(plan.outputDir, plan.scheduleCompilerCap);
+    write_memory_threshold_sidecar(plan.outputDir, plan.memoryThreshold);
+    write_unit_cache_sidecar(plan.outputDir, plan.unitCacheDir, plan.immutableRoots);
+    write_buildopt_sidecar(plan);
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
@@ -4968,6 +5080,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         if (existed && !tec && std::filesystem::last_write_time(ninja_path, tec) == before && !tec)
             std::filesystem::last_write_time(ninja_path, std::filesystem::file_time_type::clock::now(), tec);
     }
+    // The payloads this graph names are held as the store's roots, so that the
+    // provider's collection keeps them (design 2026-11-22 §3.11).
+    if (!opts.dryRun) mcpp::provider::roots::hold(plan.outputDir, manifest);
     stage("write-ninja");
 
     // compile_commands.json — via the dedicated module.
@@ -4986,13 +5101,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                     ? plan.projectRoot / "compile_commands.json"
                     : plan.compileDbPath});
         }
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "compile_commands.json was not updated: {}", cdb.error().message));
     } else if (cdb->foreignEntries > 0) {
         // §3.2 item 3: the root file is replaced whole, never merged; when it
         // held another writer's entries, say so once rather than silently
         // discard them.
-        mcpp::ui::warning(mcpp::build::foreign_entries_warning(cdb->foreignEntries));
+        mcpp::diag::warning("build", mcpp::build::foreign_entries_warning(cdb->foreignEntries));
     }
 
     // A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID
@@ -5010,8 +5125,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // A platform that links with ld.lld itself and names its shared
     // artifacts is the exception (an ok image's `.okso`, placed by the loader
     // through DT_NEEDED or by `dlopen`): it has the rule.
-    const bool platformShared = plan.platform.active
-        && plan.platform.fields.link.driver.value == "lld" && plan.platform.fields.link.shared.set;
+    const bool platformShared = plan.platform.fields.link.driver.value == "lld"
+        && plan.platform.fields.link.shared.set;
     if (!flags.ldDriver.empty() && !platformShared) {
         for (auto const& lu : plan.linkUnits) {
             if (lu.kind != LinkUnit::SharedLibrary) continue;
@@ -5054,7 +5169,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         }
         if (plan.cStandardsNotApplied.size() > shown)
             list += std::format(" and {} more", plan.cStandardsNotApplied.size() - shown);
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "c_standard: cl.exe compiles C in its default mode and does not apply "
             "the C standard {} package{} declare{}: {}",
             plan.cStandardsNotApplied.size(),
@@ -5252,6 +5367,14 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
+    nenv.emplace_back("MCPP_MEMORY_THRESHOLD", std::to_string(plan.memoryThreshold));
+    for (auto& kv : read_unit_cache_sidecar(plan.outputDir)) nenv.push_back(std::move(kv));
+    // THE BUILD'S RECORD (design 2026-11-20 §5.6): where ninja's log ends now,
+    // and the file each compile's executor appends its measurement to.
+    const auto logMark = mcpp::build::progress::mark_log(plan.outputDir);
+    const auto usageFile = plan.outputDir / mcpp::build::record::kUsageFile;
+    std::ofstream(usageFile, std::ios::binary | std::ios::trunc);
+    nenv.emplace_back(std::string(mcpp::build::record::kUsageEnv), mcpplibs::os::fs::utf8(usageFile));
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     // The directory's BMI cutoff for this run (mcpp.buildopt.keep). A graph
     // compiled with contracts is compared exactly: a contract's violation
@@ -5408,6 +5531,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         for (auto const& c : advice::single_file_cascades(units, bmiRun.changed))
             if (advice::first_time(plan.outputDir, c.module)) mcpp::ui::info("note", advice::line(c));
     }
+    // The edges this build ran, kept for the command (`mcpp test` writes them
+    // into its run) and appended to MCPP_BUILD_RECORD's file.
+    mcpp::build::progress::keep_ran(plan.outputDir, logMark, usageFile, report);
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
     if (report) {
@@ -5462,7 +5588,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                     runtimeFailure += "\n" + explanation;
                 }
             } else if (checked.verdict.status == Status::Inconclusive) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "runtime closure validation is inconclusive for {}{}{}",
                     checked.artifact.string(), explanation.empty() ? "" : ":\n",
                     explanation));
@@ -5489,7 +5615,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             if (!gaps.empty()) {
                 std::string detail;
                 for (auto const& gap : gaps) detail += "\n    " + gap;
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "{} of {} librar{} a dependency published for dlopen cannot "
                     "be loaded on this artifact's search path:{}\n"
                     // The plural agrees with the DENOMINATOR, which is what the
@@ -5525,7 +5651,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                  plan, runtimeBefore)) {
             if (finding.status != mcpp::build::loader::TagFinding::Status::Violation)
                 continue;
-            mcpp::ui::warning(finding.explain());
+            mcpp::diag::warning("build", finding.explain());
         }
         stage("loader-tags");
         // Issue #519 — one library, one provider. Reported through `diag`
@@ -5601,6 +5727,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                 plan.targetSide.cAbiDecl->absent);
         // (the fast path reads the same list from the sidecar this build
         // wrote beside build.ninja — see `write_c_abi_absent_sidecar`)
+        report_buildopt_failure(plan.outputDir, out);
         BuildError failure{"build failed", plan.outputDir / plan.graphFile,
                            std::move(diagnostics)};
         failure.reported = reported;
@@ -5620,6 +5747,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 // program sees, is this function's answer too.
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
+    // The machine's, when the run allows it (`[build] allow_host_tools`,
+    // design 2026-11-21 §3.3); the build has said so once.
+    if (mcpp::effects::host_tool_allowed("ninja"))
+        if (auto host = mcpp::invocation::which(ninja_name)) return host->string();
     // A store that holds several versions answers with the pinned one
     // (mcpp#945): a scan of the versions answers in directory order, and the
     // pin is the version that carries the correction of ninja-build/ninja#2662.

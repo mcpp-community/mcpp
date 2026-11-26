@@ -42,6 +42,7 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpplibs.os.fs;
@@ -211,7 +212,7 @@ export int env_report() {
 export int doctor_report() {
     int warns = 0, errors = 0;
     auto ok    = [](std::string_view m) { mcpp::ui::status("ok", m); };
-    auto warn = [&](std::string_view m) { mcpp::ui::warning(m); ++warns; };
+    auto warn = [&](std::string_view m) { mcpp::diag::warning("doctor", m); ++warns; };
     auto err   = [&](std::string_view m) { mcpp::ui::error(m);   ++errors; };
 
     auto cfg = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
@@ -242,6 +243,9 @@ export int doctor_report() {
     auto pctx = [&]() -> decltype(mcpp::build::prepare_build(false)) {
         if (!inPackage) return std::unexpected(std::string("not inside a package"));
         mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "1");
+        // No archive directory either: offline with one, a run installs from
+        // it, and the doctor installs nothing.
+        mcpp::invocation::ScopedEnv archives("MCPP_ARCHIVES", "");
         const bool wasQuiet = mcpp::ui::is_quiet();
         mcpp::ui::set_quiet(true);
         (void)mcpp::build::refusal::take();
@@ -441,7 +445,7 @@ export int doctor_report() {
                 }
             }
             if (!any)
-                ok("mingw not installed (optional — `mcpp toolchain install mingw 16.1.0`)");
+                ok("mingw not installed (optional — `mcpp toolchain install --target x86_64-windows-gnu`)");
         }
 
         // The other direction: a windows-hosted cross toolchain that produces
@@ -465,7 +469,7 @@ export int doctor_report() {
             }
             if (!any)
                 ok(std::format("{} not installed (optional — "
-                               "`mcpp toolchain install gcc 16.1.0 --target {}`)",
+                               "`mcpp toolchain install --target {}`)",
                                triple, triple));
         }
     }
@@ -660,10 +664,9 @@ export int doctor_report() {
             ok("(run inside a package to check its runtime capabilities)");
         } else if (!pctx) {
             ok("(not checked: the toolchain above is not ready)");
-        } else if (pctx->plan.runtimeCapabilities.empty()) {
-            ok("no host runtime capabilities required");
         } else {
             auto& plan = pctx->plan;
+            if (plan.runtimeCapabilities.empty()) ok("no host runtime capabilities required");
             for (auto& cap : plan.runtimeCapabilities) {
                 std::string provider;
                 for (auto& [c, p] : plan.runtimeProviders)
@@ -671,20 +674,25 @@ export int doctor_report() {
                 ok(std::format("{}: required (provider {})",
                                cap, provider.empty() ? "?" : provider));
             }
-            auto resolves = [&](std::string_view soname) {
-                for (auto& dir : plan.runtimeLibraryDirs) {
-                    std::error_code ec;
-                    if (!std::filesystem::exists(dir, ec)) continue;
-                    for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
-                        auto fn = e.path().filename().string();
-                        if (fn == soname || fn.rfind(soname, 0) == 0) return true;
-                    }
-                }
-                return false;
-            };
-            for (auto& lib : plan.runtimeDlopenLibs) {
-                if (resolves(lib)) ok(std::format("dlopen {}: resolvable on RUNPATH", lib));
-                else warn(std::format("dlopen {}: not found on resolved runtime dirs", lib));
+            // From the object that loads each library, as the post-link
+            // validation judges it (one function): a directory on the union
+            // of the plan's search paths is not one the loading object sees.
+            // The program the last build linked: this check plans in a
+            // scratch directory and links nothing.
+            std::optional<std::filesystem::path> program;
+            if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path()))
+                if (auto stored = mcpp::build::runtime_validation::latest_stored_verdict(*root / "target"))
+                    program = stored->artifact;
+            std::error_code pec;
+            if (!plan.runtimeDlopenLibs.empty() && program && std::filesystem::is_regular_file(*program, pec)) {
+                const auto misses = mcpp::build::runtime_validation::dlopen_unreachable(plan, *program);
+                for (auto const& m : misses) warn(std::format("dlopen-unreachable: {}", m));
+                if (misses.empty())
+                    ok(std::format("dlopen: {} required libraries reachable from {}",
+                                   plan.runtimeDlopenLibs.size(), program->filename().string()));
+            } else if (!plan.runtimeDlopenLibs.empty()) {
+                ok(std::format("(build the package to check its {} dlopen requirements per object)",
+                               plan.runtimeDlopenLibs.size()));
             }
         }
     }
@@ -1231,7 +1239,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
                                           /*includeDevDeps=*/false, {}, ov);
     std::vector<mcpp::wire::Diagnostic> diags;
     if (!ctx) {
-        // `take()` AFTER the call and only here: a site that recorded a code
+        // Taken AFTER the call and only here: a site that recorded a code
         // and then did not refuse would otherwise leak it into the next query.
         // `None` MEANS "NOTHING RECORDED", AND HERE THAT IS NOT "no reason"
         // — the build demonstrably refused. Reporting `none` beside
@@ -1243,9 +1251,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
         //
         // `other` is a visible admission: a refusal exists and its branch
         // has not been named yet.
-        auto code = mcpp::build::refusal::take();
-        if (code == mcpp::build::refusal::Code::None)
-            code = mcpp::build::refusal::Code::Other;
+        const auto code = mcpp::build::refusal::take_refused();
         data["status"] = "refused";
         data["reason"] = std::string(mcpp::build::refusal::name(code));
         diags.push_back({
@@ -1366,6 +1372,10 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
                             ? std::string("platform")
                             : std::string(mcpp::targetside::origin_name(l.origin))},
             {"subset",    l.subset},
+            // The kernel-abi layer's measured version and its interfaces
+            // (design 2026-11-22 §3.8, §3.17); added fields.
+            {"version",   l.version},
+            {"interfaces", l.interfacesStated ? nlohmann::json(l.interfaces) : nlohmann::json(nullptr)},
         };
     };
     data["layers"] = nlohmann::json::array({
@@ -1443,7 +1453,7 @@ export int why_sources_json(std::string_view topic, std::string_view subject,
     data["topic"] = std::string(topic);
     data["subject"] = std::string(subject);
     if (!ctx) {
-        const auto code = mcpp::build::refusal::take();
+        const auto code = mcpp::build::refusal::take_refused();
         data["status"] = "refused";
         data["reason"] = std::string(mcpp::build::refusal::name(code));
         data["sources"] = nlohmann::json::array();
@@ -1512,6 +1522,25 @@ nlohmann::json compat_uses_json() {
         uses.push_back(std::move(row));
     }
     return uses;
+}
+
+// Each package of the resolved graph, the features its manifest declares and
+// those the build activates (mcpp#992), read from the record the preparation
+// wrote: what is stated is what a tool reading `resolution.json` sees.
+nlohmann::json graph_features_json(const std::filesystem::path& recordPath) {
+    nlohmann::json packages = nlohmann::json::array();
+    std::ifstream in(recordPath);
+    const auto doc = in ? nlohmann::json::parse(in, nullptr, false) : nlohmann::json{};
+    if (!doc.is_object() || !doc.contains("graph") || !doc["graph"].is_object()) return packages;
+    for (auto const& e : doc["graph"].value("packages", nlohmann::json::array()))
+        packages.push_back({
+            {"package", e.value("package", nlohmann::json::object())},
+            {"root", e.value("root", false)},
+            {"manifest_dir", e.value("manifest_dir", std::string{})},
+            {"features", {{"list", e.value("feature_list", nlohmann::json::array())},
+                          {"active", e.value("features", nlohmann::json::array())}}},
+        });
+    return packages;
 }
 
 // The selection of a request (SPEC-016 §4) as the machine output states it.
@@ -1592,7 +1621,9 @@ export int why_target_or_flags_json(std::string_view topic, std::string_view tar
     return ctx ? 0 : 2;
 }
 
-export int why_build_programs_or_compat_json(std::string_view topic, const std::string& features) {
+// `mcpp why build-programs|compat|features --format json`: a record the
+// preparation wrote, read back.
+export int why_records_json(std::string_view topic, const std::string& features) {
     const bool wasQuiet = mcpp::ui::is_quiet();
     mcpp::ui::set_quiet(true);
     struct QuietGuard {
@@ -1610,9 +1641,12 @@ export int why_build_programs_or_compat_json(std::string_view topic, const std::
         diags.push_back({.code = "prepare.failed", .severity = mcpp::wire::Severity::Error,
                          .message = ctx.error()});
     if (topic == "compat") data["uses"] = compat_uses_json();
+    else if (topic == "features")
+        data["packages"] = ctx ? graph_features_json(ctx->plan.outputDir / "resolution.json")
+                               : nlohmann::json::array();
     else data["graphs"] = ctx ? build_programs_json(ctx->projectRoot) : nlohmann::json::array();
     mcpp::wire::emit({
-        .kind        = topic == "compat" ? "mcpp.why.compat" : "mcpp.why.build-programs",
+        .kind        = std::format("mcpp.why.{}", topic),
         .effects     = { mcpp::wire::Effect::ReadProject },
         .data        = data,
         .diagnostics = diags,
@@ -1625,12 +1659,12 @@ export int why_report(const std::string& topic, const std::string& features,
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
         "all", "target", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool",
-        "payload", "build-programs", "compat", "flags", "platform",
+        "payload", "build-programs", "compat", "flags", "platform", "features",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
         std::println(libc::stderr(), "error: '{}' is not a topic of `mcpp why`; the topics are "
                      "target, toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
-                     "payload <ns:name>, build-programs, compat, flags [<unit>] and platform", topic);
+                     "payload <ns:name>, build-programs, compat, flags [<unit>], platform and features", topic);
         return 2;
     }
 
@@ -1687,6 +1721,38 @@ export int why_report(const std::string& topic, const std::string& features,
             std::println("  serves  {:<28} {:<20} priority {}", s.identity, s.provider, s.priority);
         for (auto const& w : mp::check_statement(*at.statement, name).warnings)
             std::println("  warning: {}", w);
+        return 0;
+    }
+    // THE FEATURES OF EACH PACKAGE OF THE GRAPH (mcpp#992): those it declares,
+    // which are its defaults, and which this build activates.
+    if (topic == "features") {
+        std::println("features:");
+        for (auto const& p : graph_features_json(ctx->plan.outputDir / "resolution.json")) {
+            std::println("  {}{}", p["package"].value("canonical", std::string("?")),
+                         p.value("root", false) ? "  (root)" : "");
+            auto const& f = p["features"];
+            if (f["list"].empty()) std::println("    (declares none)");
+            for (auto const& e : f["list"]) {
+                const auto name = e.value("name", std::string{});
+                std::string marks;
+                if (e.value("default", false)) marks += "default";
+                if (std::ranges::find(f["active"], nlohmann::json(name)) != f["active"].end())
+                    marks += marks.empty() ? "active" : ", active";
+                auto joined = [&](std::string_view key) {
+                    std::string out;
+                    for (auto const& x : e.value(std::string(key), nlohmann::json::array()))
+                        out += (out.empty() ? std::string(key) + " " : ", ") + x.get<std::string>();
+                    return out;
+                };
+                auto edges = joined("implies");
+                if (auto en = joined("enables"); !en.empty()) edges += (edges.empty() ? "" : "; ") + en;
+                auto line = std::format("    {:<20} {:<16} {}", name, marks, edges);
+                while (line.ends_with(' ')) line.pop_back();
+                std::println("{}", line);
+                if (auto d = e.value("description", std::string{}); !d.empty())
+                    std::println("      {}", d);
+            }
+        }
         return 0;
     }
     // EVERY WORD OF A UNIT'S COMMAND LINE AND WHO GAVE IT (mcpp#911 G2).
@@ -2024,7 +2090,7 @@ export int self_init(bool force, std::string_view target = {}) {
         const auto selected = mcpp::home::selection();
         if (selected.redirected) {
             mcpp::ui::status("Home", mcpp::home::spelling(selected.effective));
-            mcpp::ui::warning("--force rebuilds this home's registry and caches; its locator and previous home data are retained");
+            mcpp::diag::warning("doctor", "--force rebuilds this home's registry and caches; its locator and previous home data are retained");
         }
         // --force: delete registry (sandbox) + caches and re-bootstrap.
         // Preserves: bin/mcpp (self-contained mode), config.toml, log/.

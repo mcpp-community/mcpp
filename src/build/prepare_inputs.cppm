@@ -486,8 +486,10 @@ inline bool uses_layer(const std::string& predicate) {
                                [](auto const& k) { return is_cfg_late_layer_key(k); });
 }
 
-// The systems the rows name (built-in and defined), and the family word.
-inline std::vector<std::string> system_barewords() {
+// The systems the rows name (built-in and defined), and the family word. Not inline: GCC 16.1
+// emitted the std::set<std::string> members it instantiates in no object once no other module of
+// the binary instantiated them, and an importer then failed to link.
+std::vector<std::string> system_barewords() {
     std::set<std::string> systems;
     for (auto const* r : mcpp::toolchain::target::rows())
         if (!r->os.empty()) systems.emplace(r->os);
@@ -552,6 +554,19 @@ find_target_entry(const mcpp::manifest::Manifest& m,
     return nullptr;
 }
 
+// The section a `--target` request matches: the key written as the request,
+// else the section of the row the request parses to (`parsed`, which the
+// selection may have completed). One lookup for the refusal of an unknown or
+// `planned` row and for the refresh of the platform column (mcpp#996), so
+// the two cannot disagree about whether a section answers the request.
+inline const mcpp::manifest::TargetEntry*
+find_request_entry(const mcpp::manifest::Manifest& m, std::string_view request,
+                   const std::optional<mcpp::toolchain::triple::Triple>& parsed) {
+    if (auto it = m.targetOverrides.find(std::string(request)); it != m.targetOverrides.end())
+        return &it->second;
+    return parsed ? find_target_entry(m, *parsed) : nullptr;
+}
+
 std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
                                  const mcpp::toolchain::Fingerprint& fp,
                                  const std::filesystem::path& root)
@@ -607,6 +622,7 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
     if (root.buildConfig.ndebug)    s += " ndebug=1";
     if (root.buildConfig.trimPaths) s += " trim_paths=1";
     if (root.buildConfig.splitDebuginfo) s += " split_debuginfo=1";
+    if (!root.buildConfig.dependencyDebug.empty()) s += " dependency_debug=" + root.buildConfig.dependencyDebug;
     if (!root.buildConfig.dependencyLinkage.empty()) {
         s += " deplinkage=";
         s += root.buildConfig.dependencyLinkage;

@@ -572,17 +572,20 @@ UTest the_runner_reaches_the_artifacts_architecture{"PlatformRun/TheRunnerReache
         expect(eq(pf::runner_reach(*r.runner, r.target, "x86_64", r.executionHost, r.noRunner), r.want))
             << r.runner->host << " " << r.target << " executionHost=" << r.executionHost
             << " noRunner=" << r.noRunner;
-    // N23: an x86_64 Linux machine executes i686 (the execution table), so a same-arch runner
-    // is built for i686 and started here; elsewhere the table states nothing and it is refused.
-    const bool linuxHost = std::string_view(mcpp::toolchain::platform::name) == "linux";
+    // N23: an x86_64 Linux machine executes i686, and so does an x86_64 Windows machine (WOW64);
+    // the execution table states both, so a same-arch runner is built for i686 and started here.
+    // Elsewhere the table states nothing and it is refused.
+    const std::string_view system = mcpp::toolchain::platform::name;
+    const bool executesI686 = system == "linux" || system == "windows";
     expect(eq(pf::runner_reach(same, "i686", "x86_64", false, false),
-              linuxHost ? R::TargetArchitecture : R::Refused));
+              executesI686 ? R::TargetArchitecture : R::Refused));
 }};
 
 UTest the_execution_table_states_measured_relations{"PlatformRun/TheExecutionTableStatesMeasuredRelations", [] {
     namespace tt = mcpp::toolchain::target;
     expect(tt::executes("linux-x86_64", "i686"));
     expect(tt::executes("linux-x86_64", "x86_64"));       // its own architecture
+    expect(tt::executes("windows-x86_64", "i686"));       // WOW64
     expect(!tt::executes("linux-aarch64", "i686"));
     expect(!tt::executes("macos-aarch64", "x86_64"));     // not stated: not measured
     expect(!tt::execution_relations().empty());
@@ -763,6 +766,12 @@ UTest a_repository_reference_has_a_string_form{"PlatformManifest/ARepositoryRefe
     expect(deflt->spec.gitRev.empty());
     expect(!mp::parse_ref_text("git+https://example.org/x.git#sha=1").has_value());
     expect(!mp::parse_ref_text("git+").has_value());
+    // The directory form a provider of a path platform names its package by.
+    auto dir = mp::parse_ref_text("path:/srv/raw-platform");
+    expect(fatal(dir.has_value()));
+    expect(eq(dir->spec.path, "/srv/raw-platform"));
+    expect(dir->payload.empty());
+    expect(!mp::parse_ref_text("path:").has_value());
 }};
 
 // A PLATFORM'S STATEMENT IS CHECKED AGAINST THE ROWS AS IT IS READ (SPEC-016 §5):

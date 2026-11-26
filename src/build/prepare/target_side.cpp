@@ -17,6 +17,7 @@ import mcpp.toolchain.platform;
 import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
+import mcpp.pm.package_manifest;   // the features of a graph entry (mcpp#992)
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
 import mcpp.graph;
@@ -155,7 +156,7 @@ step9_gather_target_side_candidates(PrepareState& state) {
                 // error it replaced would be a worse diagnostic wearing a
                 // milder severity.
                 auto why = tsd::parse_capability(cap);
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "package '{}': {}\n"
                     "       Ignored, and this build proceeds without that layer. "
                     "A newer mcpp may resolve it.",
@@ -582,7 +583,7 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
                     auto spec = mcpp::freestanding::resolve(*tt);
                     if (spec) {
                         freestandingFlags.push_back(
-                            "--target=" + std::string(spec->triple));
+                            "--target=" + std::string(spec->target));
                         for (auto const& f : mcpp::freestanding::compile_flags(*spec))
                             freestandingFlags.push_back(f);
                     }
@@ -733,6 +734,33 @@ static const mcpp::modgraph::PackageRoot* kernel_abi_provider(const PrepareState
         return &pkg;
     }
     return nullptr;
+}
+
+// THE KERNEL-ABI LAYER'S INTERFACES (design 2026-11-22 §3.17): its package's
+// `[kernel-abi] provides-interfaces`, or, where the layer is the system itself,
+// the system's statement (`[[platform.system]] interfaces`). One list answers
+// `cfg(interface = …)`, the report and `mcpp why toolchain`. A package that
+// states none, and a system that states none, provide every interface.
+static void step9_kernel_abi_interfaces(PrepareState& state) {
+    auto& l = state.resolvedTargetSide.kernelAbi;
+    if (auto const* pkg = kernel_abi_provider(state)) {
+        l.interfaces = pkg->manifest.kernelAbiProvidesInterfaces;
+        l.interfacesStated = true;
+        return;
+    }
+    if (l.absent() || l.fromGraph() || !state.tc) return;
+    auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+    if (!tt) return;
+    // The row's statement, then its system's.
+    if (auto const* row = mcpp::toolchain::target::find_row(tt->str()); row && row->interfacesStated) {
+        l.interfaces.assign(row->interfaces.begin(), row->interfaces.end());
+        l.interfacesStated = true;
+        return;
+    }
+    auto const* sys = mcpp::toolchain::target::find_system(tt->os);
+    if (!sys || !sys->interfacesStated) return;
+    l.interfaces.assign(sys->interfaces.begin(), sys->interfaces.end());
+    l.interfacesStated = true;
 }
 
 static std::expected<void, std::string>
@@ -1166,16 +1194,21 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
         if (auto conflict = cabi_identity(state); !conflict) return std::unexpected(conflict.error());
         if (auto why = tsd::check_request(state.resolvedTargetSide))
             mcpp::diag::warning("target", *why);
+    return {};
+}
 
-        // The refusal held since toolchain resolution, released now that the
-        // other half of its question has an answer. A payload on this machine
-        // does not produce this target; if the graph does not supply the
-        // target's system either, then nothing does and the diagnosis stands.
-        if (!state.unservedTargetDiagnosis.empty()
-            && !state.resolvedTargetSide.system_from_graph()) {
-            refusal::record(refusal::Code::HostCannotServe);
-            return std::unexpected(state.unservedTargetDiagnosis);
-        }
+// The refusal held since toolchain resolution, released as soon as the other
+// half of its question has an answer: the target side. A payload on this
+// machine does not produce this target; if the graph does not supply the
+// target's system either, then nothing does and the diagnosis stands. It comes
+// before every decision that presumes a system to build for -- the kernel
+// headers above all, which would otherwise refuse first and name a remedy that
+// cannot help (e2e 890 on a macOS host).
+static std::expected<void, std::string> step9_host_cannot_serve(PrepareState& state) {
+    if (!state.unservedTargetDiagnosis.empty() && !state.resolvedTargetSide.system_from_graph()) {
+        refusal::record(refusal::Code::HostCannotServe);
+        return std::unexpected(state.unservedTargetDiagnosis);
+    }
     return {};
 }
 
@@ -1270,7 +1303,7 @@ step9_pin_and_linkage_diagnostics(PrepareState& state) {
         // release fixes — see `TargetSide::system_from_graph`'s own note.
         if (state.resolvedTargetSide.cAbi.fromGraph()
             && state.m->buildConfig.linkage == "dynamic")
-            mcpp::ui::warning(
+            mcpp::diag::warning("build", 
                 "`linkage = \"dynamic\"` has no effect when the "
                 "target's system comes from the dependency graph: those "
                 "packages are compiled into this build as objects, and there "
@@ -1520,10 +1553,8 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
         layerCtx.kernelAbi       = state.resolvedTargetSide.kernelAbi.interfaceName;
         layerCtx.cAbi            = state.resolvedTargetSide.cAbi.interfaceName;
         layerCtx.cxxAbi          = state.resolvedTargetSide.cxx.interfaceName;
-        if (auto const* pkg = kernel_abi_provider(state)) {
-            layerCtx.interfaces       = pkg->manifest.kernelAbiProvidesInterfaces;
-            layerCtx.interfacesStated = true;
-        }
+        layerCtx.interfaces       = state.resolvedTargetSide.kernelAbi.interfaces;
+        layerCtx.interfacesStated = state.resolvedTargetSide.kernelAbi.interfacesStated;
         // A REQUIREMENT A LAYER DECIDES IS CHECKED NOW, WHEN THE LAYERS ARE
         // KNOWN. `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
         // ["mcpp:compiler-runtime=compiler-rt"]` states what one compiler needs
@@ -1819,6 +1850,17 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
         // resolution.json only: the graph document a build program reads is
         // part of its re-run key, and must not change with when it is asked.
         if (!forBuildProgram) {
+            // The features the package declares and those this build activates
+            // (mcpp#992), in the shape `mcpp search` states a version's: what
+            // `mcpp why features` reads. Not in the build program's document,
+            // whose re-run key a description would change.
+            {
+                nlohmann::json active = nlohmann::json::array();
+                if (i < state.activeFeaturesByPackage.size())
+                    for (auto const& f : state.activeFeaturesByPackage[i]) active.push_back(f);
+                entry["features"] = std::move(active);
+                entry["feature_list"] = mcpp::pm::feature_list_json(mcpp::manifest::feature_catalog(pm));
+            }
             // The package's root as the build reads it (its patches applied):
             // the tree a patch of it is written from (docs/05).
             std::error_code ec;
@@ -1828,9 +1870,12 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
             // A member's program keeps its cache in the project (step 9).
             const bool member = state.m->package.virtualRoot && i != 0
                              && state.isWorkspaceMemberPackage(i);
-            entry["outDir"] = state.programOutDir(member ? *state.root : state.workRoot, pm,
-                                                  i < state.activeFeaturesByPackage.size()
-                                                      ? state.activeFeaturesByPackage[i] : none)
+            const auto home = state.programOutDirs.find(i);
+            entry["outDir"] = (home != state.programOutDirs.end()
+                                   ? home->second
+                                   : state.programOutDir(member ? *state.root : state.workRoot, pm,
+                                                         i < state.activeFeaturesByPackage.size()
+                                                             ? state.activeFeaturesByPackage[i] : none))
                                   .generic_string();
             return entry;
         }
@@ -2015,7 +2060,7 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
                 for (auto const& w : watched) {
                     for (auto const& [pkgName, dir] : prepareDirs) {
                         if (!isUnder(w, dir)) continue;
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "{}'s build.mcpp re-runs on '{}', which is inside "
                             "'{}', the directory package '{}' declared with a "
                             "`prepare` action's output_dir. That directory is "
@@ -2102,6 +2147,9 @@ std::expected<void, std::string> phase9_target_side(PrepareState& state) {
     if (!gather) return std::unexpected(gather.error());
     if (auto r = step9_resolve_and_realise_cabi(state, *gather); !r)
         return std::unexpected(r.error());
+    if (auto r = step9_host_cannot_serve(state); !r) return std::unexpected(r.error());
+    if (auto r = step9_kernel_headers(state); !r) return std::unexpected(r.error());
+    step9_kernel_abi_interfaces(state);
     if (auto r = step9_target_side_include_broadcast(state, *gather); !r)
         return std::unexpected(r.error());
     if (auto r = step9_kernel_abi_interfaces_and_requirements(state, *gather); !r)

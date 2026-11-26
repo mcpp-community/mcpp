@@ -173,7 +173,7 @@ e2e::outcome python(std::string_view driver, std::vector<std::pair<std::string, 
     return e2e::run({.argv = {python3->string(), file.string()}, .env = std::move(env), .timeout = std::chrono::minutes{10}});
 }
 
-E2E progress{"progress", [] {
+E2E progress{"progress", s::home_fixture, [] {
     "1013 optional action progress preserves outputs"_test[s::gcc][s::unix_shell][s::python3] = [] {
         // An action that reports progress through its execution channel, for every role: the
         // channel is shown through a terminal (plain and verbose) and removed after; turning it

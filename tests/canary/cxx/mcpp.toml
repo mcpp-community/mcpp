@@ -9,4 +9,4 @@ kind = "bin"
 main = "src/main.cpp"
 
 [dev-dependencies]
-mcpplibs.mtest = "0.10.0"
+mcpplibs.mtest = "0.11.3"

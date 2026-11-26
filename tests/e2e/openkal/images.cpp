@@ -163,7 +163,10 @@ __attribute__((no_stack_protector)) int ok_main(void) {
 constexpr std::string_view caught_main = "import std;\nint main(int argc, char** argv) {\n    try { throw std::runtime_error(\"caught\"); }\n    catch (const std::exception& e) { std::println(\"image: {} ({} args)\", e.what(), argc); }\n    return 0;\n}\n";
 constexpr std::string_view smoke_test = "import std;\nint main() { std::vector<int> v{2, 1}; std::ranges::sort(v); return v.front() == 1 ? 0 : 1; }\n";
 
-E2E images{"images", [] {
+// The ok images of this architecture and the runtime each first run builds: 707 s in a Linux shard
+// of three, 1102 s in a shard of two, of the run's 1200 (CI, 2026-11-21); stated, so the run's
+// limit is not raised for every test.
+E2E images{"images", s::home_fixture, timeout{std::chrono::minutes{30}}, [] {
     "942 an ok image is built once and run by okrun"_test[s::llvm][s::python3] = [] {
         // A both rows publish bin/app.oke, an ET_DYN of their architecture, and no unchecked
         // image; B okrun runs this machine's image with its arguments, environment, a callback,
@@ -511,6 +514,9 @@ int main(int argc, char** argv) {
 )cpp"},
                                      {"tests/smoke.cpp", "import std;\nint main() { return std::format(\"{}-{}\", 1, 2) == \"1-2\" ? 0 : 1; }\n"}});
         const std::string ht = std::string(host_arch) + "-openkal";
+        // The first run builds the platform's runtime (1,636 edges): beyond ten minutes on a
+        // four-processor Windows runner whose other tests share the run's budget (CI, 2026-11-21),
+        // within the suite's time.
         auto r = app.mcpp({"run", "--target", ht, "--", "one", "two words"}, {.env = {{"MCPP_E2E_1033", "here"}}});
         expect(fatal(e2e::succeeded(r))) << "A: mcpp run --target " << ht << ": " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "args=[one][two words] env=here sum=55"))) << "A: the image's output: " << s::text(r);

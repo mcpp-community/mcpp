@@ -31,6 +31,14 @@ on:
         description: whether the set gives this host any case
         type: boolean
         default: true
+      history:
+        description: the run whose stores the plan divided by (`none` for none); empty to resolve it
+        type: string
+        default: ''
+      coverage:
+        description: the run whose coverage map the plan read (`none` for none); empty to resolve it
+        type: string
+        default: ''
 
 jobs:
   e2e:
@@ -84,8 +92,8 @@ jobs:
           # explicitly, not assumed: the restored sandbox is the build job's,
           # and a toolchain that only happens to be in it is a dependency on a
           # cache.
-          "$MCPP" toolchain install gcc 16.1.0
-          "$MCPP" toolchain default gcc@16.1.0
+          "$MCPP" toolchain install gcc 16.2.0
+          "$MCPP" toolchain default gcc@16.2.0
           # The toolchains whose capabilities the suite probes (run_all.sh):
           # musl, llvm (which also yields scan-deps and import-std-libcxx) and
           # the Linux-hosted MinGW cross compiler. Without them their tests
@@ -93,7 +101,7 @@ jobs:
           # nowhere. Warm runs re-install nothing.
           "$MCPP" toolchain install gcc 16.1.0-musl
           "$MCPP" toolchain install llvm 23.1.3
-          "$MCPP" toolchain install mingw-cross 16.1.0
+          "$MCPP" toolchain install mingw-cross 16.2.0
           XLINGS_HOME="$MCPP_HOME/registry" "$MCPP_VENDORED_XLINGS" install xim:nasm -y
           # The index payloads e2e 32, 33 and 40 link from this home into their
           # own (_inherit_toolchain.sh). Installed in a test home instead, they
@@ -105,6 +113,8 @@ jobs:
       - uses: ./.github/actions/e2e-mtest
         with:
           host: linux
+          history: ${{ inputs.history }}
+          coverage: ${{ inputs.coverage }}
 
       - name: E2E suite
         # About twice the shard's budget of ten minutes (R4): reached only by a
@@ -122,6 +132,13 @@ jobs:
           # the global mirror while mcpp's default remains CN for fresh local
           # sandboxes. E2E tests with their own MCPP_HOME read this variable.
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          # 992 packs one image for every system, so it compiles the openkal
+          # stack once per leg. It took 465.6 s on 2026-11-24 (main, green) and
+          # has passed the 600 s limit on every runner since 2026-11-25, with
+          # and without a warm sandbox (main at 5032751e and 5d5c125c fail it
+          # alike). 900 s keeps the hung-test bound and leaves the shard well
+          # inside this step's 22 minutes.
+          export E2E_TEST_TIMEOUT=900
           "$MCPP" self config
           bash tests/e2e/run_all.sh
 
@@ -190,7 +207,7 @@ jobs:
         run: |
           set -euo pipefail
           export MCPP_HOME=/mnt/nfs/mcpp-home
-          "$MCPP" toolchain install gcc 16.1.0
+          "$MCPP" toolchain install gcc 16.2.0
           cd /mnt/nfs
           "$MCPP" new hello
           cd hello
@@ -386,8 +403,8 @@ jobs:
         run: |
           export MCPP MCPP_VENDORED_XLINGS
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
-          "$MCPP" toolchain install gcc 16.1.0
-          "$MCPP" toolchain default gcc@16.1.0
+          "$MCPP" toolchain install gcc 16.2.0
+          "$MCPP" toolchain default gcc@16.2.0
           # Run directly, not through run_all.sh, so a skip cannot pass as a
           # green: each script either prints its PASS line or this step fails.
           declare -A pass=(
@@ -469,7 +486,7 @@ jobs:
 
       - name: Bootstrap xlings + released mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.11.17.2
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.11.23.1
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
           xlings install mcpp -y -g

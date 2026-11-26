@@ -109,3 +109,17 @@ UTest thirty_two_bit_hosted_rows_are_registered_intent{"TripleVocabulary/ThirtyT
         if (k) expect(k->tier == "planned");
     }
 }};
+
+UTest a_vendor_segment_is_any_word{"TripleVocabulary/AVendorSegmentIsAnyWord", [] {
+    // mcpp#989: GNU config.sub's rule. A distribution's compiler names itself in the segment after
+    // the architecture (`x86_64-redhat-linux`); the system segments after it stay strict.
+    for (auto spelling : {"x86_64-redhat-linux", "x86_64-suse-linux", "x86_64-redhat-linux-gnu"}) {
+        auto t = tr::parse(spelling);
+        expect(fatal(t.has_value())) << spelling;
+        expect(eq(t->os, std::string("linux"))) << spelling;
+        expect(eq(t->env, std::string("gnu"))) << spelling;
+    }
+    expect(!tr::parse("x86_64-redhat-nosuchos").has_value()) << "a system segment stays strict";
+    expect(!tr::parse("x86_64-linux-nosuchenv").has_value()) << "an env segment stays strict";
+    expect(!tr::parse("x86_64-wasi").has_value()) << "a second segment with nothing after it is a system";
+}};

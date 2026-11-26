@@ -610,10 +610,15 @@ constexpr const mcpp::toolchain::target::Provider* default_provider_of(std::stri
     return best;
 }
 
-constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
+// A row seen through the provider that serves it: the toolchain it pins, the
+// C library it brings, its linkage and the platform package that implements it.
+// One function for the built-in table, a provider other than the default, and a
+// row a platform package defines, so the three cannot disagree on a field.
+constexpr TargetInfo view_of(const mcpp::toolchain::target::Row& r,
+                             const mcpp::toolchain::target::Provider* p) {
     TargetInfo t{ r.triple, r.tier, r.note, {}, {}, false };
     t.row = &r;
-    t.provider = default_provider_of(r.triple);
+    t.provider = p;
     if (t.provider) {
         t.pin = t.provider->toolchain;
         t.sysroot = t.provider->sysroot == "toolchain" ? std::string_view{} : t.provider->sysroot;
@@ -621,6 +626,10 @@ constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
         t.platform = t.provider->platform;
     }
     return t;
+}
+
+constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
+    return view_of(r, default_provider_of(r.triple));
 }
 
 inline constexpr auto kKnownTargets = [] {
@@ -752,48 +761,50 @@ inline bool Triple::loads_on_host() const {
 // Changing a pin: update this block, then sync docs/20-toolchains.md and the
 // README platform table (drawn from kKnownTargets above).
 namespace pins {
-    // First-run auto-install defaults (prepare.cppm), per host platform/arch.
-    //
-    // macOS and Windows shared ONE pin until 2026.8.2.1. They must not:
-    // Apple ships no GCC, so upstream LLVM with bundled libc++ is the only
-    // self-contained choice there — but on Windows clang targets the MSVC
-    // ABI (host triple env=msvc) and therefore uses the MSVC STL, which only
-    // arrives with Visual Studio's "Desktop development with C++" workload.
-    // A bare Windows box got a default it could never build with, and no
-    // diagnostic. The Windows pin is now chosen by detection, not by
-    // sharing macOS's answer.
-    // The llvm pin moves with the LLVM line (SPEC-009 §10). 23.1.3 is the
-    // first point release carrying the macOS 27 SDK's arm64e.x1 linker fix
-    // (mcpp#669; landed on release/23.x as ee66426) — every earlier release
-    // fails to link against that SDK with a malformed-TAPI error.
-    inline constexpr std::string_view kFirstRunMac          = "llvm@23.1.3";
-    // Windows WITH a usable MSVC (STL + SDK, see msvc::has_usable_msvc()):
-    // unchanged behavior. The MSVC ABI is what lets a project link vcpkg /
-    // third-party .lib artifacts, so it stays the answer when it can work.
-    inline constexpr std::string_view kFirstRunWinMsvc      = "llvm@23.1.3";
-    // Windows WITHOUT one: winlibs GCC targeting PE/GNU. Fully self-contained
-    // (static libstdc++/libgcc, its own UCRT), zero Visual Studio dependency,
-    // `import std` works. Must stay equal to the x86_64-windows-gnu row's
-    // `pin` in kKnownTargets above — test_windows_defaults.cpp enforces it.
-    inline constexpr std::string_view kFirstRunWinGnu       = "gcc@16.1.0";
-    inline constexpr std::string_view kFirstRunWinGnuTarget = "x86_64-windows-gnu";
-    // Linux x86_64 keeps the gcc family as its host default (SPEC-009
-    // §4.1 reason, recorded 2026.10 with the LLVM 23.1.3 line move): native
-    // glibc ABI, so X11/OpenGL and other system libraries link directly.
-    // This is the platform's answer, not a lag behind the llvm line — no
-    // exit condition.
-    inline constexpr std::string_view kFirstRunLinuxX86_64  = "gcc@16.1.0";
-    // Native Linux ARM64 uses the managed LLVM payload and glibc ABI.
-    inline constexpr std::string_view kFirstRunLinuxAarch64 = "llvm@23.1.3";
-    // Other Linux hosts have no managed glibc gcc payload, so the
-    // default is the fully static musl one: the only self-contained choice
-    // on this axis (SPEC-009 §4.1 reason; re-evaluate if a managed glibc
-    // gcc for these hosts ships).
-    inline constexpr std::string_view kFirstRunLinuxOther   = "gcc@15.1.0-musl";
-    // Suggested install spellings used by help / MCPP_NO_AUTO_INSTALL errors.
-    inline constexpr std::string_view kSuggestLlvm          = "llvm 23.1.3";
-    inline constexpr std::string_view kSuggestGccMusl       = "gcc 15.1.0-musl";
-    inline constexpr std::string_view kSuggestGccMingw      = "gcc 16.1.0";
+    // THE DEFAULTS ARE DATA: `[[default]]` of data/builtin.toml (design
+    // 2026-11-21, offline and toolchain defaults §3.7), read here at compile
+    // time. The names below are the hosts' answers that messages and the
+    // first run name; each is a lookup, so no version is written in code.
+    // Why each host has its answer is stated beside its entry in the data.
+    consteval std::string_view first_run(std::string_view os, std::string_view arch, std::string_view when = {}) {
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults,
+                                                            "toolchain", os, arch, when);
+        return d ? d->use : std::string_view{};
+    }
+    consteval std::string_view first_run_target(std::string_view os, std::string_view arch, std::string_view when) {
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults,
+                                                            "toolchain", os, arch, when);
+        return d ? d->target : std::string_view{};
+    }
+    // THIS HOST'S FIRST RUN, named by the host's own tokens and not by a word
+    // of the engine (AGENTS.md §2): `when` is `msvc` or `no-msvc` where a row
+    // is conditioned on a usable MSVC, and a row that states no condition
+    // answers either. A host with no row of its own takes its family's
+    // (`linux-*`).
+    inline constexpr std::string_view kFirstRunMsvc =
+        first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "msvc");
+    inline constexpr std::string_view kFirstRunNoMsvc =
+        first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "no-msvc");
+    // The target the first run without MSVC builds for, where its row states
+    // one (the MinGW row: `x86_64-windows-gnu`); empty elsewhere.
+    inline constexpr std::string_view kFirstRunNoMsvcTarget =
+        first_run_target(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "no-msvc");
+
+    // `mcpp toolchain install`'s words for a default: `llvm@23.1.3` is
+    // `llvm 23.1.3`.
+    inline std::string install_words(std::string_view spec) {
+        std::string out(spec);
+        if (auto at = out.find('@'); at != std::string::npos) out[at] = ' ';
+        return out;
+    }
+
+    // A bootstrap tool's version on this machine.
+    consteval std::string_view tool_version(std::string_view tool) {
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults, tool,
+                                                            mcpp::toolchain::platform::name,
+                                                            mcpp::toolchain::platform::host_arch);
+        return d ? mcpp::toolchain::target::version_of(d->use) : std::string_view{};
+    }
 
     // THE DEFAULT TOOLCHAIN OF THIS HOST, ANSWERED ONCE (the 2026-09-28
     // design, WS8): what a build with nothing configured resolves. The first
@@ -802,20 +813,8 @@ namespace pins {
     // report on each host's CI row. `msvcUsable` is the one input a constant
     // cannot know -- whether a usable MSVC (STL and SDK, from Visual Studio or
     // a managed toolset) is on this machine, which decides the Windows row.
-    inline std::string_view linux_default_toolchain(std::string_view arch) {
-        if (arch == "x86_64") return kFirstRunLinuxX86_64;
-        if (arch == "aarch64") return kFirstRunLinuxAarch64;
-        return kFirstRunLinuxOther;
-    }
-
     inline std::string_view host_default_toolchain(bool msvcUsable) {
-        if constexpr (mcpplibs::os::is_macos) {
-            return kFirstRunMac;
-        } else if constexpr (mcpplibs::os::is_windows) {
-            return msvcUsable ? kFirstRunWinMsvc : kFirstRunWinGnu;
-        } else {
-            return linux_default_toolchain(mcpp::toolchain::platform::host_arch);
-        }
+        return msvcUsable ? kFirstRunMsvc : kFirstRunNoMsvc;
     }
 } // namespace pins
 
@@ -1152,6 +1151,13 @@ std::optional<Triple> parse(std::string_view s) {
         if (sawOs && t.env.empty() && mcpp::toolchain::target::defines_env(t.os, k)) {
             t.env = std::string(k); t.envExplicit = true; continue;
         }
+        // THE VENDOR IS ANY WORD (mcpp#989), as GNU config.sub reads it: the
+        // segment after the architecture, when a system segment follows, names
+        // whoever built the compiler and nothing about the target. A
+        // distribution's own compiler states it (`x86_64-redhat-linux`,
+        // `x86_64-suse-linux`), and that is `x86_64-linux-gnu`. The segments
+        // after it stay strict.
+        if (i == 1 && !sawOs && tok.size() > 2) continue;
         // Unrecognized segment (wasi, …): not in mcpp's target language —
         // treat as unparseable rather than guessing.
         return std::nullopt;

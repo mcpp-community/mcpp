@@ -21,6 +21,63 @@ export namespace mcpp::effects {
 // MCPP_OFFLINE. "0" and the empty string mean off, matching MCPP_VERBOSE.
 bool offline_mode();
 
+// THE BOOTSTRAP TOOLS THIS RUN TAKES FROM THE MACHINE'S PATH (`[build]
+// allow_host_tools`, design 2026-11-21, offline and toolchain defaults §3.3):
+// MCPP_ALLOW_HOST_TOOLS, a comma list (`ninja,patchelf`; `none` takes none).
+bool host_tool_allowed(std::string_view tool);
+
+// ── Keys that hold for a whole run (SPEC-004 §2) ─────────────────────────
+//
+// `[build] offline`, `[build] allow_host_tools` and `[xlings] archives` hold
+// for the run and for the programs it starts, so each is stated once, as its
+// variable (MCPP_OFFLINE, MCPP_ALLOW_HOST_TOOLS, MCPP_ARCHIVES): the variable
+// as the caller gave it (the override tier), else the project's statement,
+// else the machine's. `state_key` records a tier's statement, replacing that
+// tier's earlier one, and the variable holds the highest tier's; `withdraw_key`
+// removes a tier's statement. A workspace run plans its configuration groups
+// one after another in one process, each with its own root, so each plan
+// states or withdraws the project's tier and no plan reads another's.
+// `key_origin` names the tier that answered, so a message says where the value
+// is changed. Every reader reads the variable alone.
+enum class Tier { None, Machine, Project, Override };
+struct KeyOrigin {
+    Tier        tier = Tier::None;
+    std::string where;   // "mcpp.toml [build] offline", "MCPP_OFFLINE", ...
+};
+void state_key(std::string_view var, Tier tier, std::string value, std::string where);
+void withdraw_key(std::string_view var, Tier tier);
+KeyOrigin key_origin(std::string_view var);
+
+// How this run came to be offline, as the way back: "run without --offline
+// (or unset MCPP_OFFLINE)", "set `offline = false` in mcpp.toml [build]", ...
+std::string offline_remedy();
+
+// THE ARCHIVE DIRECTORIES OF THIS RUN (`[xlings] archives`, MCPP_ARCHIVES;
+// design 2026-11-21 §3.2): directories whose archives xlings takes by sha256,
+// before the network and in its place offline.
+std::vector<std::filesystem::path> archive_dirs();
+
+// WHERE A PAYLOAD THE HOME LACKS MAY COME FROM. `Network`: every source, the
+// local ones first. `Local`: offline, with archive directories -- the download
+// cache and those directories, never the network. `None`: offline without an
+// archive directory, where a run installs nothing, as offline always meant.
+enum class InstallSources { Network, Local, None };
+InstallSources install_sources();
+
+// WHAT THIS RUN TOOK FROM OUTSIDE THE PROJECT (design 2026-11-21 §3.2): each
+// payload it used, `<index>:<name>@<version>`, and each git clone. `mcpp fetch
+// --to` writes them into a bundle; a payload's own dependencies are its
+// provider's to close.
+struct GitInput {
+    std::string           url;
+    std::string           commit;
+    std::filesystem::path clone;
+};
+void note_package_used(std::string ref);
+void note_git_used(GitInput input);
+std::vector<std::string> packages_used();
+std::vector<GitInput>    git_used();
+
 // THE EFFECTS THIS RUN MAY NOT HAVE (design 2026-10-26 §5.5, D8).
 //
 // `--deny <effect,…>` and MCPP_DENY_EFFECTS name effects of docs/50 §4 the

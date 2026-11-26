@@ -25,6 +25,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # A merge queue's checks, when the repository enables one (design 2026-11-20 §5.22); without
+  # one the event never comes.
+  merge_group:
   workflow_dispatch:
     inputs:
       bench:
@@ -56,8 +59,36 @@ jobs:
     outputs:
       code: ${{ steps.classify.outputs.code }}
       set: ${{ steps.set.outputs.set }}
+      tree: ${{ steps.tree.outputs.tree }}
+      verified: ${{ steps.tree.outputs.verified }}
+      verified_run: ${{ steps.tree.outputs.verified_run }}
     steps:
       - uses: actions/checkout@v4
+
+      # A TREE IS VERIFIED ONCE (design 2026-11-20 §5.22). A `full` run that passes leaves the
+      # artifact `verified-<tree>` (the `verdict` job). A push to main whose tree has one -- the
+      # pull request was verified at its checkpoint and main has not moved since -- runs no test:
+      # it builds, which saves the caches only main's runs write (R3), and registers the verified
+      # run's stores as main's (`register`). Without one it runs `full`.
+      - name: The tree of this run, and whether a run verified it
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          verified=false run=""
+          if [ "$EVENT" = push ]; then
+            run=$(gh api "repos/$REPO/actions/artifacts?name=verified-$tree&per_page=5" \
+                    --jq '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty' 2>/dev/null || true)
+            [ -n "$run" ] && verified=true
+          fi
+          echo "verified=$verified" >> "$GITHUB_OUTPUT"
+          echo "verified_run=$run" >> "$GITHUB_OUTPUT"
+          echo "tree $tree; verified by a run: $verified${run:+ ($run)}"
 
       # The set of cases this run runs (design 2026-11-12 §5.11): a pull
       # request's push runs `pr`, the cases its change affects; a pull request
@@ -71,6 +102,9 @@ jobs:
         run: |
           set=full
           if [ "$EVENT" = pull_request ] && [[ " $LABELS " != *" ci:full "* ]]; then set=pr; fi
+          # The tiers widen to jobs (design 2026-11-20 §7.2): `pr` runs each host's build, gates,
+          # unit shards and the e2e the change affects; the other toolchains' and targets' jobs, the
+          # bootstrap and the newest macOS image run at a checkpoint (`full`).
           echo "set=$set" >> "$GITHUB_OUTPUT"
           echo "the set of this run: $set"
 
@@ -93,6 +127,8 @@ jobs:
               gh api --paginate "repos/$REPO/pulls/$PR/files" \
                 --jq '.[] | .filename, (.previous_filename // empty)' > changed.txt \
                 || { full "the files of the pull request could not be listed"; exit 0; } ;;
+            merge_group)
+              full "a merge queue's group"; exit 0 ;;
             push)
               if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
                 full "a push with no previous commit"; exit 0
@@ -118,7 +154,7 @@ jobs:
   e2e-plan:
     name: the e2e shards of each host
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -131,9 +167,14 @@ jobs:
       windows: ${{ steps.plan.outputs.windows }}
       windows_work: ${{ steps.plan.outputs.windows_work }}
       windows_count: ${{ steps.plan.outputs.windows_count }}
+      # The history and the coverage map the plan divided by: every shard reads
+      # these two runs, so that each computes its part of one division.
+      history: ${{ steps.mtest.outputs.history }}
+      coverage: ${{ steps.mtest.outputs.coverage }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/e2e-mtest
+        id: mtest
         with:
           host: '*'
       - name: The plan
@@ -169,6 +210,9 @@ jobs:
 
       - name: Check modules/ wiring
         run: bash .github/tools/check_modules_wiring.sh
+
+      - name: Check that every warning and note goes through mcpp.diag
+        run: bash .github/tools/check_diag_sink.sh
 
       - name: Check that the engine's sources name no more systems than the baseline
         run: python3 .github/tools/check_system_names.py
@@ -229,6 +273,9 @@ jobs:
       - name: Reason tokens agree with the engine, and with the mirror
         run: bash .github/tools/check_reason_tokens.sh
 
+      - name: The tests wait for a time no more often than the baseline states
+        run: bash .github/tools/check_waits.sh
+
       - name: Only the adapter and the composition root name the provider
         run: python3 .github/tools/check_provider_boundary.py
 
@@ -255,8 +302,9 @@ jobs:
       host: linux-x86_64
       runs-on: ubuntu-24.04
       # What the Linux consumers install beyond the build's own toolchain: the
-      # e2e shards (musl, llvm, mingw-cross), the toolchain legs (musl, llvm).
-      prewarm: gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.1.0
+      # first run's default (gcc 16.2.0), the e2e shards (musl, llvm,
+      # mingw-cross), the toolchain legs (musl, llvm).
+      prewarm: gcc 16.2.0; gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.2.0
       # The gate and the tests the Windows cases need are unit-linux-archive's
       # (ci-unit.yml), beside this build: with GCC the gate held this job 18.6
       # minutes after the binary was built, and every Linux job waited for it.
@@ -299,7 +347,7 @@ jobs:
       host: windows-x86_64
       runs-on: windows-latest
       # The MinGW payload every Windows e2e shard installs.
-      prewarm: mingw 16.1.0
+      prewarm: mingw 16.2.0
       # The Windows cases the jobs with Visual Studio masked run (no compiler
       # there), and ci-fresh-install's released mcpp.
       tests: e2e/windows
@@ -308,7 +356,7 @@ jobs:
   # and so does the newest release while the pin lags it (ci-bootstrap.yml).
   bootstrap:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/ci-bootstrap.yml
 
   # THE LINUX UNIT AND C++ E2E TESTS, built once beside the build and run in
@@ -317,7 +365,7 @@ jobs:
   # program; the gate and the shards run them against build-linux's mcpp.
   unit-linux-archive:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.verified != 'true' }}
     # main's measured history is read from its last run.
     permissions:
       contents: read
@@ -331,8 +379,21 @@ jobs:
       # The Windows cases the MinGW cross job runs (the run stage's `cases`).
       tests: e2e/windows
 
+  # THE ARCHIVES A RELEASE OF THIS TREE WOULD SHIP (design 2026-11-20 §5.22, CI2), in the `full`
+  # tier: release.yml's own builds. The Linux shards test the program of the Linux archive, and a
+  # release of a tree this run verifies promotes the four archives instead of building them.
+  release-form:
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-build.yml
+
   unit-linux:
-    needs: [build-linux, unit-linux-archive, changes]
+    needs: [build-linux, unit-linux-archive, changes, release-form]
+    # The release form exists in the `full` tier alone: a skipped `release-form` does not skip the
+    # shards, a failed one does.
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.verified != 'true' && needs.unit-linux-archive.result == 'success' }}
     # A failed gate cancels the run (ci-unit.yml).
     permissions:
       contents: read
@@ -344,9 +405,14 @@ jobs:
       name: linux
       runs-on: ubuntu-24.04
       archived: ${{ needs.unit-linux-archive.outputs.archived }}
-      # Four shards of four workers: the measured run of 2026-11-13 reached 65
-      # of its programs, 3970 s of work, in the 45 minutes of one job.
-      shards: '[1,2,3,4]'
+      # The shards the archive stage planned from main's last run, its shards and
+      # the longest of them (four without a history): the measured run of
+      # 2026-11-13 reached 65 of its programs, 3970 s of work, in the 45 minutes
+      # of one job of four workers.
+      shards: ${{ needs.unit-linux-archive.outputs.shards || '[1,2,3,4]' }}
+      form: ${{ needs.release-form.result == 'success' && 'release' || 'host' }}
+      # The toolchains whose capabilities the cases probe: build-linux's `prewarm`.
+      toolchains: gcc 16.2.0; gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.2.0
       # The Windows cases only a MinGW cross toolchain runs, from Linux:
       # resources (windres -O coff, since GNU ld cannot consume a .res;
       # mcpp#365) on the GNU and clang + MinGW rows, a Windows program packed
@@ -361,6 +427,7 @@ jobs:
 
   linux:
     needs: [build-linux, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' }}
     uses: ./.github/workflows/ci-linux.yml
     with:
       # A pull request's label is read when a push starts its run; a run
@@ -370,75 +437,96 @@ jobs:
 
   linux-e2e:
     needs: [build-linux, changes, e2e-plan]
+    if: ${{ needs.changes.outputs.verified != 'true' }}
     uses: ./.github/workflows/ci-linux-e2e.yml
     with:
       set: ${{ needs.changes.outputs.set }}
       shards: ${{ needs.e2e-plan.outputs.linux || '[1,2,3]' }}
       count: ${{ needs.e2e-plan.outputs.linux_count || '3' }}
       work: ${{ needs.e2e-plan.outputs.linux_work != 'false' }}
+      history: ${{ needs.e2e-plan.outputs.history }}
+      coverage: ${{ needs.e2e-plan.outputs.coverage }}
 
   macos:
     needs: [build-macos, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' }}
     uses: ./.github/workflows/ci-macos.yml
     with:
       set: ${{ needs.changes.outputs.set }}
 
   macos-e2e:
     needs: [build-macos, changes, e2e-plan]
+    if: ${{ needs.changes.outputs.verified != 'true' }}
     uses: ./.github/workflows/ci-macos-e2e.yml
     with:
       set: ${{ needs.changes.outputs.set }}
       shards: ${{ needs.e2e-plan.outputs.macos || '[1,2,3]' }}
       count: ${{ needs.e2e-plan.outputs.macos_count || '3' }}
       work: ${{ needs.e2e-plan.outputs.macos_work != 'false' }}
+      history: ${{ needs.e2e-plan.outputs.history }}
+      coverage: ${{ needs.e2e-plan.outputs.coverage }}
 
   macos-ios:
-    needs: build-macos
+    needs: [build-macos, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/ci-macos-ios.yml
 
   windows:
     needs: [build-windows, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' }}
     uses: ./.github/workflows/ci-windows.yml
     with:
       set: ${{ needs.changes.outputs.set }}
 
   windows-e2e:
     needs: [build-windows, changes, e2e-plan]
+    if: ${{ needs.changes.outputs.verified != 'true' }}
     uses: ./.github/workflows/ci-windows-e2e.yml
     with:
       set: ${{ needs.changes.outputs.set }}
       shards: ${{ needs.e2e-plan.outputs.windows || '[1,2,3]' }}
       count: ${{ needs.e2e-plan.outputs.windows_count || '3' }}
       work: ${{ needs.e2e-plan.outputs.windows_work != 'false' }}
+      history: ${{ needs.e2e-plan.outputs.history }}
+      coverage: ${{ needs.e2e-plan.outputs.coverage }}
 
   windows-msvc-xlings:
-    needs: build-windows
+    needs: [build-windows, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/ci-windows-msvc-xlings.yml
 
   cross:
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/cross-build-test.yml
 
   target-matrix:
-    needs: [build-linux, build-linux-arm, build-macos, build-windows]
+    needs: [build-linux, build-linux-arm, build-macos, build-windows, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/ci-target-matrix.yml
 
   # A home the previous release made, run by this commit's mcpp (D9 of the
   # 2026-10-17 upgrade-continuity design).
   upgrade:
-    needs: [build-linux, build-linux-arm, build-macos, build-windows]
+    needs: [build-linux, build-linux-arm, build-macos, build-windows, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/ci-upgrade.yml
+
+  offline:
+    needs: [build-linux, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
+    uses: ./.github/workflows/ci-offline.yml
 
   # Pull requests and dispatch only, as when it was a workflow of its own.
   openkal:
-    needs: [build-linux, build-linux-arm, build-macos, build-windows]
-    if: github.event_name != 'push'
+    needs: [build-linux, build-linux-arm, build-macos, build-windows, changes]
+    if: ${{ github.event_name != 'push' && needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/openkal-cross.yml
 
   e2e-coverage:
     name: every e2e test runs somewhere
     needs: [changes, linux-e2e, windows-e2e, macos-e2e]
-    if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() }}
+    if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -468,11 +556,12 @@ jobs:
   # THE WORKFLOW RUN'S TESTS AS ONE REPORT (mtest `ci report`): the unit runs
   # each host kept (test-report, mtest-unit-*) and the e2e shards' stores
   # (e2e-store-*), the runs of this workflow run's group together -- the
-  # summary, the failures, the slowest cases and the metrics.
+  # summary, the failures, the slowest cases, the builds, the steps, the
+  # margins, the budget, the ledgers and the flips.
   test-report:
     name: the run's tests, reported
     needs: [changes, linux, unit-linux, macos, windows, linux-e2e, macos-e2e, windows-e2e]
-    if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() }}
+    if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() && needs.changes.outputs.verified != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -487,11 +576,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for store in stores/*/; do
+          # In tests/e2e, whose mtest.toml states the budget and the ledgers the report judges.
+          cd tests/e2e
+          for store in "$GITHUB_WORKSPACE"/stores/*/; do
             [ -f "$store/index.ndjson" ] || continue
             "$MTEST" store import --from "$store"
           done
-          "$MTEST" ci report --group "$GITHUB_RUN_ID" --out test-report.md
+          # The sections of design 2026-11-20 §7.2: beside the summary and the failures, the builds'
+          # slowest edges, the steps, the cases near their limit, the budget's excesses, the surface's
+          # ledger and the cases whose verdict flipped.
+          "$MTEST" ci report --group "$GITHUB_RUN_ID" --out "$GITHUB_WORKSPACE/test-report.md" \
+            --sections summary,failures,slowest,builds,steps,margin,budget,ledgers,flaky,path
+      # THE GATE OVER THE RUN'S GROUP (design 2026-11-20 §5.16, §5.17): no case over the budget
+      # without a waiver, every item of the surface used by a passing case or waived, and no waiver
+      # that excuses nothing. The run's set is the gate's: the surface is a ledger of every case, and
+      # `pr` runs the jobs and cases a change affects, so its gate judges the budget and notes that
+      # it did not judge the ledger (mtest 0.11.3); a `full` run judges both.
+      - name: The gate over the run's group
+        shell: bash
+        env:
+          SET: ${{ needs.changes.outputs.set }}
+        run: |
+          set -euo pipefail
+          cd tests/e2e
+          "$MTEST" gate --set "$SET"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -499,3 +607,73 @@ jobs:
           path: test-report.md
           if-no-files-found: ignore
           retention-days: 14
+
+  # A PUSH TO MAIN WHOSE TREE IS VERIFIED (design 2026-11-20 §5.22) runs no test: the run that
+  # verified it is registered as main's, so that the stores, unit archives and build directories
+  # later runs read from main (.github/tools/main_run.sh) are that run's. The builds above still
+  # run, and save the caches only main's runs write (R3).
+  register:
+    name: the verified run is main's
+    needs: changes
+    if: ${{ needs.changes.outputs.verified == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: The run that verified this tree
+        env:
+          RUN: ${{ needs.changes.outputs.verified_run }}
+          TREE: ${{ needs.changes.outputs.tree }}
+        run: |
+          set -euo pipefail
+          mkdir registered
+          echo "$RUN" > registered/run
+          {
+            echo "## Registered, not tested"
+            echo "The tree \`$TREE\` was verified by run [$RUN](https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN);"
+            echo "its stores and archives are main's, and this run builds and saves the caches."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: registered
+          path: registered/
+          retention-days: 90
+
+  # THE RUN'S VERDICT, one job a ruleset can require: every job it needs succeeded or was skipped
+  # by the run's tier. A `full` run that passes leaves `verified-<tree>` (design 2026-11-20
+  # §5.22): a push to main of the same tree registers this run instead of testing again, and a
+  # release of it promotes this run's archives (release.yml).
+  verdict:
+    name: verdict
+    needs: [changes, docs, build-linux, build-linux-arm, build-macos, build-windows, bootstrap,
+            unit-linux-archive, unit-linux, linux, linux-e2e, macos, macos-e2e, macos-ios, windows,
+            windows-e2e, windows-msvc-xlings, cross, target-matrix, upgrade, offline, openkal, e2e-coverage,
+            test-report, release-form, register]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or was not this tier's
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          bad=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          if [ -n "$bad" ]; then
+            echo "::error::the run did not pass:"; echo "$bad"; exit 1
+          fi
+          echo "every job passed or was not this run's"
+      - name: The tree's mark
+        if: ${{ needs.changes.outputs.set == 'full' && needs.changes.outputs.verified != 'true' }}
+        env:
+          TREE: ${{ needs.changes.outputs.tree }}
+        run: |
+          set -euo pipefail
+          mkdir verified
+          printf 'tree %s\ncommit %s\nrun %s\n' "$TREE" "$GITHUB_SHA" "$GITHUB_RUN_ID" > verified/mark
+          echo "The tree \`$TREE\` is verified by this run." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.changes.outputs.set == 'full' && needs.changes.outputs.verified != 'true' }}
+        with:
+          name: verified-${{ needs.changes.outputs.tree }}
+          path: verified/
+          retention-days: 90

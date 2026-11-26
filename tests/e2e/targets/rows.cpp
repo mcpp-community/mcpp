@@ -1,8 +1,9 @@
 // The rows a target names: the bare OS aliases of a conditional table, the vocabulary's refusals
 // and spellings, the sysroot override and the target queries a board package asks, the variable
 // that says a target was named, the cache slot of `run --target`, the optional env segment, the
-// aarch64-linux-gnu cross served by a sysroot payload, and a program of another system that is
-// built and not run (formerly tests/e2e/91, 103, 134, 267, 283, 284, 1076, 1077).
+// aarch64-linux-gnu cross served by a sysroot payload, the riscv64-linux-musl cross run under
+// qemu-user (1153), and a program of another system that is built and not run (formerly
+// tests/e2e/91, 103, 134, 267, 283, 284, 1076, 1077).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -56,7 +57,7 @@ int main() {
 }
 )";
 
-E2E rows{"rows", [] {
+E2E rows{"rows", s::home_fixture, [] {
     "91 target bare alias"_test = [] {
         // `[target.linux.build]` is `[target.'cfg(linux)'.build]`: exactly one OS alias applies
         // (the host's), and each bare alias agrees with its cfg() form on whichever host runs.
@@ -124,10 +125,10 @@ int main() { return 0; }
         expect(fatal(e2e::contains(s::text(r), "did you mean 'x86_64-linux-musl'"))) << "FAIL: missing did-you-mean suggestion: " << s::text(r);
         // 2. A planned row is refused, not built for the host; a toolchain named for the build
         //    opts it in (2026.11.13.1), whatever the toolchain then makes of the row.
-        r = p.mcpp({"build", "--target", "riscv64-linux-musl"});
+        r = p.mcpp({"build", "--target", "i686-linux-gnu"});
         expect(fatal(!r)) << "FAIL: planned-tier target built: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "not yet supported"))) << "FAIL: missing planned-tier error: " << s::text(r);
-        r = p.mcpp({"build", "--target", "riscv64-linux-musl", "--toolchain", "gcc@16.1.0"});
+        r = p.mcpp({"build", "--target", "i686-linux-gnu", "--toolchain", "gcc@16.1.0"});
         expect(fatal(s::lacks(s::text(r), "not yet supported"))) << "FAIL: --toolchain did not opt a planned row in";
         // 3. A custom triple with an explicit [target.X] section proceeds.
         p.write("mcpp.toml", original + "\n[target.myboard-custom-elf]\ntoolchain = \"gcc@16.1.0\"\n");
@@ -356,6 +357,35 @@ int main() {
         expect(fatal(!s::read_header(*exe).elf_interpreter)) << "a static program names an interpreter";
         auto run = stdp.mcpp({"run", "--target", T});
         expect(fatal(run.status == 44)) << "static: mcpp run exited " << run.status << ", the program returns 44: " << s::text(run);
+    };
+
+    "1153 a riscv64 linux musl program builds from the cross payload and runs under qemu-user"_test[s::elf][s::x86_64_host] = [] {
+        // riscv64-linux-musl is served by the musl cross payload the provider pins (design
+        // 2026-11-22 §3.19): a C program and an import-std program build static riscv64 ELFs
+        // without an interpreter, and `mcpp run` starts them through the provider's runner.
+        const std::string T = "riscv64-linux-musl";
+        const auto tmp = s::case_dir();
+        auto project = [&](std::string_view dir, std::string_view main, std::string_view source) {
+            return s::project(tmp / dir, {{"mcpp.toml", std::format("[package]\nname    = \"rv\"\nversion = \"0.1.0\"\n\n[targets.rv]\nkind = \"bin\"\nmain = \"src/{}\"\n", main)},
+                                          {std::format("src/{}", main), source}});
+        };
+        auto c = project("c", "main.c", "#include <stdio.h>\nint main(void) { printf(\"rv-c\\n\"); return 42; }\n");
+        auto stdp = project("std", "main.cpp", "import std;\nint main() { std::println(\"rv-std\"); return 44; }\n");
+        auto check = [&](const s::project& p, std::string_view label, std::string_view word, int status) {
+            auto b = p.mcpp({"build", "--target", T});
+            expect(fatal(e2e::succeeded(b))) << label << ": " << T << " did not build: " << s::text(b);
+            const auto exe = program_under(p.at("target/" + T), "rv");
+            expect(fatal(exe.has_value())) << label << ": no program: " << s::text(b);
+            const auto h = s::read_header(*exe);
+            expect(fatal(h.kind == s::format::elf && h.machine == s::elf_machine::riscv)) << label << ": the artifact is not a riscv ELF (machine " << h.machine << ")";
+            expect(fatal(!h.elf_interpreter)) << label << ": the static program names an interpreter: " << h.interpreter;
+            auto run = p.mcpp({"run", "--target", T});
+            expect(fatal(run.status == status)) << label << ": mcpp run exited " << run.status << ", the program returns " << status << ": " << s::text(run);
+            expect(fatal(s::has_line(s::text(run), std::format("^{}$", word)))) << label << ": the program's output did not arrive: " << s::text(run);
+            expect(fatal(s::has_line(s::text(run), "Running .*qemu-riscv64"))) << label << ": the run did not go through the provider's runner: " << s::text(run);
+        };
+        check(c, "c", "rv-c", 42);
+        check(stdp, "std", "rv-std", 44);
     };
 
     "1077 a program of another system is not started until its runner is enabled"_test[s::llvm] = [] {

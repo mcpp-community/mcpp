@@ -777,9 +777,9 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
 | 10.6（N1） | mcpp 检查点 10b；SPEC-011 §5.1 第 8 条 |
 | 11.1（#953 D5） | 检查点 9；SPEC-004 §9 第 17 条 |
 | 11.2（#953） | xim-pkgindex#1196：llvm 23.1.3 修订 4，FreeBSD 基座修订 3 |
-| 12（超时） | mtest 0.10.0（mcpp-community/mtest#25），openkal-image 0.7.0（okrun 的结束请求记录）；mcpp 的 CI 运行器与开发依赖为 mtest 0.10.0（xim-pkgindex#1199），缺省平台为 openkal-platform 0.31.0（检查点 11） |
+| 12（超时） | mtest 0.10.0（mcpp-community/mtest#25），openkal-image 0.7.0（okrun 的结束请求记录）、0.7.1（runner 的任务在程序结束前返回，映像启动的映像文件经 runner 的加载器进入，mcpplibs/openkal-image#42、#43）与 0.7.2（程序的副本按副本自己结束它的方式结束，mcpplibs/openkal-image#44、#45），openkal-macos 0.24.1（另一上下文处理的结束请求仍以请求结束程序）；mcpp 的 CI 运行器与开发依赖为 mtest 0.10.0（xim-pkgindex#1199）；缺省平台在 2026.11.19.1 为 openkal-platform 0.31.0（检查点 11），在 2026.11.20.1 为 0.31.2 |
 | 20（#970） | mcpplibs.os 0.4.6（`mcpplibs.os.text`），mcpp 检查点 11b；SPEC-011 §5.1 第 11、12 条，SPEC-012 §2，docs/50 §9，docs/20 |
-| 级联 | mcpp.plugins 0.26.1（mcpplibs.os 0.4.5）→ openkal-platform 0.31.0（openkal-svr4 0.3.0、ibcs-us 4.3-2）→ mcpp 2026.11.19.1 → mcpp.plugins 0.27.0（`steps`）；xlings 的 Windows 工具链为 llvm 23.1.3（openxlings/xlings#722：MSVC 14.52 的 STL 拒绝 Clang 22 之前的版本） |
+| 级联 | mcpp.plugins 0.26.1（mcpplibs.os 0.4.5）→ openkal-platform 0.31.0（openkal-svr4 0.3.0、ibcs-us 4.3-2）→ mcpp 2026.11.19.1 → mcpp.plugins 0.27.0（`steps`）→ openkal-macos 0.24.1、openkal-image 0.7.1 → openkal-platform 0.31.1 → openkal-image 0.7.2 → openkal-platform 0.31.2 → mcpp 2026.11.20.1（缺省平台 0.31.2，mcpp#979）；xlings 的 Windows 工具链为 llvm 23.1.3（openxlings/xlings#722：MSVC 14.52 的 STL 拒绝 Clang 22 之前的版本） |
 
 ### 19.2 测量
 
@@ -837,6 +837,17 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
   而 openkal-platform 的构建依赖正是它。发布顺序因此为：mcpp.plugins 0.26.1（仅 mcpplibs.os 0.4.5，引擎下界不变）→
   openkal-platform 0.31.0 → mcpp 2026.11.19.1（缺省平台 0.31.0）→ mcpp.plugins 0.27.0（`steps`，引擎下界为该 mcpp）。
   后者的引擎下界使两者不能合为一次发布。
+- okrun 0.7.0 在镜像入口启动一个等待结束请求的任务，程序结束时该任务仍在。GDB 15 自停点继续时逐个恢复任务；先被恢复的
+  主任务已结束程序，GDB 再取 runner 任务的寄存器即报 `Couldn't get registers: No such process`，而不报程序的结束（release
+  工作流的探针 12 次中 10 次如此）。openkal-image 0.7.1 在结束程序之前令该任务返回并 join，程序以镜像自己的任务结束：探针
+  12/12。同一 runner 任务在 macOS 上代程序处理结束请求：openkal-macos 0.24.0 向进程重发信号后立即以 128+信号 退出，而 XNU
+  把信号交给第一个未屏蔽它的上下文，起动者看到 143 而非 SIGTERM；0.24.1 如 openkal-linux 等待至多 0.1 s 的投递（二十个副本
+  均以 SIGTERM 结束，0.24.0 上 20 个中 9 个，mcpplibs/openkal-macos#54）。
+- okrun 0.7.1 下，库以在地址空间副本中启动上下文（openkal.space）组成的 `fork` 之后，副本的 `kal_exit` 等待 runner 的任务
+  返回；副本持有 runner 的内存而不持有该任务，等待不终止，映像以 fork 加 exec 启动的程序不结束（Sunrisepeak/cmd#5 的 CI
+  测得，mcpplibs/openkal-image#44）。0.7.2 比较 runner 所在的程序与其任务所属的程序（`KAL_PINFO_ID`），在副本中不等待；
+  `examples/forks` 以 `kal_exit(7)` 结束副本，CI 期望 7。xim 的 okrun `latest` 在 0.7.2 发布之前保持 0.6.4（xim-pkgindex#1205）。
+  2026.11.19.1 发布时 0.31.1 尚未发布，缺省平台为 0.31.0；2026.11.20.1 的缺省平台为含三者的 0.31.2。
 - Windows 上执行器以改名发布 BMI 时偶遇 `being used by another process`（CI 中约 350 个 BMI 出现一次，其他进程短暂打开了
   刚写出的文件）。改名对暂时的拒绝（`again`、`permission`）在 30 s 内重试（`replace_file_within`），其后的拒绝照旧报告。
 - `mcpp pack` 生成的启动器（`bin/<name>.exe`、单文件启动器）在 mcpp 的 openkal 行的平台上构建，平台构建程序的依赖与启动器
@@ -1207,3 +1218,25 @@ store 的规则（mcpp#874）相同。另一处检出是另一棵树，保留自
   显示；对传递依赖的编辑到达程序。`programs/857`：工作区之下的宿主模块库不进入缓存。两例在本地通过。
 - **手工（#974 的复现）。** app1、app2 经 `path` 使用 greet：第二个工程显示 `Cached greet v0.1.0 (../greet, 1 unit)`；编辑 greet
   后重建一次并替换条目；把 greet 放入工程目录之下，在原处编译。
+
+### 22.7 发布之后：嵌套于依赖树中的包（mcpp#979）
+
+**测量。** mcpp-plugins 对 v2026.11.19.1 的 CI（运行 44655735426）中，`rules` 在 Windows 与 macOS 上 `app-b` 输出
+`app-a: fmt 12`。布局为 mcpp-plugins 的 `tests/ws`：工作区位于仓库之下，成员的构建程序经
+`[build-dependencies] x = { path = "../../.." }` 导入仓库自身的包。本地复现：两个成员的 `src/main.cpp` 各输出自己的名字，
+同一棵树的第二处检出（或删除 `target/` 之后）构建，`app-b` 输出 `app-a`；图把两个成员的 `src/main.o` 都从依赖的条目
+`example.helper@0.1.0+path.<摘要>/<键>/obj/src/main.o` 以 `stage_file` 取出。2026.11.18.1 构建同一棵树正确。
+
+**成因。** 一个包的单元有两处推导：键的源文件表按"包含源文件的最长根"归属（成员的根比依赖的根长，单元归成员），条目的内容
+（`serve_or_fill`）按"源文件在包的根之下"收取。E1 之前只有索引包进入缓存，store 中的载荷不包含构建中的其他包，两处推导
+结果相同；E2 使 `path` 依赖进入缓存后，依赖的树可以包含构建它的工作区，条目收入了成员的单元——两个成员的 `src/main.cpp`
+落在同一个地址 `obj/src/main.o`，而键与树的摘要（不计带自己 `mcpp.toml` 的子目录）都不描述它们。
+
+**修复（mcpp 2026.11.20.1）。** 条目只读键的归属：`package_keys` 计算一次每个单元所归的包（最长根），键的源文件表与条目的
+内容都取它（SPEC-001 §10.4 第 6 条）。2026.11.19.1 写入的 `git`、`path` 条目可能含有键不描述的单元，不能信任：以提交或树
+命名的包的键增加一项（`units = own`），这些条目不再被读取，由 `[cache] unused_days` 回收；索引包的键不变，升级后不需要
+冷构建。
+
+**验证。** e2e `bmi/979`：仓库之下的工作区，两个成员的构建程序导入仓库的包；首次构建与删除 `target/` 之后的构建中，每个成员
+输出自己的名字，依赖的条目不含成员的目标文件。该例在 2026.11.19.1 上失败、在修复后通过；单元测试
+`CacheKey/APackageNamedByItsTreeHasTheKeyOfItsOwnUnits`。

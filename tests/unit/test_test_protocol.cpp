@@ -62,6 +62,28 @@ UTest a_report_gives_each_case_and_its_failures{"TestProtocol/AReportGivesEachCa
     expect(eq(r.counts().at("fail"), 1));
 }};
 
+// P5.6 within a scope (mtest 0.11.2): a scope's body writes events that name no case; they are the
+// program's, and no case is made of them that never ended.
+UTest events_that_name_no_case_are_the_programs{"TestProtocol/EventsThatNameNoCaseAreThePrograms", [] {
+    auto r = tp::read_report(write_file("scope.ndjson",
+        "{\"e\":\"program\",\"protocol\":1,\"level\":3}\n"
+        "{\"e\":\"step\",\"name\":\"vswhere\",\"ms\":31}\n"
+        "{\"e\":\"exercise\",\"items\":[\"command build\"]}\n"
+        "{\"e\":\"metric\",\"name\":\"probe\",\"value\":2}\n"
+        "{\"e\":\"begin\",\"id\":\"mingw/97\",\"t\":0}\n"
+        "{\"e\":\"step\",\"id\":\"mingw/97\",\"name\":\"build\"}\n"
+        "{\"e\":\"end\",\"id\":\"mingw/97\",\"status\":\"pass\",\"ms\":3}\n"
+        "{\"e\":\"done\",\"status\":\"pass\",\"counts\":{}}\n"), 0);
+    expect(fatal(eq(r.cases.size(), 1u))) << "an event that names no case made a case";
+    expect(eq(r.cases[0].status, "pass"));
+    expect(eq(r.cases[0].steps.size(), 1u));
+    expect(!r.failed());
+    expect(fatal(eq(r.steps.size(), 1u)));
+    expect(eq(r.steps[0].name, "vswhere"));
+    expect(eq(r.exercised, std::vector<std::string>{"command build"}));
+    expect(eq(r.metrics.size(), 1u));
+}};
+
 UTest a_case_a_crash_left_open_failed{"TestProtocol/ACaseACrashLeftOpenFailed", [] {
     auto r = tp::read_report(write_file("crash.ndjson",
         "{\"e\":\"program\",\"protocol\":1,\"level\":1}\n"

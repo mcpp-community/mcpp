@@ -33,7 +33,7 @@ inputs:
     # `package.name`, so one of the two was simply unreachable — and which one
     # depended on the machine, which is why CI failed on `compat:lua` on
     # Windows and `mcpplibs.capi:lua` on Linux. Never pin below that.
-    default: '2026.11.17.2'
+    default: '2026.11.23.1'
 
 outputs:
   sandbox-key:
@@ -88,9 +88,17 @@ runs:
         # ci.yml is part of the key because it names the toolchains the build
         # job installs before it saves (`prewarm`): a sandbox saved under an
         # unchanged key would never gain one added there.
-        key: mcpp-sandbox-${{ runner.os }}-${{ runner.arch }}-ci-xl${{ inputs.xlings-version }}-${{ hashFiles('mcpp.toml', '.xlings.json', '.github/workflows/ci.yml') }}
+        # THE PREFIX IS `ci2`, NOT `ci` (2026-11-26). restore-keys hands the
+        # latest sandbox saved under the old prefix to every new key, and a run
+        # whose jobs fail saves nothing: after the index republished glibc 2.44.3
+        # at packaging revision 5, the restored sandbox kept revision 4, so an own
+        # home that inherits from it installed revision 5 beside a binding that
+        # names revision 4's path (`binding-own-home/200`), and every pack leg
+        # installed it again (test 992 reached its 600 s). A new prefix starts
+        # one sandbox from nothing, which installs what the index holds now.
+        key: mcpp-sandbox-${{ runner.os }}-${{ runner.arch }}-ci2-xl${{ inputs.xlings-version }}-${{ hashFiles('mcpp.toml', '.xlings.json', '.github/workflows/ci.yml') }}
         restore-keys: |
-          mcpp-sandbox-${{ runner.os }}-${{ runner.arch }}-ci-xl${{ inputs.xlings-version }}-
+          mcpp-sandbox-${{ runner.os }}-${{ runner.arch }}-ci2-xl${{ inputs.xlings-version }}-
 
     - name: Restore xlings
       id: xlings

@@ -64,7 +64,7 @@ inline constexpr int kEnvelopeVersion = 1;
 // from what comes back.
 struct KindVersion { std::string_view kind; int version; };
 
-inline constexpr std::array<KindVersion, 15> kKinds{{
+inline constexpr std::array<KindVersion, 16> kKinds{{
     {"mcpp.env",             1},
     {"mcpp.xpkg",            1},
     {"mcpp.cache",           1},
@@ -84,6 +84,9 @@ inline constexpr std::array<KindVersion, 15> kKinds{{
     // `mcpp why compat --format json` (mcpp#797): every use of a deprecated
     // reading, with its row of the deprecation registry.
     {"mcpp.why.compat",      1},
+    // `mcpp why features --format json` (mcpp#992): each package of the
+    // resolved graph, the features it declares and those the build activates.
+    {"mcpp.why.features",    1},
     // `mcpp toolchain list --format json`: which toolchains are installed and
     // which target rows this host serves, with their status.
     {"mcpp.toolchain.list",  1},
@@ -167,6 +170,9 @@ struct Diagnostic {
     std::string message;
     std::string path;                    // optional
     std::optional<Range> range;          // optional
+    // false: the terminal was not shown it (a `once` notice already said to this project, a note
+    // under --quiet). Written only when false, so an envelope that has none is unchanged.
+    bool        shown = true;
 };
 
 // ── The envelope ───────────────────────────────────────────────────────────
@@ -245,6 +251,7 @@ inline nlohmann::json to_json(const Diagnostic& in) {
         {"message",  d.message},
     };
     if (!d.path.empty()) j["path"] = d.path;
+    if (!d.shown) j["shown"] = false;
     if (d.range) {
         j["range"] = {
             {"start", {{"line", d.range->start.line}, {"column", d.range->start.column}}},
@@ -260,7 +267,7 @@ inline nlohmann::json to_json(const Diagnostic& in) {
 // exist, which a client turns something on or off by. A name is added when a
 // client gates on it, is never renamed and never removed; docs/50 names the
 // release that added it and the client that reads it.
-inline constexpr std::array<std::string_view, 12> kFeatures{{
+inline constexpr std::array<std::string_view, 17> kFeatures{{
     "target-sets",       // SPEC-015 §1: `--target openkal` is the set's legs (an IDE's target picker)
     "pkg-format-list",   // SPEC-014 §5.4: `--pkg-format tar,okb` writes each container (an IDE's pack form)
     "test-launch",       // docs/50 §6: `mcpp test <name> --print-launch` (an IDE debugging a test)
@@ -273,6 +280,11 @@ inline constexpr std::array<std::string_view, 12> kFeatures{{
     "test-frameworks",   // SPEC-017 B6: `--guide` names each framework's capabilities and session (an IDE's choice of runner)
     "test-checks",       // SPEC-017 O3: a failure's `source` and `fatal`, a case's `checks` (an IDE's check list)
     "test-output",       // SPEC-017 O8: a case's own output, `output` (an IDE's case output)
+    "test-steps",        // SPEC-017 P5.6, B4: a case's steps and the surface it used, the run's builds (a run's report)
+    "test-budget",       // SPEC-017 O11: the run states a budget its programs' compilers take slots of (mtest run)
+    "test-jitter",       // SPEC-017 O12: the jitter a run is told to inject (the jitter workflow)
+    "test-fixtures",     // SPEC-017 O6: run fixtures served for the cases that use them (a framework's shared home)
+    "package-features",  // docs/50: a package's features in `mcpp search` and `mcpp why features` (an IDE's completion)
 }};
 
 // The same list as JSON: `--protocol-version` and every envelope's `mcpp` field

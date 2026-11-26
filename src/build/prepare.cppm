@@ -15,8 +15,9 @@
 //   driver.cpp         prepare_build: construct PrepareState, run the phases
 //                      in order, return what the last one builds.
 //   manifest.cpp       P0 -- the manifest and its workspace.
-//   toolchain.cpp      P1, P2 -- the toolchain specification and target axis;
-//                      the toolchain resolver's definition.
+//   toolchain.cpp      P1 -- the toolchain specification and target axis, and
+//                      the run-wide keys a plan's root states.
+//   toolchain_resolver.cpp  P2 -- the toolchain resolver's definition.
 //   xlings.cpp         P3 -- xlings payloads before the graph.
 //   graph_load.cpp     P4a -- loading one git, path or version dependency.
 //   graph.cpp          P4b -- the worklist, the graph, the cycle check.
@@ -534,6 +535,10 @@ export struct BuildContext {
     // The root's exact pins of packages every consumer shares (T3): what
     // `mcpp publish` refuses in a library, one line each.
     std::vector<std::string>        sharedExactPins;
+    // The files the root's build program's compile read that no package
+    // identity covers (design 2026-11-21, build programs' inputs §3.2): what
+    // `mcpp publish` compares with what the package's archive carries.
+    std::vector<std::filesystem::path> rootProgramReads;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the
@@ -668,6 +673,10 @@ export struct BuildContext {
         // its key holds (mcpp#974): read again before the entry is written.
         std::filesystem::path           treeRoot, treeRows;
         std::string                     treeDigest;
+        // The entries of the module interfaces it imports, read after they
+        // are filled: `key.imports` records each one's digest (SPEC-001 §10.4
+        // item 7).
+        std::vector<mcpp::bmi_cache::CacheKey> interfaces;
     };
     std::vector<CacheTask>          depsToPopulate;
 
@@ -680,6 +689,18 @@ export struct BuildContext {
         std::size_t units = 0;
     };
     std::vector<CachedDep>          cachedDeps;
+    // Each package the global cache did not serve, and why, as a token
+    // (design 2026-11-20 §5.4): `no-identity`, `unnamed-sources`,
+    // `unnamed-upstream`, `outside-store`, `unaddressable-unit`, or `miss`
+    // when the entry is filled after the build. `--verbose` prints them and
+    // the build record keeps them; a refusal that says nothing cannot be
+    // told from a cache that does not work.
+    struct CacheDecision {
+        std::string name;
+        std::string version;
+        std::string reason;
+    };
+    std::vector<CacheDecision>      cacheDecisions;
 
     // What the dependency walk actually RESOLVED, keyed by the root manifest's
     // dependency map key. The "Compiling <dep> v<version>" banner used to read

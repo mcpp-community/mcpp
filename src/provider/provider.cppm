@@ -309,6 +309,10 @@ public:
     // `binaryRel` inside a version of the provider-index tool `name` beside `path`.
     virtual std::filesystem::path beside_binary(const std::filesystem::path& path, std::string_view name,
                                                 std::string_view binaryRel) const = 0;
+    // The version of `name` the payload a toolchain at `path` belongs to
+    // declares as a runtime dependency (`2.42.1`, `>=2.39`); empty when it
+    // declares none.
+    virtual std::string declared_dependency(const std::filesystem::path& path, std::string_view name) const = 0;
     // The runtime environment a toolchain at `compiler` belongs to.
     virtual std::filesystem::path environment_of(const std::filesystem::path& compiler) const = 0;
     // The packaging revision recorded in a payload; -1: no record.
@@ -327,6 +331,9 @@ public:
     virtual std::filesystem::path store_of_home(const std::filesystem::path& home) const = 0;
     // The home a store belongs to.
     virtual std::filesystem::path home_of_store(const std::filesystem::path& store) const = 0;
+    // The directory in which `owner` keeps its roots of `store`: the links that
+    // state which payloads it uses, which the provider's collection keeps.
+    virtual std::filesystem::path roots_of(const std::filesystem::path& store, std::string_view owner) const = 0;
     // Whether `dir` is a home's default runtime environment.
     virtual bool is_default_environment(std::string_view dir) const = 0;
     // Whether `dir` is a store (a payload's path is <store>/...).
@@ -462,6 +469,22 @@ public:
     virtual int install_with_progress(std::string_view target, const BootstrapProgressCallback& cb,
                                       bool quiet = false) const = 0;
     virtual int install_direct(std::string_view target, bool quiet = false) const = 0;
+    // A BUNDLE (design 2026-11-21 §3.2): a directory holding the archives of
+    // the packages' closures and a snapshot of each index that resolved them,
+    // described by its `bundle.toml`, which other programs add tables to.
+    // `download_to` writes one for this home's host; `install_from` installs
+    // the packages resolving with its snapshots. The provider's exit status.
+    virtual int download_to(std::span<const std::string> refs, const std::filesystem::path& dir) const = 0;
+    virtual int install_from(const std::filesystem::path& dir, std::span<const std::string> refs) const = 0;
+    // The provider's collection of its store: every payload nothing references
+    // -- its environments, their links, the dependency closure, the owners'
+    // roots -- is removed, or with `dryRun` listed. The provider's exit status.
+    virtual int collect_store(bool dryRun) const = 0;
+    // A bundle's snapshot of index `name` made this home's index: placed where
+    // the home has none, or holds a snapshot or an artifact's tree; a git
+    // work tree or any other directory is the home's own and is kept.
+    // "placed", "kept", or "unknown" for an index this home does not declare.
+    virtual std::string adopt_index_snapshot(std::string_view name, const std::filesystem::path& snapshot) const = 0;
     // The command line that runs the provider program here (diagnostics and
     // the few commands a person is told to run).
     virtual std::string command_prefix() const = 0;

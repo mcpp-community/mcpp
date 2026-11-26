@@ -65,9 +65,15 @@ CI 脚本，以及任何解析 mcpp 输出的程序，都可以依赖本章陈�
   "message": "unknown key 'standrad'",
   "path": "mcpp.toml",                       // omitted when there is none
   "range": { "start": {"line": 3, "column": 1},
-             "end":   {"line": 3, "column": 9} }   // omitted when there is none
+             "end":   {"line": 3, "column": 9} },  // omitted when there is none
+  "shown": false                             // omitted when the terminal showed it
 }
 ```
+
+`shown` 为 `false` 表示终端没有显示这条诊断：工程已被告知过、一个工程只说一次的提示，以及
+`--quiet` 下的说明（2026.11.21.1+）。信封携带每一条诊断，终端是否显示都携带；读取者不受终端的
+显示策略影响。在自己的目录中规划的命令（`mcpp emit build-database`）读取工程已被告知的内容，不作记录：
+工程的目录树不变。
 
 位置从 1 开始计数。`column` 数的是 **UTF-8 字节**，因此索引的正是 mcpp 实际
 读到的那份文件。
@@ -217,6 +223,11 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` 写出每个框架的 `capabilities` 与 `session`（SPEC-017 B6） | 在会话与进程之间选择的 IDE |
 | `test-checks` | 2026.11.10.1 | 在 `test-protocol` 之上：失败的 `source` 与 `fatal`，用例的 `checks`（`held`、`failed`），按程序的报告（SPEC-017 O3） | IDE 的检查点列表 |
 | `test-output` | 2026.11.10.1 | 在 `test-case-stream` 之上：用例自己的输出 `output`：程序的 `output` 事件，或只运行该用例的程序的全部输出；出现在程序的 `cases` 中，来自事件时也出现在其 `end` 记录中（SPEC-017 O8） | IDE 中单个用例的输出 |
+| `test-steps` | 2026.11.21.1 | 在 `test-protocol` 之上：用例的 `steps` 与其用到的面的项（`exercised`）、其 `cpu_ms` 与 `limit_ms`，以及运行的 `builds.ndjson`（SPEC-017 P5.6、B4） | 运行的报告 |
+| `test-budget` | 2026.11.21.1 | `mcpp test` 陈述一份槽位的预算（`MTEST_BUDGET`），其程序的编译器从中取槽位；环境陈述了预算时使用那一份（SPEC-017 O11） | `mtest run`，运行 `mcpp test` 的运行器 |
+| `test-jitter` | 2026.11.21.1 | 运行陈述的抖动（`MTEST_JITTER`、`MTEST_JITTER_SEED`）到达其程序与记录（SPEC-017 O12） | 抖动的工作流 |
+| `test-fixtures` | 2026.11.21.1 | 为用例使用运行夹具的程序服务夹具（`MTEST_SERVE`、`MTEST_FIXTURE_<NAME>`），运行的 `fixtures.ndjson` 写出它们（SPEC-017 O6） | 框架共享的夹具 |
+| `package-features` | 2026.11.21.1 | 包的 feature 出现在 `mcpp search --format json`（`features`）与 `mcpp why features --format json`（§13、`mcpp.why.features`）中 | IDE 对 `features = [...]` 的补全与诊断 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -443,19 +454,21 @@ mcpp why sources|tool <name>|payload <ns:name> --format json
 
 生态缺省基座的 `form` 为 `default`,其余字段描述引擎缺省解析出的结果。
 
-### `mcpp.why.build-programs` 与 `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
+### `mcpp.why.build-programs`、`mcpp.why.compat` 与 `mcpp.why.features` *(mcpp 2026.10.11.1+)*
 
 ```
 mcpp why build-programs --format json
 mcpp why compat --format json
+mcpp why features --format json      # 2026.11.21.1+
 ```
 
-两者都像 `mcpp why` 一样准备构建并报告它记录的内容；`data` 带 `status`（`ok` 或 `refused`），以及：
+三者都像 `mcpp why` 一样准备构建并报告它记录的内容；`data` 带 `status`（`ok` 或 `refused`），以及：
 
 | kind | 字段 | 内容 |
 |---|---|---|
 | `mcpp.why.build-programs` | `graphs[]` | 每张构建程序图一项：`workspace`（其目录）与 `programs[]`，每个程序为 `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | 每次使用弃用读法一项：`{id, where, detail, warned, since, floor, canonical, docs}`；在构建不编辑的清单中 `warned` 为 false |
+| `mcpp.why.features` | `packages[]` | 解析出的依赖图中每个包一项，根在最前：`package`（与 `resolution.json` 相同）、`root`、`manifest_dir` 与 `features`：`list`（包声明的 feature，每项与 `mcpp.search` 相同）与 `active`（本次构建激活的 feature） |
 
 ### `mcpp.why.target`、`mcpp.why.flags` 与 `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
 
@@ -488,7 +501,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（2026.11.19.1 起为 `mcpplibs.openkal-platform@0.31.0`，2026.11.18.1 为 `@0.29.2`，2026.11.17.2 为 `@0.29.1`，2026.11.15.1 起为 `@0.28.0`，2026.11.12.1 为 `@0.27.1`，2026.11.10.2 为 `@0.26.0`，2026.11.10.1 为 `@0.25.0`，2026.11.8.1 起为 `@0.24.4`，2026.11.7.2 为 `@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
+（2026.11.23.1 起为 `mcpplibs.openkal-platform@0.32.1`，2026.11.20.1 为 `@0.31.2`，2026.11.19.1 为 `@0.31.0`，2026.11.18.1 为 `@0.29.2`，2026.11.17.2 为 `@0.29.1`，2026.11.15.1 起为 `@0.28.0`，2026.11.12.1 为 `@0.27.1`，2026.11.10.2 为 `@0.26.0`，2026.11.10.1 为 `@0.25.0`，2026.11.8.1 起为 `@0.24.4`，2026.11.7.2 为 `@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标
@@ -511,7 +524,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `compiler` | `{family, version, driver, chosenBy}` —— 真正会运行的驱动器，以及选中它的原因 |
 | `triple` | `{requested, toolchain, llvm}` |
 | `cLibrary` | `{mode, path, origin, suppliesTarget}` —— `mode` 取 `sysroot` / `payload-first` / `none`，`origin` 取 `payload` / `subos` / `host` / `none` |
-| `layers[]` | 目标侧的五个层：`{layer, interface, impl, origin, subset}` |
+| `layers[]` | 目标侧的五个层：`{layer, interface, impl, origin, subset, version, interfaces}`；`version` 为系统把内核头文件作为包发布时 kernel-abi 层测得的版本（其他情形为空），`interfaces` 为该层的接口（`null`：未陈述，即全部）*(2026.11.23.1+)* |
 
 **`compiler.chosenBy` 回答「为什么是它」。** `{origin, requiredBy,
 replaced}` —— `origin` 与构建的状态行使用的是同一句话
@@ -570,7 +583,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `payload-request` | 构建程序请求了本次构建中没有任何清单声明 `provision = "on-request"` 的载荷，或连续三次运行都在请求 *(2026.10.1.3+)* |
 | `lto-export-discovery` | 导出需要被发现的 PE 共享库会被 cl.exe 编译成没有符号表的 `/GL` 对象：在 `lto = true` 下陈述了 `windows_auto_export = true`，或在它所链接的包的 flag 中写了 `/GL` *(2026.10.5.2+)* |
 | `local-toolchain` | 由路径命名的工具链，或构建程序工具链阶段陈述的工具链无法使用：没有驱动、族与驱动矛盾、缺少某个工具，或 `spec` 与只属于路径工具链的键一同陈述 *(2026.10.1.3+)* |
-| `target-base` | 目标基座(`sysroot`)无法服务本次构建:该行不接受的写法、不存在的路径、不供给 C 库的目录、低于编译器运行库要求的 C 库、缺少 loader 的本机基座,或依赖图中的第二个 C 库供给者 *(2026.10.24.1+)* |
+| `target-base` | 目标基座(`sysroot`)无法服务本次构建:该行不接受的写法、不存在的路径、不供给 C 库的目录、低于编译器运行库要求的 C 库、缺少 loader 的本机基座,或依赖图中的第二个 C 库供给者 *(2026.10.24.1+)*；内核头文件：不接受预制形式的行或层上写了 `layers` 的预制形式、载荷不带目标架构的头文件、缺省没有回答者、测量与陈述不符 *(2026.11.23.1+)* |
 | `convention-unreplaced` | 约定被推翻了，而没有任何东西接替它 |
 | `os-mismatch` | 请求的三元组与解析出的三元组命名不同的系统 |
 | `layer-requirement` | 某个包要求的层，解析结果没有提供 |
@@ -582,9 +595,14 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `accel-backend-undeclared` | 一条 `[build] sources` 条目命名的后端，未出现在该包自己的 `[package] accelerators` 中 |
 | `device-source-unconsumed` | 一个设备类源文件没有到达任何 action，因此没有任何东西编译它 |
 | `host-module-missing` | `build.mcpp` 导入的模块，没有任何依赖以 host module 的形式提供 |
+| `build-program-unpublished-input` | `mcpp publish`：包的构建程序读到了包的归档不含的文件——包目录之外的文件，或 HEAD 未跟踪的文件（2026.11.21.1+） |
+| `companion-too-old` | 工具链旁写明的配套载荷（`companions = { binutils = … }`）低于工具链载荷声明的版本（SPEC-006 §2.9） |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的两个版本上 |
 | `shared-library-cxx-runtime` | 图所在的构建中，C++ 运行时是一个包，而某个依赖的 C++ 共享库没有声明私有副本 |
-| `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引 *(2026.9.16.1+)* |
+| `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引；2026.11.21.1 起，限于未写明归档目录时 *(2026.9.16.1+)* |
+| `artifact-unavailable-offline` | 本次运行离线且写明了归档目录，而这些目录与下载缓存都没有规划所需的归档；消息附提供者列出的缺少项 *(2026.11.21.1+)* |
+| `bundle-older-than-lock` | `mcpp fetch --from`：bundle 缺少 `mcpp.lock` 所记的版本 *(2026.11.21.1+)* |
+| `index-location-named-twice` | 生效的 `[indices]`（一份清单的，或成员的与其工作区的）中两项指向同一目录，或同一仓库的同一 pin；消息写出两项与该位置 *(2026.11.22.1+)* |
 | `package-cycle` | 依赖图中存在一个包的环；消息列出环上的边 *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | 一个声明了自含 C++ 运行时的程序或测试，加载了本次构建中耦合到共享运行时的 C++ 共享库 *(2026.9.16.1+)* |
 | `static-package-in-two-images` | 一个静态包被本次构建的多个映像到达，而在该目标上一个映像不能使用另一个映像里的副本 *(2026.9.16.1+)* |
@@ -641,7 +659,7 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 
 | 字段 | |
 |---|---|
-| `spec` | `{"name": "s1", "version": "0.3.0"}`（2026.9.28.1 之前为 0.2.0）；使用 `--spec compile-commands` 时为 `{"name": "compile-commands"}` |
+| `spec` | `{"name": "s1", "version": "0.4.0"}`（2026.11.23.1 之前为 0.3.0，2026.9.28.1 之前为 0.2.0）；使用 `--spec compile-commands` 时为 `{"name": "compile-commands"}` |
 | `database` | 该规范对应的文档：一份 S1 构建数据库，或者 `mcpp build --configure-only` 写入 `compile_commands.json` 的那些条目 |
 | `watch` | 一旦发生变化就可能改变这份文档的输入：相对工作区根目录的路径与 glob，或绝对路径 |
 | `inputs-fingerprint` | `fnv1a:<16 位十六进制>`，对上述输入、mcpp 版本与选择器求出的摘要 |
@@ -654,13 +672,16 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 （S1 0.3.0 §7.2）。命令不运行任何 action，所以这样的文件在文档所指的目录中尚不存在。
 每一项给出同一组选择下 `mcpp build` 写入的路径（`build-path`）以及写出它的步骤，
 编辑器因此可以说明“这是生成的文件，构建一次即可”，而不是报告缺少头文件。
+自 2026.11.23.1 起，`kind` 为 `source` 的一项在其 action 以 `.origin(...)` 陈述时另有
+`origin`（[30](30-build-mcpp.md)）：生成的单元作为其变换副本的那个编写的文件（S1 0.4.0 §7.2）。
 
 `emit` 独立规划每一个被选中的成员（#699 第 1 项）：一个成员的规划失败不会
 连累它的兄弟成员。不在项目中，或者被选中的成员全部规划失败时，信封省略
 `data` 并以 1 退出，每个失败的成员各带一条诊断：不在项目中是
 `MCPP_BUILD_DATABASE_NO_PROJECT`；离线规划（`--offline`、`MCPP_OFFLINE`、
-`MCPP_NO_AUTO_INSTALL`）需要下载某样东西（工具链、包、git 修订，或包索引，
-消息会指出第一个）时是 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`；因其他原因规划失败
+`[build] offline`、`MCPP_NO_AUTO_INSTALL`）需要下载某样东西（工具链、包、git 修订，
+或包索引，消息会指出第一个）时，无论是未写明归档目录还是归档目录中没有，都是
+`MCPP_OFFLINE_DOWNLOAD_REQUIRED`；因其他原因规划失败
 时是 `MCPP_BUILD_DATABASE_PLAN_FAILED`。离线这一种不是项目的缺陷：不带
 `--offline` 再运行一次即可消除它。每个成员的诊断都带 `path`，即该成员的
 `mcpp.toml`，相对工作区根目录。
@@ -691,6 +712,9 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 | `MCPP_BUILD_DATABASE_PAYLOAD_DEFERRED` | 说明 | 构建程序请求了一个声明 `provision = "on-request"` 的载荷；规划不安装任何东西，点名该程序与这些包，并在没有它们的情况下描述计划（2026.10.1.3+） |
 | `MCPP_BUILD_DATABASE_PROGRAM_FAILED` | 错误 | 构建程序失败；它所属的包被描述为不含它产生的指令 |
 | `MCPP_INDEX_REQUIRES_NEWER_MCPP` | 说明 | 本次运行刷新的某个索引要求更新的 mcpp；先前的副本被保留或恢复，或者没有可用的副本（2026.9.28.1+；终端运行以结尾的 `tip:` 行打印同一条说明） |
+| `MCPP_BUILD_PROGRAM_INCLUDES_HEADER` | 说明 | 工程的某个构建程序包含了标准库、系统或包的头文件；推荐的写法是导入（docs/30「头文件或模块」）；一个工程只说一次（2026.11.21.1+） |
+| `MCPP_BUILD_PROGRAM_READS_OUTSIDE` | 警告 | 构建程序的编译读到了它的包、store 与它的 `[build-dependencies]` 之外的文件；按包与文件各说一次（2026.11.21.1+） |
+| `MCPP_BUILD_PROGRAM_DEPRECATED` | 警告 | 构建程序按弃用的读法得到了回答（`ambiguous-contract-name`，docs/51）（2026.11.21.1+） |
 
 `--protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、
 `network`、`write-global-cache` 与 `exec-build-script`，从不声明
@@ -862,6 +886,32 @@ mcpp test [pattern] [--workspace] --message-format json
 （每项 `package`、`version`、`entry`、`protocol` 或 `null`、`guide` 或 `null`、`repo`）、`commands`（`list`、
 `one`、`records`、`debug`）、`docs`，以及包没有框架时的 `suggest`（mtest 的 dev-dependency 写法与仓库）。
 
+### `mcpp emit surface` 与一次调用追加的记录 *（mcpp 2026.11.21.1+）*
+
+`mcpp emit surface [-o FILE]` 写出 mcpp 的面，每行一项 `<种类> <名字>`，按 `command`、`flag`、`key`、`reason` 的次序，
+各自按名字排序：
+
+```
+command emit surface
+flag build --target
+flag --quiet
+key build.cflags
+key toolchain
+reason unknown-target
+```
+
+命令与选项取自解析命令行所用的定义（全局选项不带命令）；键取自清单的键登记表（整张表以其名字）；原因取自拒绝的原因标记表（上文 `mcpp.why.toolchain`）中的
+标记。解析器自己加入的 `--help` 与 `--version` 不是项。
+
+两个变量各指明一个调用追加的文件；调用的每个进程都追加，因此构建自己的子构建与它经由 mcpp 启动的编译器写入同一文件：
+
+| 变量 | 每行 |
+|---|---|
+| `MCPP_SURFACE_RECORD` | 进程用到的面的一项，每进程一次：所给的命令与选项、其清单陈述的登记表中的键、它记录的原因 |
+| `MCPP_BUILD_RECORD` | 构建运行的一条边（`build`、`output`、`package`、`program`、`started_ms`、`ms`，编译另有 `cpu_ms`、`peak_bytes` 与 `served`；为缓存提供的包复制单元的边另有 `staged`），或缓存提供的一个包（`build`、`package`、`cached`、`units`）：SPEC-017 B4 的 `builds.ndjson` |
+
+测试 kit 把前者转为用例的 `exercise` 事件（SPEC-017 P5.6），面的账本比较二者。
+
 ## 9. 构建事件流与结果记录 *（mcpp 2026.10.26.1+）*
 
 构建一个工程的每条调用链 —— 终端里的人、只有 shell 的 agent、IDE、CI 任务 ——
@@ -930,7 +980,8 @@ CI 按 `launch` 启动程序，与 `mcpp run` 的启动一致。
 
 `entry` 说明程序从哪里开始、镜像从哪里进入（docs/04，`kind = "entry"` 与 `start`）：
 `from` 是 `main = { from }` 指名的 `"<依赖>/<入口>"`，`start` 是陈述的入口符号，
-`start_from` 是指名它的陈述。各键只在有陈述时出现。
+`start_from` 是指名它的陈述。`"main": false` *(2026.11.20.1+)* 表示映像没有程序起点：其宿主经映像
+导出的名字进入它，`launch` 不出现。各键只在有陈述时出现。
 
 被 SIGINT、SIGTERM 或 SIGHUP 结束的运行在两个文件中都留下 `cancelled`
 （[退出码](../specs/exit-codes.md) §3.7）。`status` 仍为 `running`、而 `pid` 已不存在
@@ -1033,6 +1084,29 @@ mcpp search [keyword] --format json
 `data` 为 `keyword`（未给出时为 `""`，此时列出全部包）与 `packages`：每个包一条
 记录，含 `id`（`namespace:name`）、`namespace`、`name`、`index`、`description`、
 `licenses`、`repo` 与 `versions`（最新在前）。每个索引只读一次；命令不需要工程。
+
+mcpp 索引中的包带 `features`（2026.11.21.1+）：最新版本（`versions` 的第一项）的回答，取自 home 中已有的内容；
+查询不安装任何东西。提供方作为自身载荷提供、不是 mcpp 包的条目不带该字段。
+
+```json
+"features": {
+  "version": "0.0.5",
+  "state": "declared",
+  "from": "payload",
+  "list": [ { "name": "gui", "default": true, "implies": ["render"],
+              "enables": ["imgui/docking"], "description": "..." } ]
+}
+```
+
+| `state` | 含义 | `list` |
+|---|---|---|
+| `declared` | 取自索引（清单内联在描述符中，`from: index`）或已安装载荷中的清单（`from: payload`） | feature 的列表，按名字排序；包未声明 feature 时为 `[]` |
+| `not-installed` | 清单在 home 未持有的载荷中 | `null` |
+| `unreadable` | 载荷已安装而其清单读不出；`error` 说明原因 | `null` |
+
+`[]` 表示包声明了零个 feature；`null` 表示此处不知道回答。每个 feature 带 `name`、`default`
+（在缺省集合中，含其 `implies` 闭包）、`implies`（本包的 feature）、`enables`
+（`<依赖>/<feature>`），写了时还有 `description`。
 
 ### `mcpp.index` —— 注册表与工程的索引
 

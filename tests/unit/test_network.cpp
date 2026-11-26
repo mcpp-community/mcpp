@@ -232,13 +232,15 @@ UTest legacy_status_and_handshake_do_not_write_the_selected_home{"NetworkCheck/L
 }};
 
 UTest bootstrap_requires_download_budgets_and_read_only_queries{"NetworkCheck/BootstrapRequiresDownloadBudgetsAndReadOnlyQueries", [] {
+    // And `store_roots` (xlings 2026.11.23.1): a provider whose collection does
+    // not read roots is not asked for one.
     mcpp::provider::ProviderInfo info;
     info.answered = true;
     info.version = "9999.1.1.1";
     info.capabilities = {"install_packages"};
     info.features = {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
                      "payload_currency", "binding_state"};
-    for (const auto* feature : {"network_diagnostics", "download_socket_budgets", "read_only_queries"}) {
+    for (const auto* feature : {"network_diagnostics", "download_socket_budgets", "read_only_queries", "store_roots"}) {
         expect(ne(mcpp::provider::xlings::unmet(info).find(feature), std::string::npos));
         info.features.push_back(feature);
     }

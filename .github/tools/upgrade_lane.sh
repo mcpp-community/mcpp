@@ -26,7 +26,7 @@
 #             mismatch").
 #
 # Asserted, every variant: the first `mcpp new && mcpp run` of the new mcpp
-# succeeds and downloads nothing but the ninja this commit pins; a second run
+# succeeds and downloads nothing but the bootstrap tools this commit pins; a second run
 # downloads nothing at all; `mcpp self doctor`
 # in the project installs nothing and names the toolchain the build uses.
 # snapshot: `mcpp index update` names the newer packagings, the run after it
@@ -117,14 +117,20 @@ run() {
   echo "::endgroup::"
   return $rc
 }
-# The one download an upgraded home makes: the ninja this commit pins, when the
-# previous release pinned another (mcpp#945: the pin carries a correction, so a
-# home takes it with the upgrade, beside the ninja it has). It is taken once --
-# `any_download` holds the runs after the first to nothing at all.
-PIN=$(sed -n 's/.*kNinjaVersion *= *"\([^"]*\)".*/\1/p' "$(dirname "$0")/../../src/provider/xlings/xlings.cppm" | head -1)
-[ -n "$PIN" ] || { echo "::error::upgrade lane: the pinned ninja is not read from xlings.cppm"; exit 1; }
+# The downloads an upgraded home makes: the bootstrap tools this commit pins
+# (ninja, patchelf), when the previous release pinned others (mcpp#945: a pin
+# carries a correction or a newer release, so a home takes it with the upgrade,
+# beside the one it has). They are taken once -- `any_download` holds the runs
+# after the first to nothing at all. The pins are data: the `[[default]]`
+# entries of the built-in table that are not a toolchain.
+TOOLS=$(awk '
+    /^\[\[default\]\]/ { of = "" }
+    /^of *=/  { gsub(/"/, "", $3); of = $3 }
+    /^use *=/ { gsub(/"/, "", $3); if (of != "toolchain") print "Downloading xim:" $3 }
+' "$(dirname "$0")/../../modules/toolchain-model/data/builtin.toml")
+echo "$TOOLS" | grep -q "xim:ninja@" || { echo "::error::upgrade lane: the pinned ninja is not read from builtin.toml"; exit 1; }
 any_download() { grep -o "Downloading [^ ]*" "$W/$1.log" | sort -u | tr '\n' ' '; }
-downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | grep -vxF "Downloading xim:ninja@$PIN" | sort -u | tr '\n' ' '; }
+downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | grep -vxF -f <(echo "$TOOLS") | sort -u | tr '\n' ' '; }
 new_project() {  # <dir> <bin>
   (cd "$W" && "$2" new "$1" > /dev/null 2>&1) || mkdir -p "$W/$1"
   printf '\n[toolchain]\ndefault = "%s"\n' "$TC" >> "$W/$1/mcpp.toml"
@@ -256,24 +262,31 @@ fi
 if [ "$VARIANT" = modules ]; then
   # A BMI of another spelling is not read: the dependency is rebuilt once (its
   # cache key carries the spelling), then served from the cache. The spelling
-  # moved in 2026.10.26.2 (the module map's `$root`) and in 2026.11.19.1 (a
-  # package instance's directory, mcpp#953); a previous release from the last
-  # move on spells as this one, and its entry is served at once.
-  spelled_since=2026.11.19.1
+  # moved in 2026.10.26.2 (the module map's `$root`), in 2026.11.19.1 (a
+  # package instance's directory, mcpp#953), in 2026.11.21.1 (an instance
+  # is its configuration's, mcpp#986) and in 2026.11.23.1 (a Linux compile
+  # names the kernel headers it was decided to use, design 2026-11-22 §3.1); a
+  # previous release from the last move on spells as this one, and its entry
+  # is served at once.
+  spelled_since=2026.11.23.1
+  # The directory a served BMI is staged into: `<namespace>.<name>/` before
+  # 2026.11.21.1, `<namespace>_<name>/<instance>/` from it (mcpp#986). Either
+  # is the dependency's; the staging, not the directory's name, is asserted.
+  STAGED_OPENKAL='STAGE gcm\.cache/mcpplibs[._]openkal/'
   old_version=$("$OLD" --version | grep -Eo '[0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
   same_spelling=$(printf '%s\n%s\n' "$old_version" "$spelled_since" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -1)
   modules_project m-new1
   run new-modules1 "$W/m-new1" "$NEW" build -v || fail "the module project does not build over the previous release's cache"
   if [ "$same_spelling" = "$spelled_since" ]; then
-    grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+    grep -qE "$STAGED_OPENKAL" "$W/new-modules1.log" \
       || fail "a dependency BMI of the same spelling ($old_version) was not served from the cache"
   else
-    grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+    grep -qE "$STAGED_OPENKAL" "$W/new-modules1.log" \
       && fail "a dependency BMI of the previous spelling ($old_version) was taken from the cache"
   fi
   modules_project m-new2
   run new-modules2 "$W/m-new2" "$NEW" build -v || fail "the second module project failed"
-  grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules2.log" \
+  grep -qE "$STAGED_OPENKAL" "$W/new-modules2.log" \
     || fail "the rebuilt dependency was not served from the cache"
 fi
 if [ "$VARIANT" = programs ]; then

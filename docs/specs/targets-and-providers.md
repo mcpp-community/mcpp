@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.6 |
-| 版本 | 1.6 |
-| 最后修改 | 2026-11-19 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1 |
-| 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md` |
+| 状态 | 评审中 v1.9 |
+| 版本 | 1.9 |
+| 最后修改 | 2026-11-23 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1；v1.8 条款 mcpp >= 2026.11.22.1；v1.9 条款 mcpp >= 2026.11.23.1 |
+| 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md`、`.agents/docs/2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
 | 使用文档 | [21 —— 目标三元组](../zh/21-the-target-triple.md)、[35 —— 平台](../zh/35-platforms.md) |
@@ -37,7 +37,7 @@
 
 行的字段：`triple`（`<arch>-<os>[-<env>]`）、`tier`（verified、preview、planned）、`standard`、`exact`、`march`、`mabi`、
 `code-model`、`multilib`、`flags`、`link-emulation`、`clang-triple`、`object-format`、`family`、`data-model`、`exe-suffix`、
-`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`、`exe-suffix-fixed`。
+`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`、`exe-suffix-fixed`、`link-without-main`。
 
 - 一个系统可能用到两种以上 C 库时，身份**必须**含 env；env 即 C 库。业界原生标识无 env 段的系统，其原生身份为两段
   （`aarch64-macos`），其余 C 库以 env 区分（`aarch64-macos-musl`）。
@@ -45,7 +45,7 @@
 - `exact = true` 的行只由写出其全部段的请求得到（Android 的行）。
 - `march`、`mabi`、`code-model`、`flags`、`link-emulation` 是行的机器描述，引擎原样使用，**不可**被替换；机器不同的目标以
   另一行表达（§5）。
-- `clang-triple` 是交给 clang 的目标拼写，未写时由段推出；它只改变编译器所见的三元组，不改变身份（v1.1）。
+- `clang-triple` 是交给 clang 的目标拼写，未写时由段推出；它只改变编译器所见的三元组，不改变身份（v1.1）。裸机行同样以它为每个编译单元与 C 环境验证探测的 `--target`；平台定义的裸机行未写 `march` 与 `link-emulation` 时，处理器取编译器的缺省，目标照样给出（v1.9）。
 - `loader` 是该行的动态程序所写的程序解释器：运行它的机器上的路径（`/lib/ld-linux-aarch64.so.1`）。内置行与平台定义的行
   同一读法；引擎不另持有按架构的加载器表（v1.2）。
 - `execution` 是产物运行的系统，未写时为 os 段。内核相同而系统不同的行**必须**写出它（Android 的行为 `android`）（v1.2）。
@@ -58,6 +58,9 @@
 - `exe-suffix-fixed` 陈述行的可执行文件后缀是加载其程序的一部分（缺省为假）。为真时，名字模板（构建程序的
   `artifact_name`、`link.exe`）只决定后缀之前的部分，后缀总在名字末尾出现一次：模板的结果已以该后缀结尾时不重复。
   内置的 `wasm32-emscripten` 行为真（`.js` 使启动文件与模块成对）。引擎不按系统名判断（v1.4）。
+- `link-without-main` 是该行链接没有程序起点的可执行映像（`main = false`，SPEC-004 §14 第 6 条）时加入的链接词。
+  未写时该行的可执行映像有程序起点，`main = false` 被拒绝。内置的 `wasm32-emscripten` 行为 `["--no-entry"]`：
+  页面调用模块导出的函数，运行时不调用 `main`。程序形态为共享对象的行（Android 行上的 `app`）不读它（v1.7）。
 - `object-format`、`exe-suffix`、`shared-suffix` 按三级读取，先陈述者生效：行，行的系统（§2.3），对象格式的约定（v1.5）。
   内置行与平台定义的行同一读法；引擎不按系统名判断，宿主的命名不为任何行作答。
 
@@ -97,6 +100,8 @@
 | `object-format` | 该系统各行的对象格式（`elf`、`mach-o`、`pe`、`wasm`、`coff`）；行自己的陈述在先（§2.1）（v1.5） |
 | `exe-suffix` | 该系统的程序的后缀；行自己的陈述在先（v1.5） |
 | `shared-suffix` | 该系统的共享库的后缀；行自己的陈述在先（v1.5） |
+| `kernel-abi` | 该系统的内核头文件是与 C 库分开发布的包：`header`（探针包含的头文件）、`version`（各段的宏）、`packed`（`{ macro, bits }`，打包的宏与各段的位宽）、`include` 与 `arch-include`（载荷的公共目录与每架构目录，`{arch}` 为目标架构）、`package`（工具链载荷所声明的生态包名）；其各行接受预制的 `kernel-abi` 陈述（SPEC-002 §3.9）（v1.9） |
+| `interfaces` | 该系统提供的接口，用 openkal 的接口名；`kernel-abi` 层是系统自身的行上为 `cfg(interface = …)` 的回答（SPEC-002 §3.10）；未写为提供每一个接口（v1.9） |
 
 - 陈述了 `uname` 的系统可以进入多系统单文件；表中未陈述 `uname` 的系统，其程序是文件开头的 PE；表中没有的系统被拒绝，
   并指名 `[[platform.system]]`。
@@ -109,6 +114,12 @@
   `mach-o`，ok 镜像的行陈述 `.oke` 与 `.okso`，`wasm32-emscripten` 陈述 `.js`（v1.5）。此前这些由引擎中按系统名的分支
   表达，没有分支的内置行（FreeBSD、裸机、iOS）取宿主的命名。
 - 平台定义的行可以不陈述 `object-format`：未陈述时取其系统的，再取 ELF（v1.5）。
+- 内置数据中只有 `linux` 陈述 `kernel-abi`：版本取 `LINUX_VERSION_MAJOR`、`LINUX_VERSION_PATCHLEVEL`、`LINUX_VERSION_SUBLEVEL`，
+  缺席时按 16、8、8 位解码 `LINUX_VERSION_CODE`；载荷布局为 `include` 与 `arch/{arch}/include`；包为 `linux-headers`。
+  `macos`、`windows`、`freebsd` 的内核接口与其 C 库同属一个 SDK 或基座，不陈述 `kernel-abi`（v1.9）。
+- 内置数据中 `linux`、`macos`、`freebsd`、`windows` 陈述 openkal 规范所定义的全部接口；`ios` 不含 `openkal.process` 与
+  `openkal.exec`（应用的沙箱不启动程序、不映射所写的代码）；`emscripten` 陈述 `abort`、`stream`、`memory`、`env`、
+  `time`、`random` 与 `fs`（v1.9）。
 - 引擎源码中系统名的出现次数由检查持有（`.github/tools/check_system_names.py` 与其基线），只许减少。
 
 ### 2.4 执行关系（v1.3）
@@ -123,7 +134,7 @@
 - `host = "same-arch"` 的 runner 在执行该架构的机器上即可运行：引擎为产物的架构构建平台的 runner（载体不携带映像的
   形式），在本机启动（`mcpp run`、`mcpp test`）。
 - 启动器在包中没有本机架构时，按表取本机执行的架构（POSIX 与 Windows 启动器同一数据）。
-- 内置数据：`linux-x86_64` 执行 `i686`。
+- 内置数据：`linux-x86_64` 执行 `i686`；`windows-x86_64` 执行 `i686`（WOW64，v1.8，e2e 892 与 1144 实测）。
 - 载体所在的行若为 planned，而构建它的平台以工具链列出该行，则该行可构建（与工程自身的构建同一规则）。
 
 ## 3. 提供者
@@ -241,7 +252,8 @@
 - 构建记录与 `plan` 事件的 `configuration.target` 为 `{request, identity, provider, priority, fallback}`；本机构建为 `null`。
 - 构建程序读 `MCPP_TARGET_PROVIDER`（`mcpp::target_provider()`）。
 - 声明 `requires = ["mcpp:kernel-abi=…"]` 的包，其构建程序读 `MCPP_KERNEL_ABI_INTERFACES`（`mcpp::kernel_abi_interfaces()`）：
-  所解析的 kernel-abi 提供者的 `provides-interfaces`，以 `;` 连接；总是设置，空为未知（v1.1）。
+  所解析的 kernel-abi 提供者的 `provides-interfaces`，该层是系统自身时为系统表的 `interfaces`，以 `;` 连接；总是设置，
+  空为未知（v1.1；系统表 v1.9）。
 - `mcpp.lock` 以 `[target."<request>"] identity, provider` 记录每个请求得到的身份；`--locked` 下选择另一身份的构建被拒绝，
   并写出锁中的与本次的身份。
 
@@ -265,3 +277,6 @@
 | 1.4 | 2026-11-17 | mcpp 2026.11.17.1（设计 2026-11-16 N48）：行的 `exe-suffix-fixed` |
 | 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 G7、N16、N23、N26、N33、R1、R2、X1）：执行关系表（§2.4）；系统表的 `resources` 与 `command-scripts`（§2.3）；提供者运行器的 `host`、`enabled` 与 `exclusive`（§6）；Android 行的运行器（G7）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |
 | 1.6 | 2026-11-19 | mcpp 2026.11.19.1（mcpp#957）：§6 执行可达性的谓词之前没有按系统的分支；Apple 的行由同一个谓词判定；系统名检查的词表含三元组的系统谓词 |
+| 1.7 | 2026-11-20 | mcpp 2026.11.20.1（mcpp#981）：行的 `link-without-main`，没有程序起点的可执行映像的链接词；内置 `wasm32-emscripten` 行为 `--no-entry` |
+| 1.8 | 2026-11-22 | mcpp 2026.11.22.1（设计 2026-11-22 §4）：`i686-windows-msvc` 为 preview 行；执行关系表中 `windows-x86_64` 执行 `i686`（§2.4）。 |
+| 1.9 | 2026-11-23 | mcpp 2026.11.23.1（设计 2026-11-22 §3.4、§3.17）：系统表的 `kernel-abi`（测量、载荷布局、包）与 `interfaces`；`MCPP_KERNEL_ABI_INTERFACES` 在系统供给该层时取系统表的 `interfaces`；裸机行的 `--target` 取 `clang-triple`，平台定义的裸机行不写机器描述时也给出目标（mcpp#1006）；平台定义的行取其提供者的 `linkage` |

@@ -27,7 +27,7 @@ resolve toolchain payload        ← project/default/install paths share one pip
         ▼
 ensure_declared_runtime()        ← exact glibc@version installed; the payload is never written
         ▼
-detect / probe                   ← triple, sysroot, payload paths (glibc, linux-headers)
+detect / probe                   ← triple, sysroot, payload paths (glibc)
         ▼
 ToolchainLinkModel (single resolver for the C-library axis)
         ├──► flags.cppm        (main build compile/link flags)
@@ -77,7 +77,7 @@ is resolved/auto-installed via the xlings backend into the sandbox
 |---|---|
 | `targetTriple` | `<compiler> -dumpmachine` |
 | `sysroot` | `-print-sysroot` (validated: must actually carry libc headers), with a remap fallback for xlings-built GCC whose baked build-time path doesn't exist locally |
-| `payloadPaths` | the resolved runtime binding (§2.1) names the glibc payload exactly; linux-headers is still discovered as a sibling. No binding ⇒ no payload-first, by design |
+| `payloadPaths` | the resolved runtime binding (§2.1) names the glibc payload exactly. No binding ⇒ no payload-first, by design. The kernel headers are decided after the target side (`base.kernel`, the kernel-abi layer) and wired ahead of the base in every mode |
 | runtime dirs | toolchain-private lib dirs for produced binaries' `-L`/`-rpath` |
 
 Note the probe deliberately does **not** mine the clang cfg for `--sysroot`
@@ -229,6 +229,15 @@ the host loader. A hermetic artifact's `PT_INTERP` names a private loader with
 different built-in defaults, so including `/usr/lib` there models the wrong
 loader — and since a developer machine usually has its own `libGL.so.1`, doing
 so reported "resolved" for binaries that exited 127.
+
+**The closure is read per object (2026.11.21.1+).** The executable carries the
+closure as `DT_RPATH`, which glibc also searches for the objects it loads, but
+an object that carries `DT_RUNPATH` searches only `LD_LIBRARY_PATH`, its own
+`DT_RUNPATH` and the loader's directories: no `DT_RPATH`, the executable's
+included. A payload xlings installs writes `DT_RUNPATH` from its recipe's
+run-time dependencies, so the farm and the other entries are not on the path
+of a library it loads. The model applies that rule to each object of the
+closure, for `DT_NEEDED` and for `dlopen` alike.
 
 The closure is recorded in `resolution.json` under `runtime.search.closure` and
 printed by `mcpp why runtime`. A `DT_NEEDED` that nothing on a hermetic

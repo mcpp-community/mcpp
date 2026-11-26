@@ -57,7 +57,7 @@ const nlohmann::json& entry_ending(const nlohmann::json& entries, std::string_vi
     fail(std::format("no entry whose file ends with {}", suffix));
 }
 
-E2E toolchains{"toolchains", [] {
+E2E toolchains{"toolchains", s::home_fixture, [] {
     "783 cdb switches whole with the configuration"_test[s::llvm] = [] {
         // `mcpp test` then `mcpp build` in one configuration keep the test entry; switching the
         // toolchain switches the whole root file; switching back restores that configuration's

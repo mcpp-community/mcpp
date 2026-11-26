@@ -38,7 +38,7 @@ bool frozen(const fs::path& beat) {
     return before != 0 && before == size_of(beat);
 }
 
-E2E hooks{"hooks", [] {
+E2E hooks{"hooks", s::home_fixture, [] {
     "317 project build hooks"_test = [] {
         // [hooks]: start/finished/failed in order, run in the project root; a failing or timed
         // out hook warns and keeps the result; side_effect = true is refused, enabled = false

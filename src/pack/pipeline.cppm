@@ -29,6 +29,7 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.log;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.toolchain.platform;   // host_arch: the static row
@@ -591,12 +592,12 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     if (mainBinary.empty())
         return Refusal{1, about(run, m, "no binary target to pack")};
     if (programs.size() > 1 && !opts.allPrograms && !wantFrom.empty())
-        mcpp::ui::note(std::format("packing {}, the program {} states for its format", want, wantFrom));
+        mcpp::diag::note("pack", std::format("packing {}, the program {} states for its format", want, wantFrom));
     if (programs.size() > 1 && !opts.allPrograms && want.empty()) {
         std::string others;
         for (auto const* lu : programs)
             if (lu != chosenLu) others += (others.empty() ? "" : ", ") + lu->targetName;
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("pack", std::format(
             "packing {}, {}; its other programs are not packed ({}): `mcpp pack <program>` names "
             "another, `mcpp pack --all-programs` ships them beside it", chosenLu->targetName,
             named ? "the program named after the package" : "the first by name, as none is named after the package",
@@ -729,7 +730,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         static bool saidUniversal = false;
         if (loaded && P.active && P.fields.universal.set && !std::exchange(saidUniversal, true)) {
             mcpp::pm::compat::record_use("platform-universal", P.package, "[platform] universal", true);
-            mcpp::ui::note(std::format(
+            mcpp::diag::note("pack", std::format(
                 "{} states `universal`, which no longer decides what a pack holds: the legs are the "
                 "targets the command names ({}); `--target {}` packs every architecture",
                 P.display(), mcpp::pm::compat::deprecation_clause(
@@ -805,6 +806,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     if (!plan) return Refusal{1, about(run, m, plan.error().message)};
     plan->platform = ctx.plan.platform;
     plan->loadedLegs = std::move(loadedLegs);
+    plan->programStatic = ctx.plan.manifest.buildConfig.linkage == "static";
     plan->linkageName = opts.linkage == mcpp::pack::Linkage::Static ? "static"
                       : opts.linkage == mcpp::pack::Linkage::Shared ? "shared"
                       : opts.mode == mcpp::pack::Mode::Static ? "static"
@@ -966,7 +968,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
         const bool singleFile = loaded && run.opts.format == mcpp::pack::Format::SingleFile;
         if (!(tree && selfContained) && !singleFile) {
             if (run.opts.systemsFromManifest) {
-                mcpp::ui::note(std::format(
+                mcpp::diag::note("pack", std::format(
                     "[pack] systems names the runners a self-contained tree carries, or the systems "
                     "single files of an image are made for; this pack is neither (--mode {}), so it "
                     "is left aside", mcpp::pack::mode_cli_name(run.opts.mode)));
@@ -1117,7 +1119,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
     // likely to run.
     for (auto const& f : ctx.plan.providedPackFormats)
         if (mcpp::pack::is_builtin_pack_format(f))
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pack", std::format(
                 "a package in this graph declares `mcpp:pack-format={}`, which "
                 "is one of the archive shapes `mcpp pack` owns; `--pkg-format {}` "
                 "will always select the built-in and never that package", f, f));
@@ -1216,7 +1218,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
         if (opts.format != mcpp::pack::Format::Dispatched)
             return Refusal{1, about(run, m, r.error().message)};
         m.stageFailure = r.error().message;
-        mcpp::ui::warning(about(run, m, std::format(
+        mcpp::diag::warning("pack", about(run, m, std::format(
             "no staged tree for --pkg-format {}: {}\n"
             "  A format that consumes ${{mcpp.stage_dir}} cannot be produced "
             "here; one that names a\n"
@@ -1226,7 +1228,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
         // The tree exists; only its dependency closure does not. Distinct
         // warning text -- "staged" is true here, unlike the branch above.
         m.closure = mcpp::pack::ClosureStatus{false, r->reason, r->needs};
-        mcpp::ui::warning(about(run, m, std::format(
+        mcpp::diag::warning("pack", about(run, m, std::format(
             "staged without its dependency closure: {}\n"
             "  A format that consumes ${{mcpp.stage_dir}} sees the program and its "
             "declared\n"
@@ -1352,6 +1354,31 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
         out.artifacts.push_back(std::move(outPath));
     }
     return std::nullopt;
+}
+
+// Copy a provider's distributable `product` into `dir` under its own name, with
+// those of `beside` (outputs the product consumed) below the product's own
+// directory, at their places relative to it. Each destination is replaced, and
+// nothing else in `dir` is touched. Returns why it failed, or nothing.
+std::string copy_distributable(const std::filesystem::path& product,
+                               const std::vector<std::filesystem::path>& beside,
+                               const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    const auto base = product.parent_path().lexically_normal();
+    std::vector<std::pair<fs::path, fs::path>> copies{{product, dir / product.filename()}};
+    for (auto const& b : beside) {
+        const auto rel = b.lexically_normal().lexically_relative(base);
+        if (rel.empty() || *rel.begin() == "..") continue;
+        copies.emplace_back(b, dir / rel);
+    }
+    std::error_code ec;
+    for (auto const& [from, to] : copies) {
+        fs::remove_all(to, ec);
+        if (to.has_parent_path()) fs::create_directories(to.parent_path(), ec);
+        fs::copy(from, to, fs::copy_options::recursive, ec);
+        if (ec) return std::format("cannot write {}: {}", to.string(), ec.message());
+    }
+    return {};
 }
 
 // ─── The dispatch pass ───────────────────────────────────────────────
@@ -1635,7 +1662,11 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
             reported.push_back(std::move(abs));
         }
         if (!produced) continue;
-        // `-o <directory>/`: the distributable below it, under its own name.
+        // `-o <directory>/`: the distributable below it, under its own name,
+        // with the outputs it consumed that lie in its own directory, at their
+        // places relative to it. A page reads its script and module from beside
+        // it (dist-web's index.html, web-consumer.js, web-consumer.wasm); copied
+        // alone it loads nothing (2026.11.23.1 wrote dist/pack/index.html only).
         if (!run.opts.outputDir.empty())
             for (auto& r : reported) {
                 const auto into = std::filesystem::absolute(run.opts.outputDir / r.filename(), ec).lexically_normal();
@@ -1643,10 +1674,8 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
                 // written beside the staged tree, in target/dist/): removing
                 // the destination would remove the product.
                 if (into == r.lexically_normal()) continue;
-                std::filesystem::remove_all(into, ec);
-                std::filesystem::copy(r, into, std::filesystem::copy_options::recursive, ec);
-                if (ec) {
-                    mcpp::ui::error(about(run, m, std::format("cannot write {}: {}", into.string(), ec.message())));
+                if (auto why = copy_distributable(r, intermediate, into.parent_path()); !why.empty()) {
+                    mcpp::ui::error(about(run, m, why));
                     m.result.rc = 1;
                     break;
                 }
@@ -1910,7 +1939,7 @@ PackOutcome run_pack(PackRun run) {
         if (m->result.rc != 0) continue;
         if (auto runs = runs_on_text(m->result); !runs.empty()) mcpp::ui::info("Runs on", about(run, *m, runs));
         for (auto const& n : m->result.notCovered) mcpp::ui::info("Not covered", about(run, *m, n));
-        if (!m->result.hint.empty()) mcpp::ui::note(about(run, *m, m->result.hint));
+        if (!m->result.hint.empty()) mcpp::diag::note("pack", about(run, *m, m->result.hint));
     }
 
     // ─── What was packed ─────────────────────────────────────────────

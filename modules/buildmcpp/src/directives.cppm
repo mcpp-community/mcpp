@@ -221,6 +221,12 @@ enum class Slot : std::size_t {
     // `mcpp::dep_bin` was asked for that no edge and no feature declares. The
     // program received "" and goes on; the engine says which line declares it.
     UndeclaredTools,
+    // Protocol 21 (design 2026-11-21, build programs' inputs §3.7):
+    // `<id>\t<question>\t<spellings>` for each deprecated reading a typed
+    // reader applied -- a name whose variable several dependencies answer,
+    // answered by the first (`ambiguous-contract-name`). The engine warns by
+    // the registry's row, on a replay too.
+    DeprecatedReadings,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -319,7 +325,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 40> kTable{{
+inline constexpr std::array<Def, 41> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -435,6 +441,7 @@ inline constexpr std::array<Def, 40> kTable{{
     {"warning",             "warning",           Slot::Warnings,         Scope::Advisory,       Transform::Verbatim,      false, "", "", 5},
     {"diagnostic",          "diagnostic",        Slot::Diagnostics,      Scope::Advisory,       Transform::Verbatim,      false, "", "", 14},
     {"undeclared-tool",     "undeclared-tool",   Slot::UndeclaredTools,  Scope::Advisory,       Transform::Verbatim,      false, "", "", 20},
+    {"deprecated",          "deprecated",        Slot::DeprecatedReadings, Scope::Advisory,     Transform::Verbatim,      false, "", "", 21},
     {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
     // The probe channel: a rule package measures, the engine compares. See
     // Slot::Facts for the shape of each value.
@@ -1364,7 +1371,13 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
             if (auto eq = e.find('='); eq == std::string::npos || eq == 0)
                 return std::nullopt;
         a.cwd         = j.value("cwd", std::string{});
+        a.origin      = j.value("origin", std::string{});
         if (a.command.empty() || a.outputs.empty()) return std::nullopt;
+        // mcpp#1004: the origin is one of the inputs, of a source action.
+        if (!a.origin.empty()
+            && (a.role != mcpp::manifest::BuildAction::Role::Source
+                || std::ranges::find(a.inputs, a.origin) == a.inputs.end()))
+            return std::nullopt;
         // Prepare only: `output_dir` is the whole point of the role (R3.2,
         // R3.3) -- a `prepare` action with none declared would have a stamp
         // and nothing else, indistinguishable from a `check` that merely
@@ -1656,6 +1669,24 @@ std::string action_error(const Directives& d) {
                             "for the action's command; the name may not be empty.\n"
                             "       payload: {}", v, payload);
                 }
+            if (auto it = j.find("origin"); it != j.end() && it->is_string()) {
+                const auto origin = it->get<std::string>();
+                const bool source = j.value("role", std::string("source")) == "source";
+                const auto in = j.find("inputs");
+                const bool input = in != j.end() && in->is_array() && std::ranges::any_of(*in, [&](auto const& v) {
+                    return v.is_string() && v.template get<std::string>() == origin;
+                });
+                if (!source || !input)
+                    return std::format(
+                        "build.mcpp declared an action whose origin \"{}\" {}.\n"
+                        "       mcpp::action::origin(path) names the authored source a `source` "
+                        "action's output is a\n"
+                        "       transformed copy of, and that file is one of the action's "
+                        "inputs (`input(path)`).\n"
+                        "       payload: {}", origin,
+                        source ? "is not one of its inputs" : "is stated on an action whose role is not source",
+                        payload);
+            }
         } catch (...) {}
         // A malformed action is a hard error, never a skip: an action that
         // silently does not exist produces a build missing generated sources,

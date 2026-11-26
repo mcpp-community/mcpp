@@ -45,7 +45,9 @@ POSIX `sh`/dash 解析不了——`sh check_version_pins.sh` 会在第 95 行附
 推导 tag）会做完这些：
 
 ```
-四平台同时构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
+find：tag 的提交与树，以及验证了这棵树的 ci.yml 运行
+  → 提升那次运行的四个归档（核对校验和与版本）
+    或者，没有这样的运行时，四平台同时构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
   [手动发布且带 `canaries` 时，canaries 与之并行]
   → create-release：GitHub Release v<version>，含全部归档与 .sha256 边车文件
   → 重新计算每个载荷的哈希并发布不可变 mcpp-release.json
@@ -63,6 +65,16 @@ PR（§3）：
 ```bash
 GITCODE_TOKEN=... MIRROR_HOSTS=gtc bash .github/tools/mirror_res.sh mcpp <version>   # PATH 上需有 gtc
 ```
+
+**提升或构建（2026.11.21.1+）。** 四个构建是 `release-build.yml`，`ci.yml` 的 `full` 档也运行它；在那里
+Linux 的单元与 C++ e2e 分片测试 Linux 归档中的程序。通过的 `full` 运行留下 artifact `verified-<tree>`。
+`find` 读取 tag 的树：有运行验证过它、且那次运行仍保留四个 `release-*` 归档（七天）时，`promote` 取用它们，
+核对每个 `.sha256` 边车文件与 Linux 程序报告的版本，release 发出的就是那次运行测试过的归档。否则运行四个
+构建。运行的摘要写明是哪一种。
+
+树已被验证的 main 推送不运行测试：它的 `register` 作业把那次运行登记为 main 的
+（`.github/tools/main_run.sh`）。因此发布的拉取请求在合入前通过一次 `ci:full` 运行，并且从那次运行到合入之间
+main 不移动；main 的运行不取消。
 
 四个构建同时开始，各自把归档留作 artifact；`create-release` 在每个构建都通过后一次创建带全部归档的
 release，因此不存在缺少某个平台的 release（2026.11.13.1+）。生态 canaries（xlings、mcppls；
@@ -290,9 +302,11 @@ curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-
 [ ] version bumped in mcpp.toml + fingerprint.cppm (one commit)
 [ ] CHANGELOG 条目,用英文书写(它就是 release notes;commit 与 PR 同样用英文)
 [ ] `bash .github/tools/check_version_pins.sh` passes (verifies `mcpp.toml` = `MCPP_VERSION`, and `.xlings.json` is not newer)
-[ ] merge to main, CI green
+[ ] 发布的拉取请求通过一次 `ci:full` 运行，含其最后一个提交（留下 `verified-<tree>`）
+[ ] 合入 main，其后没有改动；main 的运行登记被验证的运行
 [ ] gh workflow run release.yml --ref main
-[ ] release.yml green (4 builds + immutable manifest + publish-ecosystem)
+[ ] release.yml green；摘要写 "Promoted"（否则是构建，并写明原因）
+[ ] release.yml green (4 archives + immutable manifest + publish-ecosystem)
 [ ] downloaded mcpp-release.json regenerates byte-identically from public assets
 [ ] GitCode mirrored (release started with `gitcode`, or MIRROR_HOSTS=gtc locally)
 [ ] mirrors serve all four platforms on BOTH hosts, sha256 recomputed

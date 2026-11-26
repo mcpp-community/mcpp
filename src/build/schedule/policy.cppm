@@ -67,6 +67,21 @@ int resolve_jobs(const manifest::Manifest& m,
                  const std::function<void(std::string_view)>& onInvalid = {},
                  int globalDefault = 0);
 
+// THE MEMORY A COMPILER MAY START BELOW (design 2026-11-20 §5.5, mcpp#802). The
+// compiler executor reads the system's available memory after it holds its
+// slot and before it starts the compiler, and waits while it is below this many
+// bytes for a compiler already running to end; none is ended. A module compile
+// peaks at 0.5 to 1.0 GB (measured above), so the engine's default is 1 GiB.
+//
+// Precedence as every default's (AGENTS.md §2): MCPP_MEMORY_THRESHOLD >
+// `[build] memory_threshold` > the machine's config.toml `[build]
+// memory_threshold` > 1 GiB. A size ("2GiB", "512MiB", "1.5GB") or bytes; "0"
+// waits for nothing.
+inline constexpr std::uint64_t kDefaultMemoryThreshold = std::uint64_t{1} << 30;
+std::optional<std::uint64_t> parse_size(std::string_view text);
+std::uint64_t resolve_memory_threshold(const manifest::Manifest& m, std::string_view machine,
+                                       const std::function<void(std::string_view)>& onInvalid = {});
+
 // `requested` is the user's switch: "auto" (default), "on", "off". `hostJobs` is
 // the already-resolved parallelism (`--jobs` or `[build] jobs`), or 0 meaning
 // "the user said nothing, leave the backend's own default".
@@ -132,6 +147,37 @@ int resolve_jobs(const manifest::Manifest& m,
     // the generated template's `0` means.
     if (globalDefault > 0) return globalDefault;
     return 0;
+}
+
+std::optional<std::uint64_t> parse_size(std::string_view text) {
+    while (!text.empty() && text.front() == ' ') text.remove_prefix(1);
+    while (!text.empty() && text.back() == ' ') text.remove_suffix(1);
+    double number = 0;
+    const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), number);
+    if (ec != std::errc{} || number < 0) return std::nullopt;
+    std::string_view unit(end, text.data() + text.size() - end);
+    while (!unit.empty() && unit.front() == ' ') unit.remove_prefix(1);
+    static constexpr std::pair<std::string_view, double> kUnits[] = {
+        {"", 1}, {"B", 1}, {"KiB", 1024.0}, {"MiB", 1024.0 * 1024}, {"GiB", 1024.0 * 1024 * 1024},
+        {"KB", 1e3}, {"MB", 1e6}, {"GB", 1e9}};
+    for (const auto& [name, scale] : kUnits)
+        if (unit == name) return static_cast<std::uint64_t>(number * scale);
+    return std::nullopt;
+}
+
+std::uint64_t resolve_memory_threshold(const manifest::Manifest& m, std::string_view machine,
+                                       const std::function<void(std::string_view)>& onInvalid) {
+    auto from_text = [&](std::string_view v) -> std::optional<std::uint64_t> {
+        if (v.empty()) return std::nullopt;
+        if (auto n = parse_size(v)) return n;
+        if (onInvalid) onInvalid(v);
+        return std::nullopt;
+    };
+    if (auto e = mcpp::invocation::get("MCPP_MEMORY_THRESHOLD"))
+        if (auto n = from_text(*e)) return *n;
+    if (auto n = from_text(m.buildConfig.memoryThreshold)) return *n;
+    if (auto n = from_text(machine)) return *n;
+    return kDefaultMemoryThreshold;
 }
 
 }  // namespace mcpp::build::schedule

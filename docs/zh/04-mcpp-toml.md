@@ -265,7 +265,7 @@ main = "src/main.cpp"
 `app` 是一个可执行文件时，那个入口就是 `main` 本身。在 `*-linux-android`
 上，这个文件被编译为共享库的一个翻译单元，平台自己的入口
 （`ANativeActivity_onCreate`，或它声明的 JNI 导出）是平台自己的契约，
-不是 mcpp 分配的名字。`exports`（见上）对 `app` 目标的适用方式与对
+不是 mcpp 分配的名字。映像在某一行上没有程序起点时，该行陈述 `main = false`（见下）。`exports`（见上）对 `app` 目标的适用方式与对
 `shared` 目标完全相同，`windows_subsystem` / `windows_entry`（见下）
 接受 `app` 的方式也与接受 `bin` 完全相同。
 
@@ -290,7 +290,7 @@ targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
 kind = "entry"
 main = "src/entry/player.cpp"
 
-[target.'cfg(os = "android")'.targets.player]
+[target.'cfg(env = "android")'.targets.player]
 main = "src/entry/player_android.cpp"   # Android 上的起点是另一个文件
 
 # 应用（使用方）
@@ -318,6 +318,39 @@ main = { from = "openmui/player" }     # "<依赖>/<入口>"
 - 入口目标不是所在包的产物：只声明入口目标的包仍按源文件推断库或程序目标。
 
 测试程序在 `[test]` 中使用同一写法（§2.17）。
+
+#### `main = false` —— 没有程序起点的映像（mcpp 2026.11.20.1+）
+
+启动者只经映像导出的名字进入它的程序没有程序起点，以 `main = false` 陈述：
+
+```toml
+[targets.app]
+kind = "app"
+main = "platform/linux/main.cpp"      # 桌面各行从这里开始
+
+[target.'cfg(env = "android")'.targets.app]
+main = false                          # Java 进程加载 libapp.so
+
+[target.'cfg(os = "emscripten")'.targets.app]
+main = false                          # 页面调用模块导出的函数
+```
+
+| 行 | `main = false` | 链接 |
+|---|---|---|
+| `*-linux-android`，`kind = "app"` | 接受 | `libapp.so`，与写文件时相同 |
+| `wasm32-emscripten`，`bin` 与 `app` | 接受 | 加 `--no-entry`，即该行的 `link-without-main` |
+| 其余各行，以及 Android 上的 `kind = "bin"` | 拒绝，并说明该行由谁进入映像 | — |
+
+- 行表的 `main = false` 替换目标在该行的起点。目标所写的文件仍是其他各行的起点，不作为该行映像的源文件；
+  目标的 `cflags`、`cxxflags`、`defines`、`start` 与 `windows_entry` 在该行不适用。
+- 同一张表中 `main = false` 与 `start`、`windows_entry`、`cflags`、`cxxflags` 或 `defines` 并存被拒绝，
+  `main = true` 也被拒绝。入口目标与 `[test]` 不接受 `main = false`。
+- 不写 `main` 仍被拒绝：只有这一陈述表示映像没有起点。
+- 宿主调用的名字由程序定义并导出：Android 库的 `JNI_OnLoad`、`Java_*` 函数或 `ANativeActivity_onCreate`，
+  Web 模块导出的函数（`EMSCRIPTEN_KEEPALIVE`；`ldflags` 中的 `-sEXPORTED_FUNCTIONS` 与 `-sMODULARIZE`）。
+  在一个翻译单元中定义它们的框架，也可以把该单元作为入口目标提供，由 `main = { from }` 选择（见上）。
+- `mcpp run` 拒绝这样的程序，并写出 `mcpp build` 产出的文件。构建记录中该产物的条目为
+  `"entry": {"main": false}`，且没有 `launch`（[50 —— 机器输出](50-machine-output.md)）。
 
 #### `start` —— 镜像的入口符号（mcpp 2026.10.26.2+）
 
@@ -601,7 +634,7 @@ dependency_linkage = "static"     # How dependencies arrive: static (default) | 
 cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
 jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
-private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
+private_fragment = "unit"         # A private module fragment: unit (default) | conservative (a unit; any purview directive refuses) | as-written (chapter 26)
 ```
 
 `[build] ldflags` 的词以绝对路径点名的文件是带有它的每次链接的输入：整个词（预构建的归档、目标文件）、选项的值
@@ -965,7 +998,9 @@ compile_commands = "compile_commands.json"   # 相对工程根目录的路径
 | 键 | 章节 |
 |---|---|
 | `allow_host_libs` | [20 —— 工具链](20-toolchains.md)、[22 —— 目标侧](22-target-side.md) |
+| `allow_host_tools` | [25 —— home、索引与 store](25-home-indices-and-store.md) |
 | `ios_deployment_target` | [20 —— 工具链](20-toolchains.md) |
+| `offline` | [05 —— 依赖](05-dependencies.md)，「离线构建与 mcpp fetch」 |
 | `platform-dependencies` | [22 —— 目标侧](22-target-side.md) |
 | `std-module`、`std-compat-module` | [22 —— 目标侧](22-target-side.md) |
 
@@ -1067,6 +1102,19 @@ CI 上都跑通过。
 边，因为它以 `O_TRUNC` 把 BMI 写到最终路径，读者可能会看到一个写了
 一半的文件。MSVC 被留在一边不动——`/ifcOnly` 的开销与 `.ifc` 的
 原子性都未经测量，两者任何一个猜错都是无声的。
+
+### 可用内存（`memory_threshold`）*（2026.11.21.1+）*
+
+```toml
+[build]
+memory_threshold = "2GiB"   # 大小（"512MiB"、"1.5GB"）或字节数；"0" 不等待
+```
+
+编译执行器取得槽位之后、启动编译器之前读取系统的可用内存：低于该值时等待已运行的编译器结束，不结束它们。
+引擎的取值为 1 GiB，因为一次模块接口的编译峰值为 0.5–1.0 GB（见上）。取值依次来自 `MCPP_MEMORY_THRESHOLD`、本键、
+`~/.mcpp/config.toml` 的 `[build] memory_threshold` 与引擎；不是大小的值被报告，由下一层取值。低于该值满一分钟时，执行器在
+标准错误上说明并启动编译器：本机没有编译器占用的内存永远等不到（[SPEC-004 §9](../specs/manifest-semantics.md)
+第 19 项）。
 
 ### 模块接口扩展名（`module_extensions`）
 
@@ -1579,6 +1627,7 @@ ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默�
 trim_paths = true         # 按单元的 -ffile-prefix-map(release/dist 默认开)
 bmi_cutoff = "exact"      # "ignore-locations"(默认):只有行映射变化的 GCC BMI 被保留
 split_debuginfo = "off"   # "unpacked":调试信息留在对象旁(dev/debug 默认)
+dependency_debug = "lines" # 来自存储与 git 的依赖:true | false | "lines"(dev/debug 的默认)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1607,6 +1656,12 @@ ldflags  = []
 - 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
   （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
   覆盖一个内置定义。
+- **`dependency_debug`（2026.11.21.1+）** 陈述来自包存储与 git 的依赖的调试信息：`true`（与 profile 的 `debug` 相同）、
+  `false`（不带）、`"lines"`（只带行表：GCC 的 `-g1`、Clang 的 `-gline-tables-only`，由工具链行给出）。省略时，`dev`
+  与 `debug` 在其 `debug` 打开时取 `"lines"`，其余 profile 取其 `debug`。工作空间的成员与路径依赖保持 profile 的
+  `debug`。经由依赖的回溯仍给出文件与行号；在只依赖 mtest 的工程上实测，测试程序由 43.7 MB 降为 8.3 MB，构建由
+  15.9 s 降为 7.2 s。标志进入依赖的配置，因此每种取值在缓存中各有条目（[SPEC-004 §9](../specs/manifest-semantics.md)
+  第 20 项）。
 - **`bmi_cutoff`(2026.11.17.2+)** 规定导入者何时跟随模块的接口
   ([SPEC-018](../specs/module-rebuilds.md))。所导入的 BMI 变化时,导入者重新编译。GCC 下,在
   其后没有已记录实体的位置插入一行,只改变 BMI 的行映射;默认值 `"ignore-locations"` 保留
@@ -1689,7 +1744,10 @@ cache = "global"   # "global" (default) | "local" | "off"
 每个文件的相对路径与内容，不含 `target/`、`.git/`、`.mcpp/`、`compile_commands.json` 与含自己 `mcpp.toml`
 的子目录。两个经 `path` 使用同一个库的工程、一次 clean 之后的构建、以及恢复 `$MCPP_HOME/build-cache` 的
 CI 运行，只要库的源码相同就复用同一个条目，与源码树检出在哪里无关；一次修改是一个新键，同一棵树在先前摘要下
-的条目在写入新条目时移除。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。
+的条目在写入新条目时移除。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。条目只含它的包
+自己的单元 *(2026.11.20.1+)*：位于依赖树中嵌套的另一个包之下的单元属于那个包——位于仓库之下、成员的构建程序
+导入仓库自身包的 workspace，其成员的单元仍属于成员，在原处构建。2026.11.19.1 下依赖的条目收入了这些单元，
+自干净的 target 目录构建时把一个成员的目标文件链接进了另一个成员（mcpp#979）。
 
 **不会**被缓存的：工程自己的树，即正在编辑的那些——根包、workspace 成员，以及位于工程目录之下（或构建程序、
 宿主工具所服务的那次构建的目录之下）的任何包。2026.11.19.1 之前，`path` 与 `git` 依赖不论层级多深都不缓存

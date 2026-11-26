@@ -109,6 +109,12 @@ a package of the graph already provides is left to that package and reported
 `graph`. The package of the C++ run-time also provides the compiler run-time, so
 `"c++-abi" = false` takes effect only with `compiler-runtime = false` beside it.
 
+The tables apply on a row without a platform too (mcpp 2026.11.23.1): such a row
+has an empty platform statement, and `layers`, `tools` and `link` written for
+it complete the graph and reach the link as they would over a platform. Before,
+they were accepted and had no effect. `carrier` is a form of a platform's image,
+so on such a row it is reported as a warning (`platform/carrier`) and not used.
+
 ## Selecting a platform, or none
 
 The first of these that answers selects the target's platform:
@@ -280,6 +286,14 @@ again. A refusal that follows says whether the index was refreshed, and why not.
 Before, a row listed after the local copy was taken was refused as an unknown
 target until `mcpp index update`.
 
+A request that is built without a platform is not refused, so a miss of the
+column for it does not refresh the index *(2026.11.22.1+, mcpp#996)*: a custom triple
+a `[target.<triple>]` section defines, a `planned` row built with a named
+toolchain (`[target.<row>] toolchain`, `--toolchain`), and a request a table
+answers with `platform = "none"`, which ends the lookup as `--platform none`
+does. The column is still read for the first two. Before, each such build more
+than the debounce apart refreshed the index.
+
 ## Writing a platform package
 
 A platform package is a package with a `[platform]` section. openkal-platform,
@@ -411,7 +425,10 @@ before each link, staged when the link wrote one, and not an error when it did n
 programs: a name template (`artifact_name("exe", "{name}")`, `link.exe`) decides
 what precedes the suffix, and the name ends in it once. The built-in
 `wasm32-emscripten` row states it, so a program named `{name}` is still `app.js`
-beside `app.wasm`. A machine
+beside `app.wasm`. `link-without-main` (2026.11.20.1+) gives the link words of an
+executable with no program start (`main = false`, see 04 — `main = false`); a
+row that states none refuses `main = false` for its executables. The built-in
+`wasm32-emscripten` row states `["--no-entry"]`. A machine
 runs another architecture's programs only where the execution table states it
 (`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
 the artifact's architecture and started on this machine.

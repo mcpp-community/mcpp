@@ -447,6 +447,12 @@ struct action {
     // inputs and outputs are unaffected: they keep naming files the way they
     // always have.
     action& cwd(const char* dir) { cwd_ = dir; return *this; }
+    // THE AUTHORED SOURCE THE OUTPUT IS A TRANSFORMED COPY OF (mcpp#1004): one
+    // of this action's inputs, the file a person edits to change the unit
+    // compiled from the output. Stated by the rule, which alone knows it; the
+    // build database names it (`ide.generated[].origin`) and a consumer reads
+    // the authored file as the unit's, not as a second provider of its module.
+    action& origin(const char* p) { origin_ = p; return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);
         std::printf(",\"role\":");                  esc(role);
@@ -469,6 +475,8 @@ struct action {
         // the bytes it did before protocol 13.
         if (env_.len) std::printf(",\"env\":[%s]", env_.c_str());
         if (cwd_[0]) { std::printf(",\"cwd\":"); esc(cwd_); }
+        // Omitted unless stated, as `cwd` is.
+        if (origin_[0]) { std::printf(",\"origin\":"); esc(origin_); }
         // Set only when the process could not allocate memory for a list.
         // A declaration cut short would otherwise be INVALID rather than
         // obviously wrong -- the engine turns this marker into a diagnostic
@@ -488,6 +496,7 @@ private:
     // `list`: it is one directory, never a JSON array.
     const char* outputDir_ = "";
     const char* cwd_ = "";
+    const char* origin_ = "";
     mutable bool overflow_ = false;
     static void esc(const char* s) { json_detail::esc(s); }
     // One entry of a list field; a list the allocator refused marks the
@@ -923,37 +932,78 @@ inline bool has_feature(const char* name) {
     buf[o] = 0;
     return value_of(buf) != nullptr;
 }
-// mcpp#241: resolved install dir of a declared dependency (by its package
-// name), or "" if not found. Same sanitize as has_feature; wraps
-// MCPP_DEP_<SANITIZED_NAME>_DIR.
+// THE ONE RULE OF EVERY TYPED READER OF THE CONTRACT (design 2026-11-21, build
+// programs' inputs §3.7). A name is judged by the variable it is published
+// under, and several spellings are one variable (`foo-bar`, `foo_bar`,
+// `foo.bar`). A variable several dependencies answer is no package's: the
+// engine publishes `ambiguous` with the spellings that do name one, and asking
+// ends the program naming them -- either answer would be a wrong build. Said on
+// standard output, which the engine prints when the program exits non-zero;
+// `std::fprintf(stderr, ...)` here would bind `FILE` in this module and collide
+// with a build program's own <cstdio>.
 //
-// #852: a name two visible dependencies answer to (two packages whose
-// manifests both say `rules`) is no package's, and the engine publishes it as
-// MCPP_DEP_AMBIGUOUS_<SANITIZED_NAME> with the qualified names instead. Asking
-// for it ends the program, naming them: the answer otherwise would be one of
-// the two packages' directories or none, and either is a wrong build.
-inline const char* dep_dir(const char* name) {
-    char buf[256] = "MCPP_DEP_";
-    unsigned long o = 9;
-    for (const char* p = name; *p && o + 5 < sizeof buf; ++p, ++o) {
+// COMPAT(ambiguous-contract-name): until the reading's floor a variable that
+// answered before the rule still holds that answer beside `ambiguous`; it is
+// returned, and the engine warns (`mcpp:deprecated=`).
+inline unsigned long put_env_name_(char* buf, unsigned long o, unsigned long cap, const char* s) {
+    for (const char* p = s; *p && o + 1 < cap; ++p, ++o) {
         char c = *p;
         buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
                : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
     }
-    char ambiguous[288] = "MCPP_DEP_AMBIGUOUS_";
-    unsigned long a = 19;
-    for (unsigned long i = 9; i < o && a + 1 < sizeof ambiguous; ++i, ++a) ambiguous[a] = buf[i];
-    ambiguous[a] = 0;
-    // Said on standard output, which the engine prints when the program exits
-    // non-zero; `std::fprintf(stderr, ...)` here would bind `FILE` in this
-    // module and collide with a build program's own <cstdio>.
-    if (const char* which = value_of(ambiguous)) {
-        std::printf("build.mcpp: dep_dir(\"%s\") names more than one dependency (%s); ask by one of "
-                    "those names\n", name, which);
-        std::exit(2);
+    buf[o] = 0;
+    return o;
+}
+inline const char* contract_answer_(const char* question, const char* var, const char* ambiguous) {
+    const char* which = value_of(ambiguous);
+    if (!which) return env_or(var);
+    if (const char* first = value_of(var)) {
+        std::printf("mcpp:deprecated=ambiguous-contract-name\t%s\t%s\n", question, which);
+        return first;
     }
-    buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
-    return env_or(buf);
+    if (*which)
+        std::printf("build.mcpp: %s names more than one dependency (%s); ask by one of those names\n",
+                    question, which);
+    else
+        std::printf("build.mcpp: %s names more than one dependency, and their names differ only in "
+                    "characters a contract variable cannot hold; rename one of the packages\n", question);
+    std::exit(2);
+}
+// The variable `<prefix><NAME><suffix>`, its ambiguity variable `<ambPrefix><NAME>`, and the
+// question as the program asked it, for `contract_answer_`.
+struct ContractQuestion_ {
+    char var[256];
+    char ambiguous[288];
+    char question[320];
+};
+inline void contract_names_(ContractQuestion_& q, const char* prefix, const char* key1,
+                            const char* key2, const char* separator, const char* suffix,
+                            const char* ambPrefix) {
+    unsigned long o = 0;
+    for (const char* p = prefix; *p && o + 1 < sizeof q.var; ++p) q.var[o++] = *p;
+    unsigned long keyStart = o;
+    if (key1 && *key1) {
+        o = put_env_name_(q.var, o, sizeof q.var, key1);
+        for (const char* p = separator; *p && o + 1 < sizeof q.var; ++p) q.var[o++] = *p;
+    }
+    o = put_env_name_(q.var, o, sizeof q.var, key2);
+    unsigned long keyEnd = o;
+    for (const char* p = suffix; *p && o + 1 < sizeof q.var; ++p) q.var[o++] = *p;
+    q.var[o] = 0;
+    unsigned long a = 0;
+    for (const char* p = ambPrefix; *p && a + 1 < sizeof q.ambiguous; ++p) q.ambiguous[a++] = *p;
+    for (unsigned long i = keyStart; i < keyEnd && a + 1 < sizeof q.ambiguous; ++i) q.ambiguous[a++] = q.var[i];
+    q.ambiguous[a] = 0;
+}
+
+// mcpp#241: resolved install dir of a declared dependency (by its package
+// name), or "" if not found. Same sanitize as has_feature; wraps
+// MCPP_DEP_<SANITIZED_NAME>_DIR. A name several dependencies answer: above.
+inline const char* dep_dir(const char* name) {
+    ContractQuestion_ q;
+    contract_names_(q, "MCPP_DEP_", "", name, "", "_DIR", "MCPP_DEP_AMBIGUOUS_");
+    std::snprintf(q.question, sizeof q.question, "dep_dir(\"%s\")", name);
+    return contract_answer_(q.question, q.var, q.ambiguous);
 }
 // #642 E2: the link form a declared dependency takes in this build, "static" or
 // "shared", or "" when it has no library form or the name is unknown. Wraps
@@ -962,16 +1012,10 @@ inline const char* dep_dir(const char* name) {
 // dependency's form, and a dependency's program runs before every fact that
 // decides it is known, so there it is always "".
 inline const char* dep_linkage(const char* name) {
-    char buf[256] = "MCPP_DEP_";
-    unsigned long o = 9;
-    for (const char* p = name; *p && o + 9 < sizeof buf; ++p, ++o) {
-        char c = *p;
-        buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-               : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-    }
-    for (const char* suffix = "_LINKAGE"; *suffix; ++suffix) buf[o++] = *suffix;
-    buf[o] = 0;
-    return env_or(buf);
+    ContractQuestion_ q;
+    contract_names_(q, "MCPP_DEP_", "", name, "", "_LINKAGE", "MCPP_DEP_AMBIGUOUS_");
+    std::snprintf(q.question, sizeof q.question, "dep_linkage(\"%s\")", name);
+    return contract_answer_(q.question, q.var, q.ambiguous);
 }
 // The payload directory of a package declared in `[xlings] deps`.
 //
@@ -991,29 +1035,22 @@ inline const char* dep_linkage(const char* name) {
 // The namespaced form is tried first and answers only for a package declared
 // under that namespace. The bare form is a convenience for the common single
 // declaration; when two namespaces declare the same name, only the namespaced
-// form can say which one is meant, and the bare one answers for the first
-// declared. Returns "" when the package was not declared or is not installed —
+// form can say which one is meant, and the bare one is judged as `dep_dir`
+// judges a name several dependencies answer. Returns "" when the package was not declared or is not installed —
 // a caller that needs it should say so itself, because only it knows whether
 // the absence is fatal.
-// `MCPP_XPKG_<NS>_<NAME>_<SUFFIX>`, spelled as `xpkg_dir` always spelled it.
-inline const char* xpkg_value_(const char* ns, const char* name, const char* suffix) {
-    char buf[256] = "MCPP_XPKG_";
-    unsigned long o = 10;
-    auto put = [&](const char* s) {
-        for (const char* p = s; *p && o + 12 < sizeof buf; ++p, ++o) {
-            char c = *p;
-            buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-                   : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-        }
-    };
-    if (ns && *ns) { put(ns); if (o + 12 < sizeof buf) buf[o++] = '_'; }
-    put(name);
-    buf[o++] = '_';
-    for (const char* p = suffix; *p && o + 1 < sizeof buf; ++p) buf[o++] = *p;
-    buf[o] = 0;
-    return env_or(buf);
+// `MCPP_XPKG_<NS>_<NAME>_<SUFFIX>`, spelled as `xpkg_dir` always spelled it. A
+// bare name two namespaces declare is judged as `dep_dir` judges a name.
+inline const char* xpkg_value_(const char* ns, const char* name, const char* suffix, const char* reader) {
+    ContractQuestion_ q;
+    char tail[16] = "_";
+    for (unsigned long i = 0; suffix[i] && i + 2 < sizeof tail; ++i) { tail[i + 1] = suffix[i]; tail[i + 2] = 0; }
+    contract_names_(q, "MCPP_XPKG_", ns, name, "_", tail, "MCPP_XPKG_AMBIGUOUS_");
+    if (ns && *ns) std::snprintf(q.question, sizeof q.question, "%s(\"%s\", \"%s\")", reader, ns, name);
+    else           std::snprintf(q.question, sizeof q.question, "%s(\"%s\")", reader, name);
+    return contract_answer_(q.question, q.var, q.ambiguous);
 }
-inline const char* xpkg_dir(const char* ns, const char* name) { return xpkg_value_(ns, name, "DIR"); }
+inline const char* xpkg_dir(const char* ns, const char* name) { return xpkg_value_(ns, name, "DIR", "xpkg_dir"); }
 inline const char* xpkg_dir(const char* name) { return xpkg_dir("", name); }
 
 // WHERE A DECLARED PAYLOAD COMES FROM (protocol 15, mcpp#755).
@@ -1025,12 +1062,12 @@ inline const char* xpkg_dir(const char* name) { return xpkg_dir("", name); }
 //   "pending"   declared `provision = "on-request"` and not installed yet;
 //               `xpkg_request` asks for it
 //   ""          not declared for this build, or not installed
-inline const char* xpkg_source(const char* ns, const char* name) { return xpkg_value_(ns, name, "SOURCE"); }
+inline const char* xpkg_source(const char* ns, const char* name) { return xpkg_value_(ns, name, "SOURCE", "xpkg_source"); }
 inline const char* xpkg_source(const char* name) { return xpkg_source("", name); }
 // The program an override named, when it named one (`program = "..."`, a
 // path that is a file, or a name found on PATH); "" otherwise. A payload, and
 // an override that named a root, leave the program to the plugin's layout.
-inline const char* xpkg_program(const char* ns, const char* name) { return xpkg_value_(ns, name, "PROGRAM"); }
+inline const char* xpkg_program(const char* ns, const char* name) { return xpkg_value_(ns, name, "PROGRAM", "xpkg_program"); }
 inline const char* xpkg_program(const char* name) { return xpkg_program("", name); }
 
 inline bool& xpkg_pending_flag_() { static bool pending = false; return pending; }
@@ -1097,20 +1134,10 @@ inline void toolchain(const char* key, const char* value) {
 // and no feature declares answers "" and is reported by the engine
 // (`build-program/undeclared-tool`, protocol 20) with the line to write.
 inline const char* dep_bin(const char* pkg, const char* tool) {
-    char buf[256] = "MCPP_DEP_";
-    unsigned long o = 9;
-    auto put = [&](const char* s) {
-        for (const char* p = s; *p && o + 8 < sizeof buf; ++p, ++o) {
-            char c = *p;
-            buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-                   : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-        }
-    };
-    put(pkg);
-    buf[o++] = '_'; buf[o++] = 'B'; buf[o++] = 'I'; buf[o++] = 'N'; buf[o++] = '_';
-    put(tool);
-    buf[o] = 0;
-    const char* path = env_or(buf);
+    ContractQuestion_ q;
+    contract_names_(q, "MCPP_DEP_", pkg, tool, "_BIN_", "", "MCPP_DEP_AMBIGUOUS_");
+    std::snprintf(q.question, sizeof q.question, "dep_bin(\"%s\", \"%s\")", pkg, tool);
+    const char* path = contract_answer_(q.question, q.var, q.ambiguous);
     if (!*path) std::printf("mcpp:undeclared-tool=%s\t%s\n", pkg, tool);
     return path;
 }

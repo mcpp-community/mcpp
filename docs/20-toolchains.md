@@ -22,14 +22,14 @@ On the first `mcpp build` with no toolchain configured, mcpp
 installs and persists a default pair for the current host. The choice is
 host-aware:
 
-- Linux x86_64 uses `gcc@16.1.0` for the native glibc ABI, so X11, OpenGL, and
+- Linux x86_64 uses `gcc@16.2.0` for the native glibc ABI, so X11, OpenGL, and
   system libraries work out of the box.
 - Linux aarch64 uses `llvm@23.1.3` for the native glibc ABI (2026.10.8.1+).
-- Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
+- Other Linux architectures use `gcc@16.2.0-musl`, a self-contained static
   toolchain.
 - macOS uses `llvm@23.1.3`.
 - Windows with a usable MSVC installation uses `llvm@23.1.3` for the MSVC ABI.
-  Without usable MSVC, it uses `gcc@16.1.0` with target
+  Without usable MSVC, it uses `gcc@16.2.0` with target
   `x86_64-windows-gnu` (MinGW-w64, static by default), says which half of the
   MSVC ABI is missing — Visual Studio's C++ tools or the Windows SDK — and where
   it looked, and records the pair as the machine's default. Once both halves
@@ -77,20 +77,21 @@ this model with a one-line `note:` hint.
 ## Manual Installation
 
 ```bash
-mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
+mcpp toolchain install gcc 16.2.0           # host target (GNU libc on Linux)
 mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
-                                            # target's convention pin (gcc@16.1.0)
+                                            # target's convention pin (gcc@16.2.0)
 ```
 
 Explicit installation is mostly for CI cache warm-up and offline prep —
 `mcpp build --target <triple>` auto-installs whatever the target needs.
 
-Version numbers support partial matching:
+Version numbers support partial matching, resolved as described in
+[Resolution and the lock](#resolution-and-the-lock-202611211):
 
 ```bash
-mcpp toolchain install gcc 15               # installs the highest 15.x.y version (15.1.0)
+mcpp toolchain install gcc 15               # the newest 15.x.y release of the index
 mcpp toolchain install gcc@16               # the @ form works too
 ```
 
@@ -165,17 +166,94 @@ and the C units as with any compiler. A unit that declares a module, is a
 module unit or imports one (`import std;` included) is refused at planning,
 naming the file and what it needs.
 
+## Resolution and the lock (2026.11.21.1+)
+
+A request for a packaged toolchain has one answer, the same in
+`mcpp toolchain install`, `mcpp toolchain default` and a build:
+
+| Request | Answer |
+|---|---|
+| a full version (`gcc@16.1.0`) | that version |
+| a partial version (`gcc@16`, `gcc@16.2`) | the newest release of the local index whose version it is a prefix of; a build installs it when it is absent |
+| a prerelease (`xim:gcc@17.0.0-20261108`) | selected by its full key only; a partial version never selects it |
+| any request, with no index entry for the package | the newest installed match, reported as degraded: a newer release is not considered |
+
+A partial version written in `mcpp.toml` (`[toolchain]`,
+`[workspace.toolchain]`, `[target.<triple>] toolchain`) is recorded in
+`mcpp.lock`, and later builds take the recorded version:
+
+```toml
+[toolchain."xim:gcc@16"]
+version = "16.2.0"
+```
+
+- A full version is its own record and writes none; a toolchain chosen by
+  `--toolchain`, by the machine's default or by mcpp is not recorded either.
+- `mcpp update` drops every record; `mcpp update gcc` (or `mcpp update
+  xim:gcc@16`) drops that toolchain's. The next build resolves it again.
+- Under `--locked` and `--frozen` the lock is kept as it is. A lock written
+  before the record has none for the request: the build resolves it, says so
+  in a note, and does not refuse.
+
+A project that states no toolchain follows the machine's default
+(`mcpp toolchain default`) or mcpp's own. When that default answers another
+toolchain than the one the project last built with, the build says so once:
+
+```
+note: the default toolchain (`mcpp toolchain default`) is now gcc@16.2.0; this project last built with gcc@16.1.0
+  help: to keep a version, state it in mcpp.toml: [toolchain] default = "gcc@16.1.0"
+```
+
+The toolchain a project last built with is kept, per target, in
+`target/.mcpp-notices`; a project's first build, and the first after
+`mcpp clean`, has nothing to compare with. A `--toolchain` build is neither
+compared nor remembered.
+
+## Companions (2026.11.21.1+)
+
+A managed toolchain's companions -- the binutils GCC assembles and links with,
+the Linux kernel headers of the glibc base, GCC's runtime libraries -- are the
+versions its payload declares as runtime dependencies for this host. Two
+descriptors declare them, read in order: the one the payload was installed with,
+which the installer keeps beside it, then the index's current one; the first
+declaration the store holds decides *(2026.11.22.1+)*. An index update that moves the
+declaration does not take the companions from an installed toolchain; before,
+an installed GCC lost its binutils when xim's recipe moved to a version the
+store did not hold. A home that links the payload from an `[xlings] upstream`
+holds the companions the index names, beside the upstream's descriptor, and
+takes those. A store that holds several versions answers with the declared one;
+without a declaration, with the newest. Declarations the store holds none of
+are reported as a degradation; `mcpp toolchain install` installs what they
+name.
+
+A project may state the binutils beside a GCC:
+
+```toml
+[toolchain]
+default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }
+```
+
+The build installs the package, says `Companion binutils 2.47 (<dir>)`, and
+passes its directory to the driver. A binutils older than the one the GCC
+payload declares is refused (`companion-too-old`): GCC chose its assembler
+features by that binutils when it was built. `companions` names binutils only;
+the kernel headers are the target's `kernel-abi` layer, stated with
+`[target.<selector>.layers] kernel-abi` ([22 — The Target
+Side](22-target-side.md)); without a statement, over a base that carries none,
+they follow the toolchain payload's declaration (mcpp 2026.11.23.1+).
+
 ## Switching the Default Toolchain
 
 The default is a *pair* — toolchain axis + target axis (target omitted = host):
 
 ```bash
 mcpp toolchain default gcc@16.1.0
-mcpp toolchain default gcc 15               # partial version → highest installed match
+mcpp toolchain default gcc 15               # partial version → the newest 15.x.y release, which must be installed
 mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "default to fully-static musl"
 ```
 
-The pair persists as `[toolchain] default = "gcc@16.1.0"` +
+A partial version is resolved as a build resolves it, and the full version is
+what is written. The pair persists as `[toolchain] default = "gcc@16.1.0"` +
 `default_target = "x86_64-linux-musl"` in `~/.mcpp/config.toml`. (Older
 configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
 working unchanged.)
@@ -268,7 +346,7 @@ Targets:
   *  x86_64-linux-musl       static                gcc 16.1.0        installed
      x86_64-windows-gnu      PE, static, cross     gcc 16.1.0        installed
      aarch64-linux-musl      static, cross         gcc 16.1.0        available
-     riscv64-linux-musl      static, cross         —                 planned
+     riscv64-linux-musl      static, cross         gcc 16.1.0        available
 
 Available toolchains (run `mcpp toolchain install <family> <version>`):
      gcc 15.1.0 / 13.3.0 / 11.5.0 / 9.4.0
@@ -1580,8 +1658,10 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 
 In `cxxflags` the std module's precompile does not see it.
 
-`i686-windows-msvc` is not a row of the target table; a project that builds
-for it declares `[target.i686-windows-msvc]`, as for any custom triple.
+`i686-windows-msvc` is a `preview` row of the target table *(2026.11.22.1+,
+mcpp#996)*, served by the msvc provider as `x86_64-windows-msvc` is; x86_64
+Windows runs its programs (WOW64). A project needs no `[target.i686-windows-msvc]`
+section to build it. Before, it was a custom triple that required the section.
 
 ## Known Toolchain Limitation: GCC Modules Under a Non-ASCII Path (gcc 16)
 

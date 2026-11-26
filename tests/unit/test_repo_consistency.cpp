@@ -24,12 +24,13 @@ bool any_line(const std::string& text, const std::regex& re) {
 }
 
 UTest install_platform_mapping{"RepoConsistency/InstallScriptNamesThePublishedAssets", [] {
-    // install.sh's platform ids are the assets release.yml publishes: macOS arm64 is
+    // install.sh's platform ids are the assets the release publishes: macOS arm64 is
     // `macosx-arm64`, Linux aarch64 (also reported as arm64) is `linux-aarch64`, and no macOS
     // x86_64 asset is advertised, since none is published.
     const auto install = read(repository() / "install.sh");
-    const auto release = read(repository() / ".github/workflows/release.yml");
-    expect(fatal(!install.empty() && !release.empty())) << "install.sh or release.yml is missing";
+    // The archives are built by release-build.yml, which release.yml and ci.yml's `full` tier call.
+    const auto release = read(repository() / ".github/workflows/release-build.yml");
+    expect(fatal(!install.empty() && !release.empty())) << "install.sh or release-build.yml is missing";
     expect(any_line(install, std::regex(R"(Darwin-arm64\).*PLAT="macosx-arm64")"))) << "Darwin-arm64 must map to the released macosx-arm64 asset";
     expect(any_line(install, std::regex(R"(Linux-aarch64 \| Linux-arm64\).*PLAT="linux-aarch64")"))) << "Linux-aarch64 must map to the released linux-aarch64 asset";
     expect(!any_line(install, std::regex(R"(Darwin-x86_64\).*PLAT=)"))) << "install.sh advertises Darwin-x86_64, but release CI publishes no macOS x86_64 asset";

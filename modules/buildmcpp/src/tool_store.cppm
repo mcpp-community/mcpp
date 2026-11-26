@@ -168,6 +168,9 @@ std::string sanitize_env(std::string s);
 
 // The env var name a build.mcpp reads for this tool.
 std::string env_var_name(std::string_view packageName, std::string_view toolName);
+// What `dep_bin` reads when several packages answer that name (design
+// 2026-11-21, build programs' inputs §3.7).
+std::string ambiguous_env_var_name(std::string_view packageName, std::string_view toolName);
 
 } // namespace mcpp::build::tool_store
 
@@ -184,6 +187,11 @@ std::string sanitize_env(std::string s) {
 
 std::string env_var_name(std::string_view packageName, std::string_view toolName) {
     return "MCPP_DEP_" + sanitize_env(std::string(packageName))
+         + "_BIN_" + sanitize_env(std::string(toolName));
+}
+
+std::string ambiguous_env_var_name(std::string_view packageName, std::string_view toolName) {
+    return "MCPP_DEP_AMBIGUOUS_" + sanitize_env(std::string(packageName))
          + "_BIN_" + sanitize_env(std::string(toolName));
 }
 

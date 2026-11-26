@@ -34,7 +34,7 @@ fs::path example_copy() {
     return ex;
 }
 
-E2E rules{"rules", [] {
+E2E rules{"rules", s::home_fixture, [] {
     "610 feature controlled rule collection"_test[s::gcc] = [] {
         // One package, several rules, the set chosen by the consumer's feature request: an
         // activated feature's unit is importable under its declared name, an inactive one is

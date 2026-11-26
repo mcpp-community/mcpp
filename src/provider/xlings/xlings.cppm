@@ -14,6 +14,7 @@ import mcpp.provider;
 import mcpp.pm.compat;
 import mcpp.pm.index_contract;
 import mcpplibs.os.platform;
+import mcpp.toolchain.triple;   // the bootstrap tools' versions, data of the built-in table
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.build.command_line;
@@ -34,15 +35,19 @@ using Env = mcpp::provider::Location;
 // ─── Pinned version constants ───────────────────────────────────────
 
 namespace pinned {
-    inline constexpr std::string_view kPatchelfVersion = "0.18.0";
-    // ninja 1.12.1 with the correction of ninja-build/ninja#2662 (mcpp#945):
-    // loading a dyndep file while an edge finishes invalidated the iterators
-    // of the loops that finish it. A version key of its own in xim-pkgindex,
-    // not `latest`; `ninja --version` answers this string.
-    inline constexpr std::string_view kNinjaVersion    = "1.12.1-mcpp.1";
-    // The upstream version the pin corrects: what a home takes where the
-    // index it reads does not list the pin.
-    inline constexpr std::string_view kNinjaBaseVersion = "1.12.1";
+    // The bootstrap tools' versions are data: `[[default]]` of the built-in
+    // table (modules/toolchain-model/data/builtin.toml; design 2026-11-21 §3.7).
+    inline constexpr std::string_view kPatchelfVersion =
+        mcpp::toolchain::triple::pins::tool_version("patchelf");
+    // ninja with the correction of ninja-build/ninja#2662 (mcpp#945): loading
+    // a dyndep file while an edge finishes invalidated the iterators of the
+    // loops that finish it. A version key of its own in xim-pkgindex, not
+    // `latest`; `ninja --version` answers this string.
+    inline constexpr std::string_view kNinjaVersion =
+        mcpp::toolchain::triple::pins::tool_version("ninja");
+    // The upstream version an mcpp revision (`<upstream>-mcpp.<n>`) corrects:
+    // what a home takes where the index it reads does not list the pin.
+    inline constexpr std::string_view kNinjaBaseVersion = kNinjaVersion.substr(0, kNinjaVersion.find("-mcpp."));
     // The xlings a release bundles at <install>/registry/bin/xlings, and the
     // version `mcpp self env` reports.
     //
@@ -191,7 +196,22 @@ namespace pinned {
     // clang's interpreter naming the link, and no compiler of the shared home
     // started once the link was removed (measured in this repository's CI on
     // a runner with no cache, mcpp#949).
-    inline constexpr std::string_view kXlingsVersion   = "2026.11.17.2";
+    //
+    // Seventeenth, at 2026.11.21.1 (openxlings/xlings#723). Archives are taken
+    // by content from the download cache, the directories of XLINGS_ARCHIVES
+    // and `archives`, then the network, which a process that states
+    // XLINGS_NET_UNREACHABLE does not ask; `xlings download --to <dir>
+    // --with-index` writes a bundle and `xlings install --from <dir>` installs
+    // from one. `mcpp fetch` and `[build] offline` stand on these (design
+    // 2026-11-21, offline and toolchain defaults §3.1, §3.2).
+    //
+    // Eighteenth, at 2026.11.23.1 (openxlings/xlings#712, protocol 1.19). The
+    // store's collection keeps what a root under `data/roots/<owner>/` holds
+    // (feature `store_roots`): `mcpp cache gc` asks for a collection after the
+    // builds have registered their payloads as roots, and an earlier xlings
+    // reads none and removes them. Measured on one home before roots: `xlings
+    // self clean --dry-run` listed 154 payloads (16 GB) projects use.
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.23.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -343,6 +363,11 @@ namespace paths {
                          std::string_view packageName,
                          std::string_view requiredRelPath = {});
 
+    // The requirement on `packageName` the payload `compilerBin` belongs to
+    // declares as a runtime dependency on this host (`2.42.1`, `>=2.39`).
+    std::optional<std::string>
+    declared_dependency(const std::filesystem::path& compilerBin, std::string_view packageName);
+
     // xpkgs root of the ACTIVE mcpp home ($MCPP_HOME or ~/.mcpp). Payload
     // discovery consults this in addition to compiler siblings: an
     // inherited/symlinked compiler resolves into its owner home, while the
@@ -358,6 +383,11 @@ namespace paths {
 
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
+
+    // Where the descriptor of `name` may be under an index data root: the
+    // primary index first, then each sub-index by name.
+    std::vector<std::filesystem::path>
+    descriptor_candidates(const std::filesystem::path& data, std::string_view name);
 
     // ── Where each index is, and where its payloads go (design 2026-10-16
     // §5): an `index_repos` entry may name its own data directory and store
@@ -599,6 +629,19 @@ int install_with_progress(const Env& env, std::string_view target,
 // Run direct `xlings install <target> -y`.
 // Used as a fallback when the NDJSON interface install path fails.
 int install_direct(const Env& env, std::string_view target, bool quiet = false);
+// `xlings download <refs> --to <dir> --with-index` and `xlings install --from
+// <dir> <refs>` (xlings 2026.11.21.1), their lines shown as install_direct's.
+int download_to(const Env& env, std::span<const std::string> refs, const std::filesystem::path& dir);
+int install_from(const Env& env, const std::filesystem::path& dir, std::span<const std::string> refs);
+// `xlings self clean [--dry-run]` in the home: the store's collection, which
+// keeps what the home's environments, their dependency closure and the owners'
+// roots reference (xlings' store-roots specification).
+int collect_store(const Env& env, bool dryRun);
+std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot);
+// The marker of an index tree a bundle placed, which a later bundle may
+// replace. A refresh replaces it as it replaces any copy: an index mcpp owns
+// is staged and exchanged (refresh_owned), the official one is an artifact's.
+inline constexpr std::string_view kBundleSnapshotMarker = ".mcpp-bundle-snapshot";
 
 // ─── Sandbox lifecycle ──────────────────────────────────────────────
 

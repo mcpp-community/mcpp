@@ -25,7 +25,7 @@ std::optional<fs::path> ninja_file(const fs::path& target) {
     return std::nullopt;
 }
 
-E2E declared{"declared", [] {
+E2E declared{"declared", s::home_fixture, [] {
     "188 build actions"_test[s::gcc] = [] {
         // `mcpp:action=`: a build program declares work and the work becomes an edge: a
         // source action's output is compiled, a check's stamp and an artifact appear; an action

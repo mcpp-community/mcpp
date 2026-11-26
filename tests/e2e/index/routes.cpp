@@ -39,7 +39,7 @@ std::string lib_package(std::string_view ns_line, std::string_view name, std::st
 )", ns_line, name, description, source, target);
 }
 
-E2E routes{"routes", [] {
+E2E routes{"routes", s::home_fixture, [] {
     "120 ws root indices"_test[s::gcc][s::fresh_sandbox] = [] {
         // [indices] and [workspace.dependencies] at a workspace root reach a member by their
         // position, with a warning naming [workspace.indices]; a member's own relative path is
@@ -303,6 +303,36 @@ E2E routes{"routes", [] {
         expect(fatal(r.started && r.status != 0)) << "expected a miss inside the workspace member";
         expect(fatal(e2e::contains(s::text(r), route))) << "the inherited index was anchored somewhere unreadable: " << s::text(r);
         expect(fatal(s::lacks(s::text(r), tmp.string()) && s::lacks(s::text(r), tmp.generic_string()))) << "the route diagnostic leaked a filesystem path: " << s::text(r);
+    };
+
+    "1146 one location under two index names is refused"_test[s::fresh_sandbox] = [] {
+        // One location is one index (design 2026-11-22 §6.2, SPEC-004 §9): two entries of the
+        // effective [indices] that name one directory register it twice, and each of its packages
+        // is then two candidates of one name -- the install stopped at the provider as ambiguous,
+        // naming neither entry (measured on mcpp-index). A: two names in one manifest; B: a
+        // member's name beside its workspace's for the same directory; C: the same name for it is
+        // one index and is not refused.
+        const auto tmp = s::case_dir();
+        s::project(tmp / "idx", {{"pkgs/.keep", ""}});
+        const auto refused = [](std::string_view why, const e2e::outcome& r, std::string_view first, std::string_view second) {
+            const auto out = s::text(r);
+            expect(fatal(r.started && r.status != 0)) << why << ": built: " << out;
+            expect(fatal(s::has_line(out, std::format(R"(\[indices\] `{}` and `{}` name one index, the directory .*\[index-location-named-twice\])", first, second))))
+                << why << ": the refusal does not name both entries and the token: " << out;
+            expect(fatal(s::has_line(out, "Keep one name for the location"))) << why << ": no remedy: " << out;
+        };
+        s::project one(tmp / "one", {{"mcpp.toml", "[package]\nname = \"one\"\nversion = \"0.1.0\"\n\n[indices]\na = { path = \"../idx\" }\nb = { path = \"../idx/./\" }\n"},
+                                     {"src/main.cpp", "int main() { return 0; }\n"}});
+        refused("A", one.mcpp({"build"}, inherited), "a", "b");
+        const auto ws = [&](std::string_view dir, std::string_view memberName) {
+            return s::project(tmp / dir, {
+                {"mcpp.toml", "[workspace]\nmembers = [\"m\"]\n\n[workspace.indices]\nshared = { path = \"../idx\" }\n"},
+                {"m/mcpp.toml", std::format("[package]\nname = \"m\"\nversion = \"0.1.0\"\n\n[indices]\n{} = {{ path = \"../../idx\" }}\n", memberName)},
+                {"m/src/main.cpp", "int main() { return 0; }\n"}});
+        };
+        refused("B", ws("ws-two", "mine").mcpp({"build", "-p", "m"}, inherited), "mine", "shared");
+        auto r = ws("ws-one", "shared").mcpp({"build", "-p", "m"}, inherited);
+        expect(fatal(s::no_line(s::text(r), "index-location-named-twice"))) << "C: one name for one location was refused: " << s::text(r);
     };
 }};
 

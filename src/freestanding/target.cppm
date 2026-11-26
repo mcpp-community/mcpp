@@ -82,7 +82,15 @@ struct Spec {
     // riscv and aarch64 rows: their driver already reaches lld, and changing a
     // working link to prove a point is how a regression gets introduced.
     std::string_view lldEmulation;
+    // The target the compiler is told (`--target=`): the row's `clang-triple`
+    // where it states one, else the row itself.
+    std::string_view target;
 };
+
+// What `--target=` names for a row: its `clang-triple`, else its identity.
+template <class Row> constexpr std::string_view target_of(const Row& r) {
+    return r.clangTriple.empty() ? r.triple : r.clangTriple;
+}
 
 // THE ROWS ARE DATA (design 2026-11-09; SPEC-016): each bare-metal row of
 // modules/toolchain-model/data/builtin.toml states its ISA profile --
@@ -100,7 +108,7 @@ inline constexpr auto kTable = [] {
     std::size_t i = 0;
     for (auto const& r : rows) {
         if (r.march.empty()) continue;
-        out[i++] = Spec{ r.triple, r.march, r.mabi, r.codeModel, r.multilib, r.flags, r.linkEmulation };
+        out[i++] = Spec{ r.triple, r.march, r.mabi, r.codeModel, r.multilib, r.flags, r.linkEmulation, target_of(r) };
     }
     return out;
 }();
@@ -119,7 +127,7 @@ inline constexpr auto kTable = [] {
 inline std::optional<Spec> defined_spec(std::string_view triple) {
     auto const* d = mcpp::toolchain::target::defined_row(triple);
     if (!d || (d->march.empty() && d->linkEmulation.empty())) return std::nullopt;
-    return Spec{ d->triple, d->march, d->mabi, d->codeModel, d->multilib, d->flags, d->linkEmulation };
+    return Spec{ d->triple, d->march, d->mabi, d->codeModel, d->multilib, d->flags, d->linkEmulation, target_of(*d) };
 }
 
 // The single read point. Returns nullopt for anything that is not a known
@@ -130,7 +138,15 @@ inline std::optional<Spec> resolve(const mcpp::toolchain::triple::Triple& t) {
     const std::string s = t.str();
     for (const auto& row : kTable)
         if (row.triple == s) return row;
-    return defined_spec(s);
+    if (auto spec = defined_spec(s)) return spec;
+    // A BARE-METAL ROW A PLATFORM DEFINES WITHOUT A MACHINE DESCRIPTION is a
+    // known bare-metal row all the same: the compiler is told its target and
+    // keeps its defaults for the processor. Without this its compiles and the
+    // C library's verification probe ran with no target selection, and the
+    // probe refused openkal-musl's `riscv64-none-musl` row for it.
+    if (auto const* d = mcpp::toolchain::target::defined_row(s))
+        return Spec{ .triple = d->triple, .target = target_of(*d) };
+    return std::nullopt;
 }
 
 // The machine description of a row with an operating system under it: only a
