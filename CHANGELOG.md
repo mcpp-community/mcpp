@@ -4,6 +4,20 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.26.2] - 2026-11-26
+
+### Fixed
+
+- A build after a failed build that stated `MCPP_PRIVATE_FRAGMENT`, `MCPP_BMI_SCHEDULE` or
+  `MCPP_BUILDOPT` is the build before it. In 2026.11.26.1 the statement was part of the record of
+  a build, which a build writes when it succeeds: a build that stated one and failed left its
+  graph under the record of the build before, and a plain build then replayed that graph and
+  failed the same way until a source or the manifest was edited. On GCC that is the invocation a
+  failure's `tip:` gives (`MCPP_PRIVATE_FRAGMENT=conservative mcpp build`), which fails where the
+  purview before the fragment holds a condition. The statement is now part of the request the
+  graph itself names (`request=` on the first line of `build.ninja`), which every fast path
+  compares before replaying it (SPEC-019 §9 item 5).
+
 ## [2026.11.26.1] - 2026-11-26
 
 ### Changed

@@ -36,7 +36,6 @@ import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
 import mcpp.buildopt.keep;
-import mcpp.buildopt.registry;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
@@ -426,20 +425,10 @@ std::string toolchain_request_identity() {
     if (auto s = mcpp::invocation::get("MCPP_PLATFORM")) overrides += std::format("MCPP_PLATFORM={};", *s);
     if (auto s = mcpp::invocation::get("MCPP_HOST_PLATFORM"))
         overrides += std::format("MCPP_HOST_PLATFORM={};", *s);
-    // THE REGISTER'S SWITCHES THAT SHAPE THE GRAPH (SPEC-019). A source built as
-    // other units (`MCPP_PRIVATE_FRAGMENT`), a graph of another shape
-    // (`MCPP_BMI_SCHEDULE`) and the standard build (`MCPP_BUILDOPT=off`) are
-    // decided when the graph is written; replayed, the graph is the one the
-    // other statement wrote, and the first build after a switch is not the one
-    // asked for. An edge entry acts at run time and is read there. Written only
-    // when stated: a request without one is the identity it was before.
-    std::string shape;
-    for (auto const& e : mcpp::buildopt::registry::kEntries)
-        if (e.seam != mcpp::buildopt::registry::Seam::Edge && !e.env.empty())
-            if (auto v = mcpp::invocation::get(e.env)) shape += std::format("{}={};", e.env, *v);
-    if (auto v = mcpp::invocation::get(mcpp::buildopt::registry::kStandardEnv))
-        shape += std::format("{}={};", mcpp::buildopt::registry::kStandardEnv, *v);
-    if (!shape.empty()) targets += std::format("shape={}", shape);
+    // (The register's switches that shape the graph are not here: this record
+    // is written by a build that succeeded, and a switch stated for a build
+    // that failed left its graph under the record of the one before. The graph
+    // names them itself -- `request_tag`.)
     if (overrides.empty() && targets.empty())
         return std::format("cli={};default={}", cli, machineDefault);
     return std::format("cli={};default={};base={}{}", cli, machineDefault, overrides, targets);

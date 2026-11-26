@@ -29,6 +29,7 @@
 export module mcpp.build.graph_shape;
 
 import std;
+import mcpp.buildopt.registry;
 
 export namespace mcpp::build {
 
@@ -90,7 +91,15 @@ std::string header_line(GraphShape shape, std::string_view scheduleTag,
 
 // The tag of a request: the workspace members of the plan (their paths joined
 // by a unit separator; empty outside a workspace) and the requested features,
-// normalised so that spelling and order do not change it.
+// normalised so that spelling and order do not change it. And what the
+// invocation states of the build-optimization register's entries that are
+// decided when the graph is written (SPEC-019 §9 item 5): a graph written under
+// `MCPP_PRIVATE_FRAGMENT=conservative` holds other units than the one a plain
+// build writes. It is the graph that says so, not the record of the build:
+// the record is written by a build that succeeded, and the statement is made
+// to check a build that fails (measured: after one that failed, a plain build
+// replayed its graph and failed the same way). Stated by none, the tag is the
+// one it was.
 std::string request_tag(std::string_view group, std::string_view features) {
     std::vector<std::string> toks;
     for (std::size_t i = 0; i < features.size();) {
@@ -105,6 +114,10 @@ std::string request_tag(std::string_view group, std::string_view features) {
     std::string key(group);
     key += '\x1f';
     for (auto const& t : toks) { key += t; key += ','; }
+    if (const auto shape = mcpp::buildopt::registry::stated_shape(); !shape.empty()) {
+        key += '\x1f';
+        key += shape;
+    }
     std::uint64_t h = 0xcbf29ce484222325ull;
     for (unsigned char c : key) { h ^= c; h *= 0x100000001b3ull; }
     return std::format("{:016x}", h);
