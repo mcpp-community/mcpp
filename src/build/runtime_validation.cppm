@@ -16,6 +16,7 @@
 export module mcpp.build.runtime_validation;
 
 import std;
+import mcpp.pm.compat.registry;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.build.loader_contract;
@@ -51,6 +52,10 @@ struct ValidatedArtifact {
     // The required `dlopen` sonames the program cannot reach from the object
     // that loads them, one sentence each (dlopen_unreachable).
     std::vector<std::string> dlopenUnreachable;
+    // The `DT_NEEDED` sonames only the union view of the default environment
+    // answers, for a project that states no environment
+    // (COMPAT(implicit-default-environment), design 2026-11-27 §4.1).
+    std::vector<std::string> unionOnly;
 };
 
 // THE REQUIRED `dlopen` SONAMES A PROGRAM CANNOT REACH (design 2026-11-21,
@@ -531,9 +536,52 @@ std::optional<ValidatedArtifact> cached_artifact(
             "diagnostics", std::vector<std::string>{});
         out.dlopenUnreachable = it->value(
             "dlopen_unreachable", std::vector<std::string>{});
+        out.unionOnly = it->value("union_only", std::vector<std::string>{});
         return out;
     } catch (...) {
         return std::nullopt;
+    }
+}
+
+// THE LIBRARIES ONLY THE DEFAULT ENVIRONMENT ANSWERS (design 2026-11-27 §4.1).
+// The union view of an environment holds whatever was ever installed in it,
+// and for a project that states no environment that is the machine's default
+// one, shared by every project on the machine: a library found there is found
+// on this machine and not on a clean one (#535, #537). The artifact is
+// resolved again without the view; what it then lacks, it had only from there.
+//
+// COMPAT(implicit-default-environment): reported until the row's floor, from
+// which the view is not searched for such a project.
+std::vector<std::string> union_only(const mcpp::build::BuildPlan& plan, const std::filesystem::path& artifact,
+                                    const mcpp::runtime::elf::RuntimeResolution& resolution,
+                                    const std::vector<std::filesystem::path>& searchDirs) {
+    if (plan.statedEnvironment) return {};
+    std::vector<std::filesystem::path> farm;
+    for (auto const& dir : plan.runtimeSearch)
+        if (dir.origin == mcpp::runtime::search::Origin::SubosFarm) farm.push_back(dir.path);
+    if (farm.empty()) return {};
+    std::vector<std::filesystem::path> without;
+    for (auto const& d : searchDirs)
+        if (std::ranges::find(farm, d) == farm.end()) without.push_back(d);
+    auto bare = mcpp::runtime::elf::resolve_runtime_closure(artifact, plan.runtimeBinding, without);
+    std::vector<std::string> out;
+    for (auto const& soname : bare.unresolvedSonames)
+        if (std::ranges::find(resolution.unresolvedSonames, soname) == resolution.unresolvedSonames.end())
+            out.push_back(soname);
+    return out;
+}
+
+void report_union_only(const ValidatedArtifact& v) {
+    auto const* d = mcpp::pm::compat::find_deprecation("implicit-default-environment");
+    if (!d) return;
+    for (auto const& soname : v.unionOnly) {
+        const auto detail = std::format("{} needs {}", v.artifact.filename().string(), soname);
+        mcpp::pm::compat::record_use("implicit-default-environment", "the project", detail, true);
+        mcpp::diag::warning(d->domain, std::format(
+            "{}, which only the default environment's union of installed packages provides; this "
+            "machine has it and a clean one may not. Reading it from there for a project that states "
+            "no environment is {}. Write {} instead.",
+            detail, mcpp::pm::compat::deprecation_clause(*d), d->canonical));
     }
 }
 
@@ -558,6 +606,7 @@ void store_artifact(nlohmann::json& doc,
         {"status", status_name(value.verdict.status)},
         {"diagnostics", value.verdict.diagnostics},
         {"dlopen_unreachable", value.dlopenUnreachable},
+        {"union_only", value.unionOnly},
     };
 }
 
@@ -819,6 +868,7 @@ ValidationReport validate_changed_artifacts(
         auto fp = fingerprint(artifact, now, plan.runtimeBinding.contractHash);
         if (auto cached = cached_artifact(doc, key, fp, artifact)) {
             report_dlopen_unreachable(*cached);
+            report_union_only(*cached);
             // Same stat before/after and a current stored verdict is the hot
             // no-op: do not parse. Only PASS may also stay silent; a stored
             // mismatch must keep failing and an inconclusive result must keep
@@ -841,7 +891,9 @@ ValidationReport validate_changed_artifacts(
         validated.verdict = mcpp::runtime::elf::validate_runtime_artifact(
             artifact, plan.runtimeBinding, resolution, host_libs_allowed(plan));
         validated.dlopenUnreachable = dlopen_unreachable(plan, resolution);
+        validated.unionOnly = union_only(plan, artifact, resolution, searchDirs);
         report_dlopen_unreachable(validated);
+        report_union_only(validated);
         store_artifact(doc, key, fp, validated);
         changedCache = true;
         report.artifacts.push_back(std::move(validated));

@@ -42,4 +42,14 @@ std::string strip_private_glibc(std::string_view paths);
 std::string prepend_path_list(std::string_view key,
                               std::span<const std::filesystem::path> dirs);
 
+// THE PATH OF A PROGRAM MCPP STARTS (design 2026-11-27 §4.2, mcpp#926): a build
+// program, a test, the program `mcpp run` runs. Three segments, in this order,
+// on every host: the directories of the tools the dependency graph states, the
+// `bin` of the environment the project states, the PATH this invocation was
+// started with. A child that asks for a tool by its bare name gets the one the
+// build stated before the one the machine happens to have. "" when the first
+// two are empty: the child's PATH is then the one mcpp received.
+std::string child_path(std::span<const std::filesystem::path> statedTools,
+                       const std::filesystem::path& environmentBin);
+
 }  // namespace mcpp::runtime::launch_env

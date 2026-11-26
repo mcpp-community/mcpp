@@ -370,7 +370,7 @@ std::expected<void, std::string> step6_toolchain_phase(PrepareState& state) {
     fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr,
                           state.cfg_opt ? &*state.cfg_opt : nullptr);
     apply_graph_cxx_abi(bpEnv, state.packages);
-    bpEnv.toolsBin = state.projectSubosBin;
+    set_build_program_path(bpEnv, state);
     bpEnv.profile  = state.effectiveProfile;
     fill_package_build_env(bpEnv, *state.m);
     bpEnv.languageModules = state.m->language.modules;

@@ -3464,6 +3464,35 @@ void yield_terminal() {
     mcpp::diag::print_closing();
 }
 
+// THE PATH OF A TEST AND OF A RUN (design 2026-11-27 §4.2, mcpp#926): the
+// directories of the tools the graph states, then the `bin` of the environment
+// the project states, then the PATH mcpp was started with -- the composition a
+// build program's PATH has (launch_env::child_path). A tool a test runs that
+// the graph states (`[xlings.workspace] "xim:esbuild" = { when = "run" }`) is
+// found on every host; before, a test found it only on Linux and only when it
+// sat in the toolchain's environment.
+//
+// COMPAT(implicit-default-environment): a project that states no environment
+// keeps, outside Windows, the `bin` of the environment its toolchain is
+// installed in, as before 2026.11.27.1, until the row's floor. On Windows that
+// directory holds the toolchain's `cl`/`link` stand-ins, which are no tool of
+// the project (#726), and it was never given.
+std::vector<std::filesystem::path> child_path_dirs(const mcpp::build::BuildContext& ctx) {
+    auto dirs = ctx.xlingsDepBinDirs;
+    auto environmentBin = ctx.statedEnvironmentBin;
+    if constexpr (!mcpplibs::os::is_windows)
+        if (environmentBin.empty())
+            if (auto environment = mcpp::provider::environment_of(ctx.tc.binaryPath))
+                if (std::error_code ec; std::filesystem::exists(*environment / "bin", ec))
+                    environmentBin = *environment / "bin";
+    if (!environmentBin.empty()) dirs.push_back(environmentBin);
+    return dirs;
+}
+
+std::string child_path_of(const mcpp::build::BuildContext& ctx) {
+    return mcpp::runtime::launch_env::child_path(child_path_dirs(ctx), {});
+}
+
 // A SCRIPT WHOSE `#!` INTERPRETER IS NOT THERE (#621), said before the
 // artefact is executed directly: the refusal is the interpreter's own and
 // comes after mcpp has handed the process over, so nothing of mcpp follows it.
@@ -3990,6 +4019,8 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (runClosure)
         for (auto& kv : run_contract_env(ctx, exe, "run", choice.tripleKey, *runClosure))
             childEnv.push_back(std::move(kv));
+    // The child's PATH, as a build program's and a test's (mcpp#926).
+    if (auto pathVal = child_path_of(ctx); !pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
     if (choice.tmpl.empty() && host.prefix.empty() && !print_launch_flag())
         note_missing_interpreter(ctx, exe, childEnv);
     run_separator();
@@ -6370,19 +6401,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 invocationNotRunReason = handoff.error();
         }
 
-        // Prepend the toolchain's environment's bin to the CHILD PATH so test
-        // binaries that shell out to bootstrapped tools (patchelf, ninja) find
-        // them — applied to the child only, not via a leaky shell prefix.
-        if constexpr (!mcpplibs::os::is_windows) {
-            if (auto environment = mcpp::provider::environment_of(ctx->tc.binaryPath)) {
-                auto sandboxBin  = *environment / "bin";
-                if (std::filesystem::exists(sandboxBin)) {
-                    std::array<std::filesystem::path, 1> extra{sandboxBin};
-                    auto pathVal = mcpp::runtime::launch_env::prepend_path_list("PATH", extra);
-                    if (!pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
-                }
-            }
-        }
+        // The child's PATH, as a build program's and a run's (mcpp#926).
+        if (auto pathVal = child_path_of(*ctx); !pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
 
         // Said once for the build, before any test runs: every test of one
         // build is executed the same way, so one script's missing interpreter
@@ -7334,9 +7354,7 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
     json runtimeDirs = json::array();
     for (auto const& d : ctx.plan.runtimeLibraryDirs) runtimeDirs.push_back(d.generic_string());
     json pathDirs = json::array();
-    if constexpr (!mcpplibs::os::is_windows)
-        if (auto environment = mcpp::provider::environment_of(ctx.tc.binaryPath))
-            if (std::error_code ec; fs::exists(*environment / "bin", ec)) pathDirs.push_back((*environment / "bin").generic_string());
+    for (auto const& d : child_path_dirs(ctx)) pathDirs.push_back(d.generic_string());
     const json record{{"schema", "mcpp.test-plan/1"}, {"graph", ctx.plan.graphFile},
                       {"graph_stamp", test_graph_stamp(graph)}, {"tests", tests}, {"frameworks", frameworks},
                       {"runtime_dirs", runtimeDirs}, {"path_dirs", pathDirs},
@@ -7486,9 +7504,8 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     {
         std::vector<fs::path> dirs;
         for (auto const& d : record["path_dirs"]) dirs.emplace_back(d.get<std::string>());
-        if (!dirs.empty())
-            if (auto value = mcpp::runtime::launch_env::prepend_path_list("PATH", dirs); !value.empty())
-                env.emplace_back("PATH", value);
+        if (auto value = mcpp::runtime::launch_env::child_path(dirs, {}); !value.empty())
+            env.emplace_back("PATH", value);
     }
     for (auto& r : runs) r.env = env;
 

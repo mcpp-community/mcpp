@@ -104,7 +104,7 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
         // toolchain. One call — see fill_target_build_env.
         fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr, state.cfg_opt ? &*state.cfg_opt : nullptr);
         apply_graph_cxx_abi(bpEnv, state.packages);
-        bpEnv.toolsBin = state.projectSubosBin;
+        set_build_program_path(bpEnv, state);
         bpEnv.profile      = state.effectiveProfile;
         bpEnv.accel        = state.resolvedAccel();
         fill_package_build_env(bpEnv, *state.m);
@@ -520,7 +520,7 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
         fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr,
                               state.cfg_opt ? &*state.cfg_opt : nullptr);
         apply_graph_cxx_abi(bpEnv, state.packages);
-        bpEnv.toolsBin = state.projectSubosBin;
+        set_build_program_path(bpEnv, state);
         bpEnv.profile  = state.effectiveProfile;
         bpEnv.accel    = state.resolvedAccel();
         fill_package_build_env(bpEnv, pkg.manifest);

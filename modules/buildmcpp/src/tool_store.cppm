@@ -127,9 +127,15 @@ std::filesystem::path bin_path(const std::filesystem::path& entryDir,
                                std::string_view exeSuffix);
 
 // A complete, verified entry? (bin present AND entry.json records the same key
-// inputs — never just the hash.)
+// inputs — never just the hash — AND every shared object the entry records is
+// beside the tool.)
 bool entry_valid(const std::filesystem::path& entryDir, const Key& k,
                  std::string_view toolName, std::string_view exeSuffix);
+
+// The shared objects of the graph published beside the tool (mcpp#535), by
+// file name under `bin/`; written before `write_entry`, read by `entry_valid`.
+void record_shared_objects(const std::filesystem::path& entryDir,
+                           const std::vector<std::string>& names);
 
 // Writes the entry's record. `source` is the tree a `path` package was
 // built from: it becomes a user of the entry and stops being one of the
@@ -245,10 +251,21 @@ fs::path bin_path(const fs::path& entryDir, std::string_view toolName,
     return entryDir / "bin" / (std::string(toolName) + std::string(exeSuffix));
 }
 
+void record_shared_objects(const fs::path& entryDir, const std::vector<std::string>& names) {
+    std::error_code ec;
+    if (names.empty()) { fs::remove(entryDir / "shared-objects", ec); return; }
+    fs::create_directories(entryDir, ec);
+    std::ofstream os(entryDir / "shared-objects", std::ios::trunc);
+    for (auto const& n : names) os << n << '\n';
+}
+
 bool entry_valid(const fs::path& entryDir, const Key& k,
                  std::string_view toolName, std::string_view exeSuffix) {
     std::error_code ec;
     if (!fs::exists(bin_path(entryDir, toolName, exeSuffix), ec)) return false;
+    if (std::ifstream so(entryDir / "shared-objects"); so)
+        for (std::string name; std::getline(so, name);)
+            if (!name.empty() && !fs::exists(entryDir / "bin" / name, ec)) return false;
     std::ifstream is(entryDir / "entry.json");
     if (!is) return false;
     try {

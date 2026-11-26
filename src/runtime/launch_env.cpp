@@ -63,4 +63,20 @@ std::string prepend_path_list(std::string_view key, std::span<const std::filesys
     return value;
 }
 
+std::string child_path(std::span<const std::filesystem::path> statedTools,
+                       const std::filesystem::path& environmentBin) {
+    std::vector<std::filesystem::path> dirs;
+    for (auto const& d : statedTools)
+        if (!d.empty() && std::ranges::find(dirs, d) == dirs.end()) dirs.push_back(d);
+    if (!environmentBin.empty() && std::ranges::find(dirs, environmentBin) == dirs.end())
+        dirs.push_back(environmentBin);
+    if (dirs.empty()) return "";
+    std::string value = os::env::join_list(dirs);
+    if (auto const& inherited = inherited_path(); !inherited.empty()) {
+        value += path_list_separator();
+        value += inherited;
+    }
+    return value;
+}
+
 }  // namespace mcpp::runtime::launch_env

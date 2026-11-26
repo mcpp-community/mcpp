@@ -728,6 +728,11 @@ struct BuildPlan {
     // `xdg-open`/`notify-send` outright when a private libc is on it. The farm
     // is reachable PER OBJECT (DT_RPATH) and must stay that way.
     std::vector<mcpp::runtime::search::Dir>        runtimeSearch;
+    // The project states its environment (`[xlings] subos`): the union view of
+    // that environment is its own (design 2026-11-27 §4.1). False: the view is
+    // the machine's default environment, which the project reaches through
+    // COMPAT(implicit-default-environment) until the row's floor.
+    bool                                           statedEnvironment = false;
     // Windows runtime-DLL deployment. On PE (`supports_rpath` is false) a
     // directly-launched .exe cannot RUNPATH-locate a dependency's DLL, so each
     // *.dll found in a dependency's [runtime] library_dir is copied beside the
