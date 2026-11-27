@@ -3117,7 +3117,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // names is `-fdeps-target`.
             append(std::format("  command = {}\n", mcpp::modgraph::p1689::scan_command({
                 .prefix = scanPrefix, .driver = "$cxx_driver" + rsp_ref(scanPayload),
-                .flags = "$cxxflags $unit_cxxflags", .lang = "$unit_lang", .in = "$in", .out = "$out",
+                .flags = {"$cxxflags", "$unit_cxxflags"}, .lang = {"$unit_lang"}, .in = "$in", .out = "$out",
                 .depsTarget = "$deps_target", .depFile = "$out.dep", .scratch = "$out.scan"})));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
@@ -3129,7 +3129,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format("  command = {}\n", mcpp::modgraph::p1689::scan_command({
                 .prefix = scanPrefix, .driver = "$cxx_driver" + rsp_ref(scanPayload),
-                .scanDeps = "$scan_deps", .flags = "$cxxflags $unit_cxxflags", .lang = "$unit_lang",
+                .scanDeps = "$scan_deps", .flags = {"$cxxflags", "$unit_cxxflags"}, .lang = {"$unit_lang"},
                 .in = "$in", .out = "$out", .compileTarget = "$compile_target"})));
         }
         append_rspfile(scanPayload);

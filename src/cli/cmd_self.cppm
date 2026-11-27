@@ -196,15 +196,19 @@ export int cmd_self_completion(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::ofstream os(file, std::ios::binary | std::ios::trunc);
         os << script;
         if (!os) {
-            mcpp::ui::error(std::format("cannot write '{}'", file.string()));
+            mcpp::ui::error(std::format("cannot write '{}'", mcpp::home::spelling(file)));
             return 1;
         }
     }
-    mcpp::ui::status("Wrote", file.string());
-    const auto load = *shell == mcpplibs::cmdline::Shell::bash ? std::format("source '{}'   # in ~/.bashrc", file.string())
-                    : *shell == mcpplibs::cmdline::Shell::zsh  ? std::format("source '{}'   # in ~/.zshrc, after compinit", file.string())
-                    : *shell == mcpplibs::cmdline::Shell::fish ? std::format("source '{}'   # in ~/.config/fish/config.fish", file.string())
-                                                               : std::format(". '{}'   # in $PROFILE", file.string());
+    // One spelling for every shell, forward slashes and UTF-8: the POSIX shells
+    // of a Windows machine (Git Bash, MSYS2) read `C:/...` and not `C:\...`, and
+    // PowerShell reads both.
+    const auto at = mcpp::home::spelling(file);
+    mcpp::ui::status("Wrote", at);
+    const auto load = *shell == mcpplibs::cmdline::Shell::bash ? std::format("source '{}'   # in ~/.bashrc", at)
+                    : *shell == mcpplibs::cmdline::Shell::zsh  ? std::format("source '{}'   # in ~/.zshrc, after compinit", at)
+                    : *shell == mcpplibs::cmdline::Shell::fish ? std::format("source '{}'   # in ~/.config/fish/config.fish", at)
+                                                               : std::format(". '{}'   # in $PROFILE", at);
     std::println("{}", load);
     return 0;
 }

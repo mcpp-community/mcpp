@@ -167,6 +167,18 @@ sources = ["!src/native/windows/**"]
 [target.windows.build]
 sources = ["!src/native/posix/**"]
 
+# THE MAIN THREAD'S STACK ON WINDOWS. A command nests whole builds in one process: `mcpp pack`
+# prepares the program, a host tool its platform names, and that tool's build programs, and each
+# pass holds a few hundred KiB of frames. A PE image's main thread has the 1 MiB its header
+# reserves by default, where Linux and macOS give 8 MiB. Measured with 2026.11.27.1 on the
+# openkal canary's `mcpp pack`: 1,046 KiB at the deepest manifest read, and an
+# EXCEPTION_STACK_OVERFLOW on windows-x86_64. The image reserves what the other hosts give.
+[target.'cfg(all(os = "windows", env = "msvc"))'.build]
+ldflags = ["-Wl,/STACK:8388608"]
+
+[target.'cfg(all(os = "windows", env = "gnu"))'.build]
+ldflags = ["-Wl,--stack,8388608"]
+
 [workspace]
 members = [
     "modules/invocation",

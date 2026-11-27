@@ -1107,6 +1107,9 @@ struct PrepareState {
     std::filesystem::path stdCompatObjectPath;
     std::optional<mcpp::toolchain::StdModuleDescription> describedStdModule;
     std::string stdFlagAndDialect;
+    // The same words, one argument each and unquoted: what a program mcpp starts
+    // with an argument vector is given (the planning scan of a unit, mcpp#1026).
+    std::vector<std::string> stdWords;
     // The entry of package `i`; with `requesters`, only the requests made by
     // the packages it marks (a build program's closure).
     std::function<nlohmann::json(std::size_t, bool, const std::vector<bool>*)> graph_package_entry;

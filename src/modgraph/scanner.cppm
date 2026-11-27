@@ -209,7 +209,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages,
 ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                                const mcpp::toolchain::Toolchain&   tc,
                                const std::filesystem::path&        tmpDir,
-                               std::string_view                    cppStandardFlag,
+                               std::span<const std::string>        stdWords,
                                const Closures&                     closures = {});
 
 } // namespace mcpp::modgraph
@@ -1586,7 +1586,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages,
 ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                                const mcpp::toolchain::Toolchain&   tc,
                                const std::filesystem::path&        tmpDir,
-                               std::string_view                    cppStandardFlag,
+                               std::span<const std::string>        stdWords,
                                const Closures&                     closures)
 {
     ScanResult result;
@@ -1609,7 +1609,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
                 f, p.manifest.package.name, tc, tmpDir,
-                localIncludeDirs, cppStandardFlag, extTable);
+                localIncludeDirs, stdWords, extTable);
             if (!r) {
                 result.errors.push_back(ScanError{ f, 0, r.error() });
                 continue;

@@ -203,7 +203,7 @@ compiler_scan(PrepareState& state, const std::vector<mcpp::modgraph::PackageRoot
     static const auto tmp = std::filesystem::temp_directory_path()
                           / std::format("mcpp-scan-{:x}", std::random_device{}());
     auto scanned = mcpp::modgraph::p1689::scan_file(u.path, u.packageName, tc, tmp, u.localIncludeDirs,
-                                                    state.stdFlagAndDialect, extTable, words, scanDeps);
+                                                    state.stdWords, extTable, words, scanDeps);
     if (!scanned) return std::unexpected(scanned.error());
     mcpp::log::info("scan", std::format("{}: imports read by the compiler's scan ({} module(s))",
                                         u.path.generic_string(), scanned->requires_.size()));
@@ -394,7 +394,7 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
                      / std::format("mcpp_p1689_{}", std::random_device{}());
             std::filesystem::create_directories(tmp);
             return mcpp::modgraph::scan_packages_p1689(scannedPackages, *state.tc, tmp,
-                                                       state.stdFlagAndDialect, closures);
+                                                       state.stdWords, closures);
         }
         return mcpp::modgraph::scan_packages(scannedPackages, closures,
                                              [&](const mcpp::modgraph::SourceUnit& u) {
@@ -1457,7 +1457,7 @@ static void report_reopened_tables(PrepareState& state) {
 // the units are scanned. A stated `cxx_runtime` is the author's answer.
 static std::expected<void, std::string> step11_cxx_abi_supplier(PrepareState& state, bool needsStdModule) {
     const auto& ts = state.resolvedTargetSide;
-    if (!needsStdModule || !ts.cAbi.fromGraph() || !ts.cxx.absent()) return {};
+    if (!needsStdModule || !state.tc->hasImportStd || !ts.cAbi.fromGraph() || !ts.cxx.absent()) return {};
     if (!state.m->buildConfig.cxxRuntime.empty()) return {};
     refusal::record(refusal::Code::LayerRequirement);
     return std::unexpected(std::format(
@@ -1473,7 +1473,6 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
     report_reopened_tables(state);
     auto needsStdModule = step11_scan_sources(state);
     if (!needsStdModule) return std::unexpected(needsStdModule.error());
-    if (auto r = step11_cxx_abi_supplier(state, *needsStdModule); !r) return std::unexpected(r.error());
     if (auto r = refuse_plugin_units_in_target(state); !r) return std::unexpected(r.error());
     if (auto r = step11_cxx_compiler_gate(state); !r) return std::unexpected(r.error());
     step11_public_module_check(state);
@@ -1493,15 +1492,24 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
     if (auto r = step11_apple_sdk_cxx_runtime(state, *needsStdModule); !r)
         return std::unexpected(r.error());
 
-    if (auto r = step11_std_module_availability_gate(state, *needsStdModule); !r) {
-        if (!state.overrides.configures()) return std::unexpected(r.error());
-        // The configuration is reported; the sources' refusal travels with it.
+    // A refusal of the sources: the configuration is reported, and the refusal
+    // travels with it, when only the configuration is asked for.
+    auto refuse_sources = [&](std::string why) -> std::expected<void, std::string> {
+        if (!state.overrides.configures()) return std::unexpected(std::move(why));
         PlanNote note;   // a warning: the document is complete without the sources
         note.code = "MCPP_CONFIGURATION_SOURCES_REFUSED";
-        note.message = r.error();
+        note.message = std::move(why);
         state.planNotes.push_back(std::move(note));
         *needsStdModule = false;
-    }
+        return {};
+    };
+    if (auto r = step11_std_module_availability_gate(state, *needsStdModule); !r)
+        if (auto refused = refuse_sources(r.error()); !refused) return refused;
+    // After the gate, which refuses a toolchain that has no std module with
+    // the reason of its target: this is the toolchain that has one, built
+    // against another C library than the graph's (mcpp#898).
+    if (auto r = step11_cxx_abi_supplier(state, *needsStdModule); !r)
+        if (auto refused = refuse_sources(r.error()); !refused) return refused;
 
     step11_compute_fingerprint(state);
 

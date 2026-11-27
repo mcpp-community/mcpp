@@ -90,6 +90,27 @@ static void warn_toolchain_override(const std::string& given, const std::string&
         given, declared, key, shown.generic_string()));
 }
 
+// The selected profile's flag words, after the root's own: each list keeps
+// the root's words first, so a profile adds to `[build]` and replaces nothing.
+static void apply_profile_words(PrepareState& state, const mcpp::manifest::Profile& pr) {
+    auto append = [](std::vector<std::string>& to, const std::vector<std::string>& words) {
+        to.insert(to.end(), words.begin(), words.end());
+    };
+    auto& bc = state.m->buildConfig;
+    append(bc.cflags, pr.cflags);
+    append(bc.cxxflags, pr.cxxflags);
+    // A workspace plan's root compiles nothing; its selected members take
+    // these as they are loaded (graph.cpp).
+    state.profileCflags   = pr.cflags;
+    state.profileCxxflags = pr.cxxflags;
+    append(bc.ldflags, pr.ldflags);
+    append(bc.graphLdflags, pr.ldflags);
+    // The profile's graph-wide words, after `[build] dialect_cxxflags`: the
+    // root's set is the one the standard library module, the scan and every
+    // C++ unit read (mcpp#1025).
+    append(bc.dialectCxxflags, pr.dialectCxxflags);
+}
+
 // STEP FUNCTIONS (mcpp#722 / T6), split at the points where phase1's
 // own banners mark a new concern: the closures phase1 assigns onto
 // `state` (each captures only `state`), the target/static override
@@ -357,23 +378,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
                 std::ofstream(marker) << "2026.10.24.1\n";
             }
         }
-        state.m->buildConfig.cflags.insert(state.m->buildConfig.cflags.end(),
-                                     pr.cflags.begin(), pr.cflags.end());
-        state.m->buildConfig.cxxflags.insert(state.m->buildConfig.cxxflags.end(),
-                                       pr.cxxflags.begin(), pr.cxxflags.end());
-        // A workspace plan's root compiles nothing; its selected members take
-        // these as they are loaded (graph.cpp).
-        state.profileCflags   = pr.cflags;
-        state.profileCxxflags = pr.cxxflags;
-        state.m->buildConfig.ldflags.insert(state.m->buildConfig.ldflags.end(),
-                                      pr.ldflags.begin(), pr.ldflags.end());
-        state.m->buildConfig.graphLdflags.insert(state.m->buildConfig.graphLdflags.end(),
-                                           pr.ldflags.begin(), pr.ldflags.end());
-        // The profile's graph-wide words, after `[build] dialect_cxxflags`: the
-        // root's set is the one the standard library module, the scan and every
-        // C++ unit read (mcpp#1025).
-        state.m->buildConfig.dialectCxxflags.insert(state.m->buildConfig.dialectCxxflags.end(),
-                                                    pr.dialectCxxflags.begin(), pr.dialectCxxflags.end());
+        apply_profile_words(state, pr);
     }
 
     // Every directory a package payload may legitimately have been INSTALLED

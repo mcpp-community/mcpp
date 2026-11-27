@@ -48,28 +48,36 @@ struct DdiRule {
 // Tolerates the slightly unstable GCC formatting (variable whitespace).
 std::expected<DdiRule, std::string> parse_ddi(std::string_view body);
 
-// THE DEPENDENCY SCAN OF ONE UNIT, AS A COMMAND, CONSTRUCTED IN ONE PLACE for
-// the two times it runs: the build's scan edge (each word a ninja variable,
-// `$in`, `$out`) and the plan, which asks the compiler for a unit whose
-// imports stand inside a preprocessor condition (each word a path). GCC scans
-// with the compiler itself; Clang with clang-scan-deps, given the compile.
+// THE DEPENDENCY SCAN OF ONE UNIT, ITS WORDS IN ORDER, CONSTRUCTED IN ONE
+// PLACE for the two times it runs: the build's scan edge, whose words are
+// ninja expressions (`$in`, `$out`, `$cxxflags`) joined into its command, and
+// the plan, which asks the compiler for a unit whose imports stand inside a
+// preprocessor condition and hands the words to the program as its arguments.
+// No shell stands between: a shell's quoting is its host's (cmd.exe reads no
+// single quotes, measured: Windows error 123 for the quoted program), and an
+// argument vector has none. GCC scans with the compiler itself; Clang with
+// clang-scan-deps, given the compile.
 struct ScanWords {
-    std::string prefix;          // before the first word (a launcher), with its space
-    std::string driver;          // the compiler, as a word
-    std::string scanDeps;        // clang-scan-deps, as a word; empty: the compiler scans
-    std::string flags;           // the unit's compile words
-    std::string lang;            // the language flag of a module interface; may be empty
-    std::string in;              // the source
-    std::string out;             // the P1689 record written
-    std::string depsTarget;      // GCC: the target the record names
-    std::string depFile;         // GCC: the make-style list of the files the scan read
-    std::string scratch;         // GCC: the `-o` the driver creates, which nothing reads
-    std::string compileTarget;   // Clang: the object the compile it is given would write
+    std::string prefix;                // the edge's launcher, with its space; not an argument
+    std::string driver;                // the compiler
+    std::string scanDeps;              // clang-scan-deps; empty: the compiler scans
+    std::vector<std::string> flags;    // the unit's compile words
+    std::vector<std::string> lang;     // the language flag of a module interface; may be empty
+    std::string in;                    // the source
+    std::string out;                   // the P1689 record written
+    std::string depsTarget;            // GCC: the target the record names
+    std::string depFile;               // GCC: the make-style list of the files the scan read
+    std::string scratch;               // GCC: the `-o` the driver creates, which nothing reads
+    std::string compileTarget;         // Clang: the object the compile it is given would write
 };
+std::vector<std::string> scan_words(const ScanWords& w);
+// The words joined after the prefix: the build's scan edge.
 std::string scan_command(const ScanWords& w);
 
 // Run the compiler's scan on `source` and return the populated SourceUnit.
 //   tmpDir   : per-build scratch dir for .ddi/.dep/.o byproducts.
+//   stdWords : the standard and the graph's dialect words, one argument each
+//              (empty: -std=c++23)
 //   flags    : the unit's own compile words, after the standard and the
 //              include directories (its package's, the graph's dialect words)
 //   scanDeps : clang-scan-deps for a Clang toolchain; empty for GCC
@@ -79,7 +87,7 @@ scan_file(const std::filesystem::path&        source,
           const mcpp::toolchain::Toolchain&   tc,
           const std::filesystem::path&        tmpDir,
           const std::vector<std::filesystem::path>& includeDirs,
-          std::string_view                    cppStandardFlag,
+          std::span<const std::string>        stdWords,
           const mcpp::ExtensionTable&         extTable,
           const std::vector<std::string>&     flags = {},
           const std::filesystem::path&        scanDeps = {});
@@ -328,38 +336,61 @@ std::expected<DdiRule, std::string> parse_ddi(std::string_view body) {
 
 namespace {
 
-// The scan command is composed as text, with the flags the link model renders
-// for a shell, as the ninja scan edge is.
-bool run_capturing(const std::string& cmd, std::string& out) {
-    auto r = mcpp::run::capture_shell(cmd);
-    out = r.output;
-    return r.exit_code == 0;
-}
-
-std::string shell_escape(const std::filesystem::path& p) {
-    std::string s = p.string();
-    std::string out = "'";
-    for (char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out.push_back(c);
-    }
-    out += "'";
-    return out;
-}
-
-std::string shell_word(std::string_view w) { return shell_escape(std::filesystem::path(std::string(w))); }
+// A path as an argument of the scan: the spelling the old command line gave it,
+// without the quoting a shell would have read.
+std::string argument(const std::filesystem::path& p) { return p.string(); }
 
 } // namespace
 
+std::vector<std::string> scan_words(const ScanWords& w) {
+    std::vector<std::string> out;
+    auto add = [&](std::string_view word) {
+        if (!word.empty()) out.emplace_back(word);
+    };
+    auto add_all = [&](const std::vector<std::string>& words) {
+        for (auto const& word : words) add(word);
+    };
+    if (w.scanDeps.empty()) {
+        add(w.driver);
+        add_all(w.flags);
+        add("-fmodules");
+        add("-fdeps-format=p1689r5");
+        add("-fdeps-file=" + w.out);
+        add("-fdeps-target=" + w.depsTarget);
+        add("-M");
+        add("-MM");
+        add("-MF");
+        add(w.depFile);
+        add_all(w.lang);
+        add("-E");
+        add(w.in);
+        add("-o");
+        add(w.scratch);
+        return out;
+    }
+    add(w.scanDeps);
+    add("-format=p1689");
+    add("-o");
+    add(w.out);
+    add("--");
+    add(w.driver);
+    add_all(w.flags);
+    add_all(w.lang);
+    add("-c");
+    add(w.in);
+    add("-o");
+    add(w.compileTarget);
+    return out;
+}
+
 std::string scan_command(const ScanWords& w) {
-    auto lang = w.lang.empty() ? std::string{} : " " + w.lang;
-    if (w.scanDeps.empty())
-        return std::format("{}{} {} -fmodules -fdeps-format=p1689r5 -fdeps-file={} -fdeps-target={} "
-                           "-M -MM -MF {}{} -E {} -o {}",
-                           w.prefix, w.driver, w.flags, w.out, w.depsTarget, w.depFile, lang, w.in,
-                           w.scratch);
-    return std::format("{}{} -format=p1689 -o {} -- {} {}{} -c {} -o {}",
-                       w.prefix, w.scanDeps, w.out, w.driver, w.flags, lang, w.in, w.compileTarget);
+    std::string out = w.prefix;
+    const auto words = scan_words(w);
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        if (i > 0) out += ' ';
+        out += words[i];
+    }
+    return out;
 }
 
 std::expected<SourceUnit, std::string>
@@ -368,7 +399,7 @@ scan_file(const std::filesystem::path&        source,
           const mcpp::toolchain::Toolchain&   tc,
           const std::filesystem::path&        tmpDir,
           const std::vector<std::filesystem::path>& includeDirs,
-          std::string_view                    cppStandardFlag,
+          std::span<const std::string>        stdWords,
           const mcpp::ExtensionTable&         extTable,
           const std::vector<std::string>&     flags,
           const std::filesystem::path&        scanDeps)
@@ -392,53 +423,49 @@ scan_file(const std::filesystem::path&        source,
     auto dep = base; dep += ".dep";
     auto obj = base; obj += ".o";
 
-    std::string sysroot_flag;
+    std::vector<std::string> words;
+    if (stdWords.empty()) words.emplace_back("-std=c++23");
+    else words.assign(stdWords.begin(), stdWords.end());
     if (tc.base.stated()) {
         // A stated target base: the compile side the link model renders for
         // it (its sysroot, multiarch, or payload headers), as every compile
         // of this build is given.
-        sysroot_flag = mcpp::toolchain::resolve_link_model(tc).compile_flags(
-            [](const std::filesystem::path& p) { return shell_escape(p); });
+        for (auto& word : mcpp::toolchain::resolve_link_model(tc).compile_tokens(
+                 [](const std::filesystem::path& p) { return argument(p); }))
+            words.push_back(std::move(word));
     } else if (!tc.base.root.empty()) {
-        sysroot_flag = std::format(" --sysroot={}", shell_escape(tc.base.root));
+        words.push_back("--sysroot=" + argument(tc.base.root));
     }
-    std::string std_flag = cppStandardFlag.empty()
-        ? std::string("-std=c++23")
-        : std::string(cppStandardFlag);
-    std::string include_flags;
-    for (auto const& dir : includeDirs) {
-        include_flags += " -I";
-        include_flags += shell_escape(dir);
-    }
+    for (auto const& dir : includeDirs) words.push_back("-I" + argument(dir));
+    words.insert(words.end(), flags.begin(), flags.end());
     // Same suffix-recognition problem the ninja scan edge has: a driver that
     // does not know this source's extension hands it to the linker and exits 0
     // with no .ddi. Told explicitly for module interfaces, and only for them —
     // an implementation unit must not be scanned as an interface.
-    std::string lang_flag;
+    std::vector<std::string> lang;
     if (mcpp::produces_bmi(mcpp::classify(source, extTable)))
-        lang_flag = std::string(mcpp::toolchain::bmi_traits(tc).moduleInterfaceLangFlag);
-
-    std::string words = std_flag + sysroot_flag + include_flags;
-    for (auto const& f : flags) words += " " + shell_word(f);
+        for (auto word : std::string_view(mcpp::toolchain::bmi_traits(tc).moduleInterfaceLangFlag)
+                             | std::views::split(' '))
+            if (!word.empty()) lang.emplace_back(word.begin(), word.end());
     auto scratch = base; scratch += ".scan";
-    const std::string cmd = scan_command({
-        .driver = shell_escape(tc.binaryPath),
-        .scanDeps = scanDeps.empty() ? std::string{} : shell_escape(scanDeps),
-        .flags = words,
-        .lang = lang_flag.empty() ? std::string{} : std::string(lang_flag).substr(lang_flag.front() == ' ' ? 1 : 0),
-        .in = shell_escape(source),
-        .out = shell_escape(ddi),
-        .depsTarget = shell_escape(obj),
-        .depFile = shell_escape(dep),
-        .scratch = shell_escape(scratch),
-        .compileTarget = shell_escape(obj),
-    }) + " 2>&1";
+    const auto argv = scan_words({
+        .driver = argument(tc.binaryPath),
+        .scanDeps = scanDeps.empty() ? std::string{} : argument(scanDeps),
+        .flags = std::move(words),
+        .lang = std::move(lang),
+        .in = argument(source),
+        .out = argument(ddi),
+        .depsTarget = argument(obj),
+        .depFile = argument(dep),
+        .scratch = argument(scratch),
+        .compileTarget = argument(obj),
+    });
 
-    std::string output;
-    bool ok = run_capturing(cmd, output);
-    if (!ok || !std::filesystem::exists(ddi)) {
+    int spawnError = 0;
+    auto run = mcpp::run::capture_exec(argv, {}, {}, &spawnError);
+    if (spawnError != 0 || run.exit_code != 0 || !std::filesystem::exists(ddi)) {
         return std::unexpected(std::format(
-            "p1689 scan failed for '{}':\n{}", source.string(), output));
+            "p1689 scan failed for '{}':\n{}", source.string(), run.output));
     }
 
     std::ifstream is(ddi);
