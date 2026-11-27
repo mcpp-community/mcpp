@@ -1,0 +1,90 @@
+name: probe-ecosystem-boundary
+
+# Temporary: measures the open questions of the ecosystem boundary design.
+# Every step prints and never asserts; nothing here is a check.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-ecosystem-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MCPP_VERSION: 2026.11.27.1
+  XLINGS_VERSION: 2026.11.23.1
+
+jobs:
+  m1-m5-windows:
+    name: M1, M5 (Windows) - a substituted drive
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: M1 - the image name a started program reads
+        shell: pwsh
+        continue-on-error: true
+        run: ./.github/probe/m1_windows_alias.ps1
+      - name: M5 - a home on the substituted drive
+        shell: pwsh
+        continue-on-error: true
+        run: ./.github/probe/m5_windows_alias_home.ps1
+
+  m2-linux:
+    name: M2 - a payload that depends on another compiler version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: M2
+        shell: bash --noprofile --norc {0}
+        continue-on-error: true
+        run: bash ./.github/probe/m2_xlings_versions.sh
+
+  m3-linux:
+    name: M3 - setjmp in a C dependency on wasm32-emscripten
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: M3
+        shell: bash --noprofile --norc {0}
+        continue-on-error: true
+        run: bash ./.github/probe/m3_emscripten_longjmp.sh
+
+  m4-macos:
+    name: M4 - the runner's own tree named by path
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: M4
+        shell: bash --noprofile --norc {0}
+        continue-on-error: true
+        run: bash ./.github/probe/m4_macos_path_tree.sh
+
+  m4-linux:
+    name: M4 (Linux) - the runner's own tree named by path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: M4 Linux
+        shell: bash --noprofile --norc {0}
+        continue-on-error: true
+        run: bash ./.github/probe/m4_linux_path_tree.sh
+
+  m5-linux:
+    name: M5 (Linux) - a home reached through a symbolic link
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: M5
+        shell: bash --noprofile --norc {0}
+        continue-on-error: true
+        run: bash ./.github/probe/m5_linux_alias_home.sh
