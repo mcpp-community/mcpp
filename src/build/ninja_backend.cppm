@@ -34,6 +34,9 @@ import mcpp.diag;
 import mcpp.build.advice;
 import mcpp.dyndep;
 import mcpp.toolchain.detect;
+import mcpp.build.refusal;
+import mcpp.pm.compat.registry;
+import mcpp.modgraph.p1689;
 import mcpp.toolchain.model;
 import mcpp.modgraph.glob;
 import mcpp.toolchain.dialect;
@@ -997,6 +1000,127 @@ std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bo
     if (gui) out.push_back("-mwindows");
     if (fn == "wmain" || fn == "wWinMain") out.push_back("-municode");
     return out;
+}
+
+// THE NAMES A HOST ENTERS AN IMAGE BY (mcpp#982). An `exports` entry without a
+// wildcard is an exact name: the host (a Java process, a loader asking for
+// `PyInit_x`, a plugin host) looks it up by that name, and an image that does
+// not define it fails when it is looked up, after the build. A pattern narrows
+// what is published and may match nothing; an exact name that matches nothing
+// is a missing definition.
+//
+// Read from the image's dynamic symbol table after the link, on the object
+// format whose linker takes a version script without asking whether its
+// names exist (ELF; ld64 refuses an exported name nothing defines, and the PE
+// `.def` is written from the symbols the objects define).
+//
+// COMPAT(unmatched-exact-export): such a name was dropped without a word
+// before 2026.11.27.1. Until the row's floor it is reported, and from the floor
+// it fails the build.
+// WHAT EACH LINK READ (SPEC-004 §8.1), as ninja keeps it: the link's dependency
+// file is read into `.ninja_deps` and removed, so it is asked of ninja, once,
+// for the artifacts a build is about to validate. An artifact whose link
+// reports nothing is absent.
+mcpp::build::runtime_validation::LinkInputs
+link_inputs(const BuildPlan& plan, const std::string& ninjaProgram,
+            const mcpp::build::runtime_validation::ArtifactSnapshot& artifacts) {
+    mcpp::build::runtime_validation::LinkInputs out;
+    if (artifacts.empty() || ninjaProgram.empty()) return out;
+    std::vector<std::string> argv{ninjaProgram, "-C", plan.outputDir.string(), "-t", "deps"};
+    for (auto const& [artifact, _] : artifacts) {
+        std::error_code ec;
+        auto rel = std::filesystem::relative(artifact, plan.outputDir, ec);
+        if (!ec && !rel.empty()) argv.push_back(rel.generic_string());
+    }
+    if (argv.size() == 5) return out;
+    auto r = mcpp::run::capture_stdout(argv);
+    if (r.exit_code != 0) return out;
+    // `<target>: #deps N, deps mtime T (VALID)` and then the inputs, indented.
+    std::vector<std::filesystem::path>* at = nullptr;
+    for (auto const lineRange : std::views::split(std::string_view(r.output), '\n')) {
+        std::string_view line(lineRange);
+        if (line.empty()) { at = nullptr; continue; }
+        if (line.front() != ' ') {
+            const auto colon = line.find(": #deps");
+            at = colon == std::string_view::npos ? nullptr
+               : &out[(plan.outputDir / std::string(line.substr(0, colon))).lexically_normal()];
+            continue;
+        }
+        if (!at) continue;
+        while (!line.empty() && line.front() == ' ') line.remove_prefix(1);
+        std::filesystem::path p{std::string(line)};
+        at->push_back(p.is_absolute() ? p : plan.outputDir / p);
+    }
+    return out;
+}
+
+// A SHARED IMAGE THAT ASKS FOR THE STATIC TLS BLOCK (mcpp#907). An object
+// compiled for the initial-exec TLS model marks the library `DF_STATIC_TLS`.
+// Loaded with the program at start-up it works; loaded by `dlopen` later, the
+// loader serves its thread-local storage from what is left of the static
+// block, and a library larger than that is refused at that moment ("cannot
+// allocate memory in static TLS block"). How much is left is the row's loader's
+// fact (`dlopen-static-tls`); a row that states none is not checked. Which way
+// the image will be loaded is not known at the link, so it is reported; an
+// image whose exact `exports` say a host enters it by name (a plugin, a Python
+// extension, a JNI library) is one that `dlopen` loads, and is refused
+// (`static-tls-image`).
+std::optional<std::string> refuse_static_tls_image(const BuildPlan& plan) {
+    std::uint64_t surplus = 0;
+    if (auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
+        if (auto const* row = mcpp::toolchain::target::find_row(t->str()); row && row->dlopenStaticTls > 0)
+            surplus = static_cast<std::uint64_t>(row->dlopenStaticTls);
+    if (surplus == 0) return std::nullopt;
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::SharedLibrary) continue;
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.outputDir / lu.output);
+        if (!facts || !facts->staticTls || facts->tlsSize <= surplus) continue;
+        const bool entered = std::ranges::any_of(lu.exportPatterns, [](auto const& p) {
+            return p.find_first_of("*?[") == std::string::npos;
+        });
+        const auto what = std::format(
+            "{} uses the initial-exec TLS model for {} bytes of thread-local storage (DF_STATIC_TLS), and "
+            "the loader of {} serves an image loaded by dlopen {} bytes of it",
+            lu.output.filename().string(), facts->tlsSize, plan.toolchain.targetTriple, surplus);
+        const auto help = std::string(
+            "compile its objects with -ftls-model=global-dynamic (the model for code of a shared "
+            "library), or keep less in `thread_local`");
+        if (entered) {
+            mcpp::build::refusal::record(mcpp::build::refusal::Code::StaticTlsImage);
+            return std::format("{}; its `exports` name the symbols a host loads it to call.\n"
+                               "       help: {}", what, help);
+        }
+        mcpp::diag::degraded("build/static-tls", what,
+                             "a program that loads it at start-up runs; dlopen refuses it", help);
+    }
+    return std::nullopt;
+}
+
+// An exact `exports` name the image does not define (mcpp#982), read from the
+// image's dynamic symbol table. The reader reads ELF; another container gives
+// no table, and nothing is claimed about it (ld64 refuses such a name itself).
+void report_unmatched_exact_exports(const BuildPlan& plan) {
+    auto const* d = mcpp::pm::compat::find_deprecation("unmatched-exact-export");
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::SharedLibrary) continue;
+        std::vector<std::string> exact;
+        for (auto const& p : lu.exportPatterns)
+            if (p.find_first_of("*?[") == std::string::npos) exact.push_back(p);
+        if (exact.empty()) continue;
+        auto symbols = mcpp::runtime::elf::inspect_dynamic_symbols(plan.outputDir / lu.output);
+        if (!symbols) continue;   // not an ELF image this reader reads: nothing is claimed
+        for (auto const& name : exact) {
+            if (std::ranges::any_of(symbols->defined, [&](auto const& s) { return s.name == name; })) continue;
+            const auto detail = std::format("[targets.{}] exports \"{}\"", lu.targetName, name);
+            mcpp::pm::compat::record_use("unmatched-exact-export", lu.targetName, detail, true);
+            if (d)
+                mcpp::diag::warning(d->domain, std::format(
+                    "{}: {} names a symbol the image does not define, so a host that looks it up does not "
+                    "find it. Dropping it without a word is {}. Write {} instead.",
+                    lu.output.filename().string(), detail, mcpp::pm::compat::deprecation_clause(*d),
+                    d->canonical));
+        }
+    }
 }
 
 std::vector<std::string> start_link_flags(std::string_view start, bool direct) {
@@ -2991,11 +3115,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // nothing failed -- and the compile then had no previous object
             // to find its output equal to (mcpp#946 O5). What the dyndep file
             // names is `-fdeps-target`.
-            append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
-                   "-fdeps-format=p1689r5 "
-                   "-fdeps-file=$out -fdeps-target=$deps_target "
-                   "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan\n",
-                   scanPrefix, rsp_ref(scanPayload)));
+            append(std::format("  command = {}\n", mcpp::modgraph::p1689::scan_command({
+                .prefix = scanPrefix, .driver = "$cxx_driver" + rsp_ref(scanPayload),
+                .flags = {"$cxxflags", "$unit_cxxflags"}, .lang = {"$unit_lang"}, .in = "$in", .out = "$out",
+                .depsTarget = "$deps_target", .depFile = "$out.dep", .scratch = "$out.scan"})));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -3004,11 +3127,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // line at 8191 chars — a quarter of the 32767 ninja gets from
             // CreateProcess — which any package with a large include-dir list
             // overruns (#261: 48 -I entries at a deep consumer path).
-            append(std::format(
-                   "  command = {}$scan_deps -format=p1689 -o $out -- "
-                   "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
-                   "-o $compile_target\n",
-                   scanPrefix, rsp_ref(scanPayload)));
+            append(std::format("  command = {}\n", mcpp::modgraph::p1689::scan_command({
+                .prefix = scanPrefix, .driver = "$cxx_driver" + rsp_ref(scanPayload),
+                .scanDeps = "$scan_deps", .flags = {"$cxxflags", "$unit_cxxflags"}, .lang = {"$unit_lang"},
+                .in = "$in", .out = "$out", .compileTarget = "$compile_target"})));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");
@@ -3028,6 +3150,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // (ninja trims trailing whitespace in variable values, hence the space
 //  lives in the rule's command string, not here)
     static constexpr std::string_view kHeldOpenVerify = "  verify = --verify size\n";
+    // A BMI IS ONE NODE IN BOTH ITS SPELLINGS (mcpp#1015). A compiler that
+    // finds BMIs through an absolute directory (`-fprebuilt-module-path=
+    // <build dir>/pcm.cache`, absolute for compile_commands.json, flags.cppm)
+    // names every BMI an importer read by that path in the depfile ninja keeps,
+    // while the graph names the BMI below the build directory. ninja holds the
+    // two spellings as two files, and the absolute one had no edge: it was read
+    // when the build began and not again, so an importer of an importer whose
+    // BMI the edit changed was compiled by the next build, which had no edit
+    // (measured with clang 23.1.3: `c` edited, `b` kept its BMI, `main` was
+    // compiled one build later). The edge that writes a BMI states the
+    // absolute spelling as an implicit output too: ninja then knows one edge
+    // writes both, and restat judges both by one file.
+    auto also_absolute = [&](const std::filesystem::path& bmi) -> std::string {
+        if (!traits.needsPrebuiltModulePath || bmi.empty() || bmi.is_absolute()) return {};
+        return " " + escape_ninja_path((plan.outputDir / bmi).lexically_normal());
+    };
+    auto with_absolute = [&](const std::filesystem::path& bmi) -> std::string {
+        const auto alias = also_absolute(bmi);
+        return alias.empty() ? std::string{} : " |" + alias;
+    };
     auto std_bmi_dst = mcpp::toolchain::staged_std_bmi_path(plan.toolchain, {});
     auto std_o_dst = std::filesystem::path("obj")
                    / std::format("std{}", dial.objExt);
@@ -3139,8 +3281,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // The standard library module is a dependency of the build: `std`.
     attribute("std");
     if (has_std_artifacts) {
-        append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
-                           escape_ninja_path(plan.stdBmiPath)));
+        append(std::format("build {}{} : stage_file {}\n", escape_ninja_path(std_bmi_dst),
+                           with_absolute(std_bmi_dst), escape_ninja_path(plan.stdBmiPath)));
         append(std::string(kHeldOpenVerify));
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_o_dst),
                            escape_ninja_path(plan.stdObjectPath)));
@@ -3159,8 +3301,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (has_std_compat) {
         // std.compat.pcm depends on std.pcm — ensure std.pcm is staged first
         // so clang can resolve the transitive dependency when loading std.compat.pcm.
-        append(std::format("build {} : stage_file {} | {}\n", escape_ninja_path(compat_bmi_dst),
-                           escape_ninja_path(plan.stdCompatBmiPath),
+        append(std::format("build {}{} : stage_file {} | {}\n", escape_ninja_path(compat_bmi_dst),
+                           with_absolute(compat_bmi_dst), escape_ninja_path(plan.stdCompatBmiPath),
                            escape_ninja_path(std_bmi_dst)));
         append(std::string(kHeldOpenVerify));
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(compat_o_dst),
@@ -3333,7 +3475,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 for (auto& imp : cu.imports)
                     if (auto const* p = provider_of(cu, imp); p && after_a_compile(*p))
                         waitsFor += " " + import_bmi(cu, imp);
-                append(std::format("build {} : stage_file {}{}\n", bmi,
+                append(std::format("build {}{} : stage_file {}{}\n", bmi, with_absolute(bmi),
                                    escape_ninja_path(cu.cachedBmi),
                                    waitsFor.empty() ? "" : " ||" + waitsFor));
                 append("  verify = --verify size\n");
@@ -3603,8 +3745,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                                       .string() + ".ddi";
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
-                    std::string e = std::format("build {} : cxx_module_bmi {} | {}",
-                                                bmi, escape_ninja_path(cu.source),
+                    std::string e = std::format("build {}{} : cxx_module_bmi {} | {}",
+                                                bmi, with_absolute(bmi), escape_ninja_path(cu.source),
                                                 it->second);
                     e += order_only_for(cu);
                     e += "\n  dyndep = " + it->second + "\n";
@@ -3684,7 +3826,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                             e += "  unit_cxxflags =" + fl + "\n";
                         append(std::move(e));
                     };
-                    edge("cxx_precompile",    bmi);
+                    edge("cxx_precompile",    bmi + with_absolute(bmi));
                     edge("cxx_module_object", obj);
                     continue;
                 }
@@ -3692,7 +3834,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
             std::string out_line = "build " + escape_ninja_path(cu.object);
             if (!cu.providesModule.empty()) {
-                out_line += " | " + unit_bmi(cu);
+                out_line += " | " + unit_bmi(cu) + also_absolute(unit_bmi(cu));
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!is_scan_exempt(cu)) {
@@ -3760,7 +3902,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             if (!cu.providesModule.empty()) {
                 // Use implicit output (|) so $out only contains the .o file.
                 // GCC writes BMI implicitly; Clang uses -fmodule-output=$bmi_out.
-                out_line += " | " + unit_bmi(cu);
+                out_line += " | " + unit_bmi(cu) + also_absolute(unit_bmi(cu));
             }
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())
@@ -5566,10 +5708,14 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // one reader both build paths call.
     if (ok) mcpp::build::advice::report_and_clear(plan.outputDir);
 
+    if (ok) report_unmatched_exact_exports(plan);
+    if (ok)
+        if (auto refused = refuse_static_tls_image(plan))
+            return std::unexpected(BuildError{*refused, plan.outputDir / plan.graphFile, {}});
     if (ok) {
         auto runtimeReport =
             mcpp::build::runtime_validation::validate_changed_artifacts(
-                plan, runtimeBefore);
+                plan, runtimeBefore, link_inputs(plan, ninjaProgram, runtimeBefore));
         stage("runtime-validate");
         std::string runtimeFailure;
         std::filesystem::path runtimeFailureArtifact;
@@ -5580,6 +5726,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             // and a DT_NEEDED the artifact's own loader will never find are
             // both "this artifact is known bad", and enumerating them here is
             // how one of them gets forgotten.
+            // A `DT_NEEDED` nothing answers is the closure's refusal as much
+            // as one another file answers (design 2026-11-27 §4.1).
+            if (checked.verdict.status == Status::Unresolvable)
+                mcpp::build::refusal::record(mcpp::build::refusal::Code::RuntimeClosure);
             if (checked.verdict.blocking()) {
                 if (runtimeFailure.empty()) {
                     runtimeFailureArtifact = checked.artifact;

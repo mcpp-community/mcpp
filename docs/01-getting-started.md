@@ -75,6 +75,32 @@ mcpp --version
 > rather than using `source`, and verify the active command with
 > `Get-Command mcpp.exe`.
 
+### Shell completion (2026.11.27.1+)
+
+`mcpp self completion` writes the completion script of a shell -- `bash`,
+`zsh`, `fish` or `powershell`, named as the argument, taken from `SHELL`, or
+`powershell` where `SHELL` is unset and `PSModulePath` is set -- into
+`<home>/config/shell/`, and prints the line that loads it. That line goes
+into the shell's own configuration, which mcpp does not edit:
+
+```
+$ mcpp self completion bash
+       Wrote /home/user/.mcpp/config/shell/mcpp.bash
+source '/home/user/.mcpp/config/shell/mcpp.bash'   # in ~/.bashrc
+```
+
+The script holds no command of mcpp's: it passes the words before the cursor to
+`mcpp __complete`, and mcpp answers from its own command tree, so a later
+release that adds a command or an option completes it with the same script.
+Beside subcommands and options, the answer holds the profiles and members of
+the manifest in the current directory, the dependencies `mcpp remove` takes,
+the targets mcpp has rows for, the toolchains installed in the home
+(`gcc@16.1.0`) and the packages of the local index copies, each spelled as a
+dependency key spells it: a package of the default namespace by its bare name,
+and by its qualified name once the word begins with `mcpplibs.`. A completion
+reads only what is on disk: it initializes no home, writes nothing and fetches
+nothing. `--print` writes the script to standard output instead of the home.
+
 ## Creating a Project
 
 ```bash

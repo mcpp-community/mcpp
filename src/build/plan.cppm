@@ -8,6 +8,7 @@ export module mcpp.build.plan;
 import std;
 import mcpp.pm.patch;          // a variant's name (design 2026-11-02 §14.1)
 import mcpp.build.graph_shape;
+import mcpp.build.refusal;
 import mcpp.targetside;
 import mcpp.build.loader_contract;
 import mcpp.manifest;
@@ -727,6 +728,11 @@ struct BuildPlan {
     // `xdg-open`/`notify-send` outright when a private libc is on it. The farm
     // is reachable PER OBJECT (DT_RPATH) and must stay that way.
     std::vector<mcpp::runtime::search::Dir>        runtimeSearch;
+    // The project states its environment (`[xlings] subos`): the union view of
+    // that environment is its own (design 2026-11-27 §4.1). False: the view is
+    // the machine's default environment, which the project reaches through
+    // COMPAT(implicit-default-environment) until the row's floor.
+    bool                                           statedEnvironment = false;
     // Windows runtime-DLL deployment. On PE (`supports_rpath` is false) a
     // directly-launched .exe cannot RUNPATH-locate a dependency's DLL, so each
     // *.dll found in a dependency's [runtime] library_dir is copied beside the
@@ -2973,8 +2979,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     struct SharedDepTarget {
         std::size_t                   packageIndex = 0;
         std::string                   packageName;
+        // The target as its files are named: `name` is the file's stem
+        // (`compat_sdl3`), which `declaredName` (`sdl3`) is not for a
+        // dependency's library.
         mcpp::manifest::Target        target;
         std::filesystem::path         output;
+        std::string                   declaredName;
     };
     std::vector<SharedDepTarget> sharedDepTargets;
     std::set<std::string> sharedDepPackages;
@@ -3020,13 +3030,50 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
             sharedDepPackages.insert(qname);
             const auto targetIndex = sharedDepTargets.size();
+            // A DEPENDENCY'S SHARED LIBRARY IS NAMED BY ITS PACKAGE (mcpp#975),
+            // by the function that names its object directory: `compat.sdl3`
+            // and `mcpplibs.mwrap.sdl3` both made `libsdl3.so` from a target
+            // named `sdl3`, and the plan wrote two rules for one file. The
+            // package is spelled as a dependency key spells it: a package of
+            // the default namespace by its bare name, which is the name its
+            // library always had (`libdepShared.so`), another by its namespace
+            // and name (`libcompat_sdl3.so`). A target named otherwise than its
+            // package keeps its name after the package's
+            // (`libcompat_sdl3_extra.so`). A selected member's library is the
+            // build's own product and keeps its target's name; a stated
+            // `soname` is the name it is loaded by either way.
+            auto named = t;
+            if (!p.selectedMember) {
+                const auto& spelled = p.manifest.package.namespace_ == mcpp::manifest::kDefaultNamespace
+                    ? p.manifest.package.name : qname;
+                named.name = t.name == p.manifest.package.name || t.name == qname
+                    ? sanitize(spelled) : std::format("{}_{}", sanitize(spelled), t.name);
+            }
             sharedDepTargets.push_back(SharedDepTarget{
                 .packageIndex = i,
                 .packageName = qname,
-                .target      = t,
-                .output      = target_output(t, naming),
+                .target      = named,
+                .output      = target_output(named, naming),
+                .declaredName = t.name,
             });
             sharedTargetsByPackage[i].push_back(targetIndex);
+        }
+    }
+    // Two libraries loaded by one name are one library to the loader: the
+    // second a program finds is never loaded (`soname-collision`).
+    {
+        std::map<std::string, std::string> bySoname;
+        for (auto const& dep : sharedDepTargets) {
+            const auto name = dep.target.soname.empty() ? dep.output.filename().string() : dep.target.soname;
+            auto [it, fresh] = bySoname.try_emplace(name, dep.packageName);
+            if (fresh || it->second == dep.packageName) continue;
+            mcpp::build::refusal::record(mcpp::build::refusal::Code::SonameCollision);
+            return std::unexpected(std::format(
+                "'{}' and '{}' both make a shared library loaded as '{}', and a loader loads one file "
+                "by one name.\n"
+                "       help: give one of the targets another `soname`, or link one of the packages "
+                "statically (`linkage = \"static\"` on its dependency)",
+                it->second, dep.packageName, name));
         }
     }
 
@@ -3430,7 +3477,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
     for (auto const& dep : sharedDepTargets) {
         LinkUnit lu;
-        lu.targetName = dep.target.name;
+        lu.targetName = dep.declaredName;
         lu.package    = dep.packageName;
         lu.kind       = LinkUnit::SharedLibrary;
         lu.dependencyOwned = true;

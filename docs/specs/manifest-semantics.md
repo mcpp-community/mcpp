@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.29 |
-| **最后修改** | 2026-11-23 |
+| **版本** | 1.30 |
+| **最后修改** | 2026-11-27 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`<br>`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md`(§24) |
@@ -728,13 +728,21 @@ mcpp 2026.9.26.2,#703)。**
     `MCPP_ARCHIVES`(分隔方式与 `PATH` 相同)、清单的 `[xlings] archives`(相对于清单所在目录)、机器的
     `config.toml` 的同名键(相对于该文件)、引擎的空列表;只读构建的根。清单写明的工程之外的目录是机器的事实,
     在一个工程中提示一次(`machine-path-in-manifest`)。
+24. **profile 的编译词的作用域。** `[profile.<名>] cflags`、`cxxflags` 是根位置的键:到达构建的根(根包、被选中的
+    成员)的单元,与 `[build] cflags`、`cxxflags` 相同;作为依赖被编译的成员与路径依赖不收到它们。`opt`、`debug`、
+    `ndebug` 与 `ldflags` 到达整张图。`[profile.<名>] dialect_cxxflags` 的含义与到达范围与 `[build] dialect_cxxflags`
+    相同(标准库模块的预编译、扫描与每个 C++ 单元),在其后追加;工作空间层的 profile 同样接受,按第 12 条合并。
+    需要整图一致的词(检测器、体积选项)写进它。C 单元没有对应的键:整图一致是 BMI 与标准库模块对 C++ 单元的
+    要求,C 单元之间没有这种耦合,包的 C 编译词是包自己的。profile 中这些键与 `opt`、`debug`、`lto`、`strip`、
+    `ndebug`、`trim_paths`、`bmi_cutoff`、`split_debuginfo`、`dependency_linkage`、`dependency_debug` 之外的键
+    **必须**被报告并忽略。使用 `dialect_cxxflags` 的清单应当陈述 mcpp 下限:更早的版本不读这个键。
 
 **状态:已实现(第 1 至 7 条 mcpp 2026.9.25.1;第 8 至 10 条 mcpp 2026.9.27.1,mcpp#713、
 #714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717;第 1 条的根包、第 10 条的
 `[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771;第 7、8、10 条的工作空间层与第 12、13 条为
 mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 mcpp 2026.10.11.1,#797;
 第 17 条为 mcpp 2026.11.19.1,#953,其摘要为配置的函数与第 18 至 23 条为 2026.11.21.1,mcpp#986、
-#802、#927、#988、#990)。**
+#802、#927、#988、#990;第 24 条为 mcpp 2026.11.27.1,mcpp#1025)。**
 
 ## 10. 依赖的程序
 
@@ -792,7 +800,18 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 5. `[test] windows_code_page` 为所发现的每个测试程序陈述 Windows 代码页,取值与 target 键相同。
 6. `windows_long_paths`(target 键与 `[test]` 键)陈述 PE 可执行文件是否声明 `longPathAware`;作为 host 工具构建的程序默认 `true`,其余默认不声明;写在库目标上被拒绝。
 
-**状态:已实现(mcpp 2026.10.5.2,#770)。**
+7. **精确的导出名。** `exports` 中不含通配符(`*`、`?`、`[`)的条目是精确名,表示宿主按这个名字进入镜像(Java
+   进程的 `JNI_OnLoad`、Python 的 `PyInit_<名>`、插件宿主的入口),它**必须**有定义;含通配符的条目是模式,只收窄
+   发布的集合,可以不匹配任何符号。精确名是链接器层面的符号名:C++ 的名字写修饰后的形式,或以 `extern "C"` 定义。
+   ELF 的共享镜像在链接后读取其动态符号表核对;Mach-O 的链接器本身拒绝未定义的导出名;PE 的 `.def` 由对象定义的
+   符号写出。自 mcpp 2026.11.27.1 起,未定义的精确名以弃用项 `unmatched-exact-export` 报告(docs/51),到期之后是
+   构建错误。
+8. **依赖包的共享库的名字。** 依赖包的共享库以包的限定名命名,规整方式与对象目录相同(`.` 与 `/` 换为 `_`):
+   `compat.sdl3` 的目标 `sdl3` 是 `libcompat_sdl3.so`,名字与包不同的目标在包名之后加 `_<目标>`。缺省命名空间的包
+   以包名拼写,即它作为裸键的写法:与包同名的目标是 `libdepShared.so`,不同名的目标是 `libdep_depshared.so`。根包与被选中成员的共享库保持目标名。陈述的 `soname` 是它被加载的名字。一次构建中两个共享库以同一个名字加载时,规划**必须**拒绝
+   (`soname-collision`)。
+
+**状态:已实现(第 1 至 6 条 mcpp 2026.10.5.2,#770;第 7、8 条 mcpp 2026.11.27.1,mcpp#982、#975)。**
 
 ## 12. 依赖的库与配置
 
@@ -931,6 +950,25 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 
 **状态:已实现**(mcpp 2026.11.21.1,mcpp#992)。
 
+## 17. 依赖表与它们的写法
+
+1. 一份清单在四种表中陈述依赖:`[dependencies]`、`[build-dependencies]`、`[dev-dependencies]`、
+   `[feature-deps.<特性>]`,以及每种在 `[target.<选择器>]` 下的条件形式。加载、`mcpp add` 与 `mcpp remove` 的编辑、
+   `mcpp publish` 的归一化读同一份枚举(`mcpp.manifest.dependency_tables`),三者**禁止**各自列出表。
+2. `mcpp add` 写入 `[dependencies]`;`--dev` 写入 `[dev-dependencies]`,`--build` 写入 `[build-dependencies]`。
+   `mcpp remove` 以同样的旗标选择表,缺省为 `[dependencies]`。非缺省命名空间的条目:表中已有 `[<表>.<命名空间>]`
+   表头时写为该节中的短键;否则写为 `[<表>]` 中的点号键 `<命名空间>.<名>`。缺省命名空间写裸键。
+3. 一个由点号键定义的表又被表头重新打开(或反之)是 TOML 1.0 的错误。mcpp 合并两者读取,并以弃用项
+   `reopened-dotted-table` 报告(docs/51);编辑该表时,表头下的条目改写为点号键,表头移除。编辑**禁止**写出这种
+   重复定义。
+4. 发布的清单中,每一种表里离开包目录的 `path` 依赖由其版本代替;工作空间的成员无论目录在何处,都以它的版本发布,
+   位于包目录内的成员同样如此。
+5. 一个包是不是构建插件由它的源文件回答(其库导入 `mcpp.core`,§12),不另设清单键。写在 `[dependencies]` 中的构建
+   插件按 §12 的兼容读法(`host-module-in-dependencies`)读作构建依赖,报告给出 `mcpp remove` 与 `mcpp add --build`
+   两条命令。
+
+**状态:已实现**(mcpp 2026.11.27.1,mcpp#962、#964、#993)。
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -964,4 +1002,5 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.26 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#990,设计 2026-11-21 离线与缺省 §3.2):§9 第 22 条 `[build] offline` 与第 23 条 `[xlings] archives`,两者按 §2 的四层取值,一次运行陈述为一个变量。 |
 | 1.27 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#992):新增 §16,特性的 `description`、一个目录项与查询回答的三种状态。 |
 | 1.28 | 2026-11-22 | mcpp 2026.11.22.1(设计 2026-11-22 §6.2):§9 第 12 条,生效的 `[indices]` 中一个位置只有一个名字,两项指向同一位置时拒绝(`index-location-named-twice`)。 |
+| 1.30 | 2026-11-27 | mcpp 2026.11.27.1(设计 2026-11-27):§9 第 24 条 profile 的 `cflags`、`cxxflags` 的作用域与 `[profile.<name>] dialect_cxxflags`,未知的 profile 键被报告(mcpp#1025);§11 第 7 条精确的导出名(mcpp#982)与第 8 条依赖包的共享库以限定名命名(mcpp#975);新增 §17 依赖表的单一枚举、`mcpp add --build` 与写法、重新打开的点号键表、发布对成员的改写(mcpp#962、#964、#993)。 |
 | 1.29 | 2026-11-23 | mcpp 2026.11.23.1(设计 2026-11-22 内核接口与派生状态 §3.1、§3.2):`layers.<层>` 的四种值,载荷与目录两种预制形式;平台键在没有平台的行上生效。 |

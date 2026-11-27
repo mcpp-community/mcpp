@@ -56,28 +56,28 @@ cd app
 tree=target/dist/app-0.1.0-x86_64-linux-android
 [ -d "$tree" ] || fail "no staged tree at $tree" dir.log
 got=$(cd "$tree/lib" && find . -type f | sort | tr '\n' ' ')
-[ "$got" = "./libapp.so ./libc++_shared.so ./libfw.so " ] \
+[ "$got" = "./libapp.so ./libc++_shared.so ./libdemo_fw.so " ] \
     || fail "lib/ holds '$got', not the object and its two libraries" dir.log
 
 manifest="$tree.stage-manifest"
 [ "$(sed -n '1p' "$manifest")" = "closure = walked" ] \
     || fail "the manifest's first line is not 'closure = walked'" "$manifest"
-for line in "needs${TAB}libfw.so${TAB}lib/libfw.so" \
+for line in "needs${TAB}libdemo_fw.so${TAB}lib/libdemo_fw.so" \
             "needs${TAB}libc++_shared.so${TAB}lib/libc++_shared.so" \
             "needs${TAB}libc.so${TAB}platform" \
             "needs${TAB}libm.so${TAB}platform" \
             "needs${TAB}libdl.so${TAB}platform"; do
     grep -qxF "$line" "$manifest" || fail "the manifest lacks the line '$line'" "$manifest"
 done
-echo "  ok: lib/ carries libfw.so and libc++_shared.so; the stubs are the platform's"
+echo "  ok: lib/ carries libdemo_fw.so and libc++_shared.so; the stubs are the platform's"
 
-for so in libapp.so libfw.so; do
+for so in libapp.so libdemo_fw.so; do
     soname=$(readelf -d "$tree/lib/$so" | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p')
     [ "$soname" = "$so" ] || fail "lib/$so carries SONAME '$soname'" dir.log
 done
-readelf -d "$tree/lib/libapp.so" | grep -q 'NEEDED.*\[libfw.so\]' \
-    || fail "libapp.so no longer needs libfw.so by its file name" dir.log
-echo "  ok: libapp.so and libfw.so carry their file names as SONAME"
+readelf -d "$tree/lib/libapp.so" | grep -q 'NEEDED.*\[libdemo_fw.so\]' \
+    || fail "libapp.so no longer needs libdemo_fw.so by its file name" dir.log
+echo "  ok: libapp.so and libdemo_fw.so carry their file names as SONAME"
 
 # ── 2. a prebuilt library the link named travels, and its absence refuses ──
 NDKCC=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang 2>/dev/null | head -1)
@@ -165,7 +165,7 @@ seen=$(find target -name stage.txt | head -1)
     || fail "the provider did not receive 'closure = not-walked'" "$seen"
 grep -qxF "needs${TAB}libext.so${TAB}unresolved" "$seen" \
     || fail "the provider did not receive libext.so as unresolved" "$seen"
-grep -qxF "needs${TAB}libfw.so${TAB}lib/libfw.so" "$seen" \
+grep -qxF "needs${TAB}libdemo_fw.so${TAB}lib/libdemo_fw.so" "$seen" \
     || fail "the provider lost the members that did resolve" "$seen"
 echo "  ok: a dispatched format receives not-walked, the unresolved name and the members"
 rm -f build.mcpp dist.sh
@@ -189,10 +189,10 @@ tree2=$(find target/dist -mindepth 1 -maxdepth 1 -type d | head -1)
 [ -n "$tree2" ] || fail "no staged tree for two triples" two.log
 for abi in x86_64 arm64-v8a; do
     got=$(cd "$tree2/lib/$abi" && find . -type f | sort | tr '\n' ' ')
-    [ "$got" = "./libapp.so ./libc++_shared.so ./libfw.so " ] \
+    [ "$got" = "./libapp.so ./libc++_shared.so ./libdemo_fw.so " ] \
         || fail "lib/$abi holds '$got'" two.log
-    grep -qxF "needs${TAB}libfw.so${TAB}lib/$abi/libfw.so" "$tree2.stage-manifest" \
-        || fail "the manifest lacks lib/$abi/libfw.so" "$tree2.stage-manifest"
+    grep -qxF "needs${TAB}libdemo_fw.so${TAB}lib/$abi/libdemo_fw.so" "$tree2.stage-manifest" \
+        || fail "the manifest lacks lib/$abi/libdemo_fw.so" "$tree2.stage-manifest"
 done
 file "$tree2/lib/arm64-v8a/libc++_shared.so" | grep -qi "aarch64" \
     || fail "lib/arm64-v8a/libc++_shared.so is not the aarch64 runtime" two.log

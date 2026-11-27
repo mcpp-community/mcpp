@@ -459,6 +459,10 @@ struct BuildProgramEnv {
     // PREPENDED, NOT SUBSTITUTED. A build program legitimately calls `git`,
     // `python3` or a shell, none of which arrive this way.
     std::string toolsBin;
+    // The directories of the tools the dependency graph states, ahead of
+    // `toolsBin` (design 2026-11-27 §4.2): the PATH of a build program is
+    // composed as a test's and a run's are (launch_env::child_path).
+    std::vector<std::filesystem::path> statedToolDirs;
     // THE PROGRAM, COMPILED (mcpp#797). The build programs' graph compiles
     // every build program of a build in one plan, with its libraries, and
     // hands each run its binary and the identity it was compiled from; the
@@ -901,18 +905,11 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     //
     // See `BuildProgramEnv::toolsBin` for why this exists, why it is a prefix
     // rather than a replacement, and why the decision is not made here.
-    if (!env.toolsBin.empty()) {
-        std::string path = env.toolsBin;
-        // THE INHERITED VALUE IS READ HERE AND NOT ASSUMED. `extraEnv`
-        // replaces a variable outright in the child, so writing only the
-        // project's own directory would silently be the substitution this
-        // deliberately is not.
-        if (auto const& inherited = mcpp::runtime::launch_env::inherited_path(); !inherited.empty()) {
-            path += mcpp::runtime::launch_env::path_list_separator();
-            path += inherited;
-        }
+    // THE INHERITED VALUE IS READ THERE AND NOT ASSUMED. `extraEnv` replaces
+    // a variable outright in the child, so writing only the stated directories
+    // would silently be the substitution this deliberately is not.
+    if (auto path = mcpp::runtime::launch_env::child_path(env.statedToolDirs, env.toolsBin); !path.empty())
         e.emplace_back("PATH", path);
-    }
 
     publish_by_variable(e, env.toolPaths);
     return e;

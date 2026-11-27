@@ -14,7 +14,7 @@ haiku 0
 dos 0
 uefi 0
 is_linux 26
-is_windows 123
+is_windows 122
 is_macos 28
 is_apple 5
 is_ios 7

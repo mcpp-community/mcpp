@@ -428,7 +428,12 @@ what precedes the suffix, and the name ends in it once. The built-in
 beside `app.wasm`. `link-without-main` (2026.11.20.1+) gives the link words of an
 executable with no program start (`main = false`, see 04 — `main = false`); a
 row that states none refuses `main = false` for its executables. The built-in
-`wasm32-emscripten` row states `["--no-entry"]`. A machine
+`wasm32-emscripten` row states `["--no-entry"]`. `dlopen-static-tls`
+(2026.11.27.1+) is the number of bytes of the static TLS block the row's loader
+serves an image loaded by `dlopen` whose objects use the initial-exec model
+(`DF_STATIC_TLS`): a shared image above it is reported after the link, and
+refused when its exact `exports` say a host loads it by name. A row that states
+none is not checked; the built-in glibc rows state 512. A machine
 runs another architecture's programs only where the execution table states it
 (`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
 the artifact's architecture and started on this machine.

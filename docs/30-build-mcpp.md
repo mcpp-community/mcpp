@@ -1883,9 +1883,24 @@ also after a checkout or a copy that changed every modification time. Measured
 on [`examples/12-a-new-device-language`](../examples/12-a-new-device-language/);
 before this rule the key held the version alone and a change to the emitter
 left `mcpp run` printing the previous answer until the version was bumped.
-The entry built from the same tree under the previous digest is removed when
-the new one is written; `mcpp cache clean` empties the store, which lives at
-`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
+An entry records the trees that use it, as a `path` dependency's entry does
+([09](09-commands-by-scenario.md)): when an edited tree writes or hits the entry
+of its new digest, it is withdrawn from the entries under the previous digests, and an
+entry left with no user is removed *(2026.11.27.1+; before, the entry built from
+the same tree under the previous digest was removed whoever used it)*. `mcpp
+cache clean` empties the store, which lives at
+`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`. The store is shared
+under every `--cache` mode: `local` and `off` apply to the dependencies a tool's
+build compiles, not to where the tool is kept.
+
+**An entry holds the tool and the shared objects it loads (2026.11.27.1+).** A
+tool whose link reads a shared library its own build produced -- a package of
+its graph linked `shared` -- loads that library from its own directory, which
+its RPATH names as `$ORIGIN`. The entry holds the executable and each such
+library with its aliases, published by one step, and lists them in the entry's
+`shared-objects`; an entry that lacks one of them is not valid and is built
+again. Before, the store published the executable alone, and such a tool failed
+to start from the store (mcpp#535).
 
 **The paths a tool build writes are bounded (2026.9.15.2+).** The sub-build
 runs in `<mcpp cache dir>/tool/.build/<hash>/`, a directory named by the entry

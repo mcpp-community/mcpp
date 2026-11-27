@@ -1,6 +1,7 @@
 import std;
 import mcpplibs.mtest;
 import mcpp.build.graph_shape;
+import mcpp.invocation;
 
 using namespace mcpplibs::mtest;
 
@@ -59,6 +60,31 @@ UTest the_header_names_the_request{"GraphShape/TheHeaderNamesTheRequest", [] {
     expect(ne(tag, request_tag("cli\x1egui", "a")));
     expect(eq(read_request(write_graph(header_line(GraphShape::Normal, "none", false, {}, tag))), tag));
     expect(eq(read_request(write_graph("# mcpp:graph=normal;schedule=none;accel=default;dist=none")), ""));
+}};
+
+// SPEC-019 §9: a switch of the build-optimization register that is decided when the graph is
+// written is part of the request the graph names. The record of a build cannot hold it: the record
+// is written by a build that succeeded, and the switch is stated to check one that fails. An edge
+// entry (`MCPP_BMI_CUTOFF`) is read when the edge runs, and is not part of it.
+UTest the_request_names_a_stated_switch_that_shapes_the_graph{"GraphShape/TheRequestNamesAStatedSwitch", [] {
+    using namespace mcpp::build;
+    const mcpp::invocation::ScopedEnv none[]{{"MCPP_PRIVATE_FRAGMENT", std::nullopt}, {"MCPP_BMI_SCHEDULE", std::nullopt},
+                                             {"MCPP_BUILDOPT", std::nullopt}, {"MCPP_BMI_CUTOFF", std::nullopt}};
+    const auto plain = request_tag("", "a");
+    {
+        const mcpp::invocation::ScopedEnv cutoff("MCPP_BMI_CUTOFF", "exact");
+        expect(eq(request_tag("", "a"), plain)) << "an edge entry changed the request";
+    }
+    std::vector<std::string> tags{plain};
+    for (auto const& [name, value] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"MCPP_PRIVATE_FRAGMENT", "conservative"}, {"MCPP_PRIVATE_FRAGMENT", "as-written"},
+             {"MCPP_BMI_SCHEDULE", "off"}, {"MCPP_BUILDOPT", "off"}}) {
+        const mcpp::invocation::ScopedEnv stated(name, value);
+        tags.push_back(request_tag("", "a"));
+    }
+    std::ranges::sort(tags);
+    expect(std::ranges::adjacent_find(tags) == tags.end()) << "two statements name one request";
+    expect(eq(request_tag("", "a"), plain)) << "a statement stayed after its scope";
 }};
 
 UTest only_a_plain_graph_with_the_manifests_variant_is_replayed{"GraphShape/OnlyAPlainGraphWithTheManifestsVariantIsReplayed", [] {

@@ -4,6 +4,137 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.27.1] - 2026-11-27
+
+### Changed
+
+- A dependency's shared library is named by its package. Its file and its SONAME take the
+  package's qualified name, made a file name by the function that names the package's object
+  directory: `compat.sdl3`'s target `sdl3` builds `libcompat_sdl3.so`, and a target named
+  otherwise than its package follows the package's name (`libcompat_sdl3_extra.so`). A package of
+  the default namespace is spelled by its bare name: a target named as its package keeps its
+  library's name, and one named otherwise follows the package's name (`libdep_depshared.so`). The
+  root package and a selected member keep their target's name, and a target that states `soname`
+  is loaded by the name it states. Two packages whose libraries would be loaded by one name are
+  refused at planning with `[soname-collision]`, naming both. Before, `compat.sdl3` and
+  `mcpplibs.mwrap.sdl3` both made `libsdl3.so`. A script outside mcpp that names a dependency's
+  shared library by its file name follows the change (docs/04, mcpp#975).
+- The `PATH` of a build program, a test and the program of `mcpp run` is composed by one
+  function, the same on every host: the directories of the tools the graph states, then the
+  declared environment's `bin` when the project declares one, then the `PATH` mcpp was started
+  with. A build program that calls a tool the graph states by its bare name gets the stated one,
+  and a test finds a tool stated with `when = "run"` on Windows and macOS as on Linux. Before, a
+  build program's `PATH` had no stated tool, and a test's held the toolchain's environment `bin`
+  on Linux only (docs/23, mcpp#926).
+- `mcpp add` writes the form the table already uses for the namespace: the short key in an
+  existing `[dependencies.<ns>]` section, else the dotted key `<ns>.<name>` in `[dependencies]`;
+  a package of the default namespace is a bare key. Before, it could write a
+  `[dependencies.<ns>]` header after dotted keys had defined that table, which TOML 1.0 and every
+  strict reader refuse. `mcpp remove` takes `--dev` and `--build`, as `mcpp add` does
+  (docs/05, mcpp#964).
+- The code text of a source, its text with comments and literals blanked, has one reader, shared
+  by the module scanner, the build optimizations and the check of module names a package
+  declares. An `export module` inside a raw string literal or a comment no longer declares a
+  module (mcpp#963).
+- The cache entry of a `path` dependency or a `path` host tool records every tree that uses it,
+  one file per tree under the entry's `users/`. A tree that writes or hits the entry of an edited
+  content withdraws itself from the entries of its earlier contents, and an entry is removed when
+  no tree uses it. Before, an edit in one checkout removed the entry another checkout's plan named. The
+  `source` record of an earlier mcpp is read as the first user and is not written, so an earlier
+  mcpp that shares the home removes none of the new entries (docs/09, mcpp#1025).
+- The home keeps the spelling it is given: a home named through a symbolic link is used under
+  that name in every path mcpp opens, starts or prints, and its physical path is used only to
+  decide whether two paths are one object. A comparison that cannot be made is made on the
+  spelling and reported as degraded. A check in CI holds the physical-path calls outside the
+  identity function to a baseline that only shrinks (docs/25, mcpp#1024).
+- `mcpp publish` normalizes every dependency table, the tables under `[target.<selector>]` and
+  each `[feature-deps.<feature>]` included, through one enumeration of a manifest's dependency
+  tables, which the loader and the manifest editor also walk. A `path` dependency of a feature is
+  published by its version, and so is a workspace member that lies inside the package's directory
+  (mcpp#962).
+- The `host-module-in-dependencies` warning names the two commands that move the entry:
+  `mcpp remove <package>`, then `mcpp add --build <package>@<version>` (mcpp#993).
+- mcpp's Windows images reserve 8 MiB of stack for the main thread, the size Linux and macOS give
+  it. A command nests whole builds in one process: `mcpp pack` prepares the program, a host tool
+  its platform names and that tool's build programs. Measured on the openkal canary, this held
+  about 1 MiB of frames, the whole of a PE image's default reserve.
+
+### Added
+
+- An `import` inside a conditional block (`#if`, `#ifdef`, ...) is read by the compiler's
+  dependency scan with the unit's own compile words, on GCC and on Clang (`clang-scan-deps`), and
+  the unit imports what the condition selects. Before, the lexical scan refused the unit. A module
+  declaration in a conditional block is read the same way; header units are still refused, and so
+  is such a unit under MSVC, which has no scan at planning (docs/04, mcpp#1026).
+- `mcpp add --build` writes the dependency into `[build-dependencies]` (docs/05, mcpp#993).
+- `[profile.<name>] dialect_cxxflags`, with the meaning of `[build] dialect_cxxflags` and appended
+  after it: it reaches every unit of the graph and the `std` module. A workspace's profile takes
+  it too. SPEC-004 §9 states that a profile's `cflags` and `cxxflags` reach the root package and
+  the selected members, and its `opt`, `debug`, `ndebug`, `dialect_cxxflags` and `ldflags` the
+  whole graph. An unknown key in a profile is reported (docs/04, mcpp#1025).
+- Shell completion. `mcpp self completion [bash|zsh|fish|powershell]` writes into
+  `<home>/config/shell/` a script that passes the words before the cursor to `mcpp __complete`,
+  and prints the line that loads it. mcpp answers from its command tree, with the profiles,
+  members and dependencies of the manifest in the directory, its target rows, the installed
+  toolchains and the packages of the local index copies; a completion reads only what is on disk
+  and initializes no home. The engine is mcpplibs.cmdline 0.0.6 (docs/01, mcpp#794).
+- A host tool's store entry holds, beside the executable, each shared object its link read from
+  its own build, and lists them; an entry without them is built again. Before, a tool that linked
+  a library of its graph shared failed to start from the store (docs/30, mcpp#535).
+- The file a link reads for a `DT_NEEDED` is the file the loader loads. After an ELF image is
+  linked, the name is resolved over the image's search path and compared with the shared object
+  the link recorded reading (`--dependency-file`), as an object and then by content; another file
+  is refused with `[runtime-closure]`, naming both. A name nothing answers at load time carries
+  the same token. Under `MCPP_ALLOW_HOST_LIBS` a difference is inconclusive (docs/04, mcpp#537).
+- An ELF shared image that asks for the static TLS block (`DF_STATIC_TLS`) with a TLS segment
+  larger than glibc serves an image loaded by `dlopen` (512 bytes) is reported; when its exact
+  `exports` say a host enters it by name, it is refused with `[static-tls-image]` (docs/04,
+  mcpp#907).
+- A graph that supplies the C library and no C++ ABI, whose units import the `std` module, is
+  refused at planning with `[layer-requirement]` and two remedies, a dependency that provides
+  `mcpp:c++-abi` or `[build] cxx_runtime = "host-coupled"`. Before, the `std` module's precompile
+  failed inside the toolchain's headers (docs/22, SPEC-002 §3.11, mcpp#898).
+- Before `mcpp run` and `mcpp test` execute an artefact whose `#!` line names a program that is
+  not on its `PATH`, a note names the program and gives the commands that install a toolchain
+  descriptor, with the toolchain the build used (docs/20, mcpp#621).
+- A library a program finds only in the default environment's union view, for a project that
+  declares no environment, is reported, naming the program and the library (docs/23).
+- The features of `examples/11-features` state their descriptions, and a test holds that a
+  package's descriptions are the same from its manifest, an inline descriptor and an installed
+  payload (mcpp#1018).
+
+### Deprecated
+
+- `reopened-dotted-table` (until 2027.3): a `[header]` that reopens a table dotted keys defined.
+  The two are read together and reported; the next `mcpp add` to that table writes the header's
+  entries as dotted keys (docs/51).
+- `implicit-default-environment` (until 2027.3): for a project that declares no environment, the
+  default environment's union view on the run-time search path and the link's `--sysroot`, and
+  its `bin` on a test's `PATH` outside Windows (docs/23, docs/51).
+- `unmatched-exact-export` (until 2027.3): an exact `exports` name the shared image does not
+  define, which was dropped from the published set without a word; it is reported (docs/04,
+  docs/51).
+
+### Fixed
+
+- A build with no edit after an edit of a module compiles nothing under clang. clang names every
+  BMI an importer read by the absolute path it finds it through (`-fprebuilt-module-path`), and the
+  graph names the BMI below the build directory; ninja held the two spellings as two files, so the
+  importer of an importer whose BMI an edit changed was compiled by the next build, which had no
+  edit. The edge that writes a BMI now states the absolute spelling as an implicit output too
+  (SPEC-018 §1 item 6, mcpp#1015).
+- `examples/11-features/greeter` stated `opt_level` in a profile, which is no profile key, and
+  the profile built without it; it states `opt`.
+- A build after a failed build that stated `MCPP_PRIVATE_FRAGMENT`, `MCPP_BMI_SCHEDULE` or
+  `MCPP_BUILDOPT` is the build before it. In 2026.11.26.1 the statement was part of the record of
+  a build, which a build writes when it succeeds: a build that stated one and failed left its
+  graph under the record of the build before, and a plain build then replayed that graph and
+  failed the same way until a source or the manifest was edited. On GCC that is the invocation a
+  failure's `tip:` gives (`MCPP_PRIVATE_FRAGMENT=conservative mcpp build`), which fails where the
+  purview before the fragment holds a condition. The statement is now part of the request the
+  graph itself names (`request=` on the first line of `build.ninja`), which every fast path
+  compares before replaying it (SPEC-019 §9 item 5).
+
 ## [2026.11.26.1] - 2026-11-26
 
 ### Changed

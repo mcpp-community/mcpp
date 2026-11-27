@@ -2102,6 +2102,7 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
     // c++latest/c++fly per-toolchain std spelling) stay graph-consistent.
     state.stdFlagAndDialect = mcpp::toolchain::cppfly::std_flag(
         *state.tc, state.m->cppStandard.canonical, state.m->cppStandard.level);
+    state.stdWords = {state.stdFlagAndDialect};
     if (state.m->cppStandard.experimental) {
         // c++fly is best-effort by design: say exactly what this toolchain
         // got and what it lacks (the value's contract, design §5.4).
@@ -2125,6 +2126,7 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
              mcpp::manifest::dialect_flags(state.m->buildConfig))) {
         state.stdFlagAndDialect += ' ';
         state.stdFlagAndDialect += f;
+        state.stdWords.push_back(f);
     }
     // AND THE PLATFORM'S CONVENTIONS (SPEC-013 §2.5), which come before every
     // unit's own: the std module is a unit of the target side, whichever
@@ -2138,6 +2140,7 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
     for (auto const& w : platform_unit_cxxflags(state)) {
         state.stdFlagAndDialect += ' ';
         state.stdFlagAndDialect += mcpp::build::command_line::quote(w);
+        state.stdWords.push_back(w);
     }
     return {};
 }

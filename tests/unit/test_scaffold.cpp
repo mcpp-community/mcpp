@@ -381,7 +381,8 @@ widget = "1.0.0"
         ss << is.rdbuf();
         text = ss.str();
     }
-    expect(ne(text.find("[dependencies.acme]\nwidget = { version = \"2.0.0\", features = [\"gui\"] }"), std::string::npos));
+    // No form of the namespace yet: the dotted key (mcpp#964, SPEC-004 §17).
+    expect(ne(text.find("[dependencies]\nacme.widget = { version = \"2.0.0\", features = [\"gui\"] }"), std::string::npos));
     expect(ne(text.find("[dependencies.compat]\nwidget = \"1.0.0\""), std::string::npos));
 
     auto again = mcpp::scaffold::inject_self_dependency(

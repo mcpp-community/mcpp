@@ -312,6 +312,29 @@ sources = ["src/target/unix/target.cppm"]
         expect(e2e::contains(s::text(r), R"("src/absent.cpp" names no file)"))
             << "no warning names the entry\n" << s::text(r);
     };
+
+    "1172 a conditional import follows its condition"_test[s::gcc] = [] {
+        // mcpp#1026 (docs/04, docs/20): a unit whose `import` stands in an `#ifdef` block takes its
+        // imports from the compiler's scan with its own compile words. The macro undefined, the
+        // module is not imported and need not exist; defined, it is imported and the program uses
+        // it. A header unit in such a block is still refused.
+        s::project p({{"src/main.cpp", "#ifdef USE_LIB\nimport lib;\n#endif\nint main() {\n#ifdef USE_LIB\n    return lib_value() == 42 ? 0 : 1;\n#else\n    return 0;\n#endif\n}\n"}});
+        auto manifest = [&](std::string_view build) {
+            p.write("mcpp.toml", std::format("[package]\nname    = \"condimp\"\nversion = \"0.1.0\"\n\n[build]\n{}\n\n[targets.condimp]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", build));
+        };
+        manifest("sources = [\"src/*.cpp\"]");
+        auto r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the build with the macro undefined failed\n" << s::text(r);
+        p.write("src/lib.cppm", "export module lib;\nexport int lib_value() { return 42; }\n");
+        manifest("sources = [\"src/*.cpp\", \"src/*.cppm\"]\ndefines = [\"USE_LIB\"]");
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the build with the macro defined failed\n" << s::text(r);
+        p.write("src/h.hpp", "#pragma once\n");
+        p.write("src/main.cpp", "#ifdef USE_LIB\nimport \"h.hpp\";\n#endif\nint main() { return 0; }\n");
+        r = p.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "a header unit in a conditional block was accepted";
+        expect(e2e::contains(s::text(r), "header units")) << s::text(r);
+    };
 }};
 
 }  // namespace

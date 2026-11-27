@@ -113,6 +113,7 @@ simd       = { sources = ["src/simd/**"], flags = [
   （[05，构建期依赖](05-dependencies.md)）；指名的不是本包的 `bin` 目标时，加载被拒绝。
 - `description`（mcpp 2026.11.21.1+）是给读者的一行特性说明，与 `[package] description`
   之于包相同。它不改变构建；索引描述符的 `features.<f>` 同样接受。数组简写没有描述。
+  [`examples/11-features`](../../examples/11-features/) 的每个 feature 都写出了描述。
 
 ### 读取包的 feature（mcpp 2026.11.21.1+）
 

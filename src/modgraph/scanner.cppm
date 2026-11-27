@@ -1,15 +1,18 @@
 // mcpp.modgraph.scanner — regex-based scan of .cppm/.cpp for module statements.
 //
 // Hard constraints (per docs/01 §4.2):
-//   not supported: #if/#ifdef-guarded import
 //   not supported: header units (import "h" / import <h>)
 //   not supported: files outside [modules].sources glob
+// An import or a module declaration inside a preprocessor condition marks the
+// unit, whose declarations and imports are then the compiler's dependency
+// scan's (`scan_packages`' `answer`, mcpp#1026).
 //
 // Returns a Graph or a list of detailed errors.
 
 export module mcpp.modgraph.scanner;
 
 import std;
+import mcpp.libs.code_text;
 import mcpp.manifest;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
@@ -186,10 +189,19 @@ struct PackageRoot {
     bool                            selectedMember = false;
     std::string                     memberProducts;
 };
+// The compiler's answer for a unit the text scanner marked
+// (`importsFromCompiler`): the unit with its declaration and imports as the
+// compiler's dependency scan reads them under the unit's compile, or why it
+// could not be scanned.
+using CompilerAnswer = std::function<std::expected<SourceUnit, std::string>(const SourceUnit&)>;
+
 // `closures` states each compiled package's closure (mcpp#732); a module name
-// is then unique per closure, and without them in the whole graph.
+// is then unique per closure, and without them in the whole graph. `answer`
+// scans the units whose imports stand inside a preprocessor condition; without
+// one, such a unit is an error naming it.
 ScanResult scan_packages(const std::vector<PackageRoot>& packages,
-                         const Closures& closures = {});
+                         const Closures& closures = {},
+                         const CompilerAnswer& answer = {});
 
 // Drop-in replacement that delegates per-file scanning to GCC's P1689r5
 // (.ddi) output instead of regex parsing. Same ScanResult shape — used by
@@ -197,7 +209,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages,
 ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                                const mcpp::toolchain::Toolchain&   tc,
                                const std::filesystem::path&        tmpDir,
-                               std::string_view                    cppStandardFlag,
+                               std::span<const std::string>        stdWords,
                                const Closures&                     closures = {});
 
 } // namespace mcpp::modgraph
@@ -300,119 +312,19 @@ bool is_well_formed_module_name(std::string_view name) {
     return is_dotted(name.substr(0, colon)) && is_dotted(name.substr(colon + 1));
 }
 
-// Blank out everything on a line that is not code: block-comment bodies, line
-// comment tails, and raw-string bodies. Removed characters become spaces, so a
-// column reported against the result still points at the source.
-//
-// ONE PASS OVER THREE STATES, and that is the whole point of the function.
-// Code, block comment and raw string are mutually exclusive and decided by
-// whichever opener comes first, which no fixed order of separate passes can
-// express. The scanner had two passes -- raw strings, then an unconditional
-// `find("//")` -- and no block-comment state at all, which produced a wrong
-// answer in BOTH directions (measured on 2026.9.10.2):
-//
-//   /*                     the trimmed line IS `module (exe)`, so the matcher
-//     module (exe)         fired inside a comment. With a well-formed name
-//   */                     (`export module y;`) it was worse than an error:
-//                          the graph recorded a plain .cpp as the producer of
-//                          `y.gcm`, promised a BMI the compiler never writes,
-//                          and a real importer of `y` was then told `imports
-//                          must be built before being imported`.
-//
-//   // R"(                 the raw-string pass ran first and did not know the
-//   import x;              opener was commented out, so it entered raw mode
-//                          and blanked every following line until a `)"` that
-//                          never comes. `import x;` was invisible to the
-//                          scanner and visible to the compiler -- a MISSING
-//                          DEPENDENCY EDGE, which is a build-order race rather
-//                          than a deterministic refusal, and therefore worse.
-//
-//   /* */ import x;        the matcher only fires on a line whose trimmed text
-//                          starts with the keyword, and this one starts with
-//                          `/*`. Also missed.
-//
-// The comment that admitted all of this is worth quoting, because the argument
-// was sound and its enumeration was short by one: "Ordinary "..." strings are
-// intentionally left as-is: the import/module matcher only fires on lines whose
-// trimmed text *starts with* the keyword, which a string body can only do when
-// it spans lines (i.e. a raw string)." A block comment can do it too.
-//
-// NOT A LEXER. Ordinary string and character literals are skipped over rather
-// than tokenised -- their contents are left in place, because the only question
-// asked of the result is whether the trimmed line starts with a keyword and a
-// `"..."` body cannot begin a line with one. Skipping them is nonetheless
-// required, so that `const char* s = "a /* b";` does not open a comment that
-// swallows the rest of the file. Nesting is not stripped because `/*` does not
-// nest in C++.
-std::string strip_noncode(std::string_view line, bool& in_block, bool& in_raw,
-                          std::string& raw_close) {
-    std::string out(line);
-    const std::size_t n = out.size();
-    auto blank = [&](std::size_t from, std::size_t to) {
-        for (std::size_t k = from; k < to && k < n; ++k) out[k] = ' ';
-    };
-
-    std::size_t i = 0;
-    while (i < n) {
-        if (in_raw) {
-            auto p = line.find(raw_close, i);
-            if (p == std::string_view::npos) { blank(i, n); return out; }
-            blank(i, p + raw_close.size());
-            i = p + raw_close.size();
-            in_raw = false;
-            raw_close.clear();
-            continue;
-        }
-        if (in_block) {
-            auto p = line.find("*/", i);
-            if (p == std::string_view::npos) { blank(i, n); return out; }
-            blank(i, p + 2);
-            i = p + 2;
-            in_block = false;
-            continue;
-        }
-        if (line[i] == '/' && i + 1 < n && line[i + 1] == '/') {
-            blank(i, n);
-            return out;
-        }
-        if (line[i] == '/' && i + 1 < n && line[i + 1] == '*') {
-            in_block = true;
-            blank(i, i + 2);
-            i += 2;
-            continue;
-        }
-        // Raw-string opener: R"delim( ... )delim"  (delim is up to 16 chars,
-        // no '(' / whitespace per the standard). Optional u8/u/U/L prefixes
-        // precede the R; we only need to spot the R" boundary.
-        if (line[i] == 'R' && i + 1 < n && line[i + 1] == '"') {
-            std::size_t d = i + 2;
-            std::string delim;
-            while (d < n && line[d] != '(' && (d - (i + 2)) < 16) {
-                delim.push_back(line[d]);
-                ++d;
-            }
-            if (d < n && line[d] == '(') {
-                raw_close = ")" + delim + "\"";
-                in_raw = true;
-                blank(i, d + 1);
-                i = d + 1;
-                continue;
-            }
-        }
-        if (line[i] == '"' || line[i] == '\'') {
-            const char q = line[i];
-            std::size_t k = i + 1;
-            while (k < n) {
-                if (line[k] == '\\') { k += 2; continue; }
-                if (line[k] == q)    { ++k; break; }
-                ++k;
-            }
-            i = k;   // contents kept; only the scan position moves past them
-            continue;
-        }
-        ++i;
-    }
-    return out;
+// What is code in a source is read by one reader, mcpp.libs.code_text: it blanks
+// comments and the contents of literals, to the length of the text, so a line
+// of its result is the line of the source. The scanner had a reader of its own
+// (`strip_noncode`: block comments and raw strings by lines, with the state
+// carried from line to line), and before that two passes that gave a wrong
+// answer in both directions (measured on 2026.9.10.2): a `module (exe)` line
+// inside a block comment was a declaration, and `// R"(` hid every import
+// after it, which is a missing edge and a build-order race. Three readers of
+// one text differ; the module-name functions of the manifest read the same
+// result (mcpp#963).
+std::string code_text_of(std::istream& is) {
+    std::string text{std::istreambuf_iterator<char>(is), std::istreambuf_iterator<char>()};
+    return mcpp::libs::code_text::read(text).text;
 }
 
 bool is_module_name_char(char c) {
@@ -845,17 +757,12 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
 
     int          if_depth        = 0;     // #if/#ifdef nesting
     std::size_t  lineno          = 0;
-    bool         in_raw          = false; // inside a multi-line raw string
-    std::string  raw_close;               // active )delim" terminator
-    bool         in_block        = false; // inside a /* ... */ block comment
-    std::string  line;
-    while (std::getline(is, line)) {
+    // Comment bodies and the contents of literals are not code: see
+    // code_text_of. The lines below are lines of the source.
+    const std::string code = code_text_of(is);
+    for (auto const lineRange : std::views::split(std::string_view(code), '\n')) {
         ++lineno;
-        // Comment bodies, comment tails and raw-string bodies are not code.
-        // One pass, because the three states are decided by whichever opener
-        // comes first -- see strip_noncode.
-        std::string code = strip_noncode(line, in_block, in_raw, raw_close);
-        std::string_view sv = trim(code);
+        std::string_view sv = trim(std::string_view(lineRange));
         if (sv.empty()) continue;
 
         // Track preprocessor depth (we only need to know if we're inside #if).
@@ -888,6 +795,13 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             r = trim(r.substr(6));
             if (r.empty() || r == ";") {
                 continue;  // global module fragment marker (`module;`)
+            }
+            // A declaration inside a condition is the unit's only under the
+            // compile that takes the branch: the compiler's scan says which
+            // (mcpp#1026).
+            if (if_depth > 0) {
+                u.importsFromCompiler = true;
+                continue;
             }
             // `module : private;` — the private module fragment
             // ([module.private.frag]), and a THIRD production, not a spelling
@@ -1016,12 +930,10 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             (r.size() == 6 || r[6] == ' ' || r[6] == '\t' ||
              r[6] == '<' || r[6] == '"' || r[6] == ':'))
         {
-            if (if_depth > 0) {
-                return std::unexpected(ScanError{file, lineno,
-                    "import statement inside conditional preprocessor block (forbidden in M1)"});
-            }
             r = trim(r.substr(6));
             if (r.empty()) continue;
+            // A HEADER UNIT is refused wherever it stands, a condition or not:
+            // mcpp builds no header unit (SPEC-008).
             if (r[0] == '<' || r[0] == '"') {
                 return std::unexpected(ScanError{file, lineno,
                     "header units (import \"h\" / import <h>) are forbidden in M1"});
@@ -1033,6 +945,17 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                 ++i;
             }
             if (name.empty()) continue;
+            // AN IMPORT INSIDE A PREPROCESSOR CONDITION (mcpp#1026) is the
+            // unit's under the compile that takes the branch, and which branch
+            // that is depends on the toolchain's predefined macros, the target,
+            // the defines and the headers the unit includes. The compiler's
+            // dependency scan answers it with the unit's compile; this reader
+            // would be a third, partial preprocessor. The unit is marked, and
+            // its imports are the scan's.
+            if (if_depth > 0) {
+                u.importsFromCompiler = true;
+                continue;
+            }
             // Partition import within the same module: prepend the *base*
             // module name. If the current TU itself owns a partition (e.g.
             // its `export module foo:http;`), `u.provides->logicalName`
@@ -1058,7 +981,11 @@ SourceUnit scan_entry_file(const std::filesystem::path& file,
                            const std::string&           packageName,
                            const mcpp::ExtensionTable&  extTable)
 {
-    if (auto scanned = scan_file(file, packageName, extTable)) return std::move(*scanned);
+    // A unit whose imports are the compiler's to answer (mcpp#1026) has only a
+    // partial reading here, as a refused one has none: both keep their
+    // line-leading imports, and their form is not decided.
+    if (auto scanned = scan_file(file, packageName, extTable); scanned && !scanned->importsFromCompiler)
+        return std::move(*scanned);
 
     SourceUnit u;
     u.path        = file;
@@ -1066,11 +993,9 @@ SourceUnit scan_entry_file(const std::filesystem::path& file,
     u.kind        = mcpp::classify(file, extTable);
     u.declaration = ModuleDeclaration::Unknown;
     std::ifstream is(file);
-    bool in_raw = false, in_block = false;
-    std::string raw_close, line;
-    while (std::getline(is, line)) {
-        const std::string code = strip_noncode(line, in_block, in_raw, raw_close);
-        std::string_view r = trim(code);
+    const std::string code = code_text_of(is);
+    for (auto const lineRange : std::views::split(std::string_view(code), '\n')) {
+        std::string_view r = trim(std::string_view(lineRange));
         if (r.starts_with("export ") || r.starts_with("export\t")) r = trim(r.substr(6));
         if (!r.starts_with("import ") && !r.starts_with("import\t")) continue;
         r = trim(r.substr(6));
@@ -1576,6 +1501,36 @@ void resolve_graph(ScanResult& result) {
 
 } // namespace
 
+// The units the text scanner marked, given the compiler's declaration and
+// imports (mcpp#1026). The text scanner's own reading of a marked unit is
+// partial by construction, so a unit no answer covers is an error, not that
+// reading.
+void answer_from_compiler(ScanResult& result, const CompilerAnswer& answer) {
+    for (auto& u : result.graph.units) {
+        if (!u.importsFromCompiler) continue;
+        if (!answer) {
+            result.errors.push_back(ScanError{u.path, 0,
+                "an import or a module declaration stands inside a preprocessor condition; the "
+                "compiler's dependency scan reads it, and this reading of the sources runs none"});
+            continue;
+        }
+        auto scanned = answer(u);
+        if (!scanned) {
+            result.errors.push_back(ScanError{u.path, 0, scanned.error()});
+            continue;
+        }
+        u.provides          = scanned->provides;
+        u.providesInterface = scanned->providesInterface;
+        u.declaration       = scanned->declaration;
+        // A partition import is named by its module in a record (`m:part`);
+        // a re-export the text read stays one only where the scan imports it.
+        u.requires_         = scanned->requires_;
+        std::erase_if(u.reexports, [&](const ModuleId& r) {
+            return std::ranges::none_of(u.requires_, [&](auto const& q) { return q.logicalName == r.logicalName; });
+        });
+    }
+}
+
 ScanResult scan_package(const std::filesystem::path& root,
                         const mcpp::manifest::Manifest& manifest)
 {
@@ -1584,12 +1539,14 @@ ScanResult scan_package(const std::filesystem::path& root,
     auto localIncludeDirsAfter = local_include_dirs_after_for(root, manifest);
     scan_one_into(result, root, manifest, localIncludeDirs, localIncludeDirsAfter,
                   manifest.buildConfig.cflags, manifest.buildConfig.cxxflags);
+    answer_from_compiler(result, {});
     resolve_graph(result);
     return result;
 }
 
 ScanResult scan_packages(const std::vector<PackageRoot>& packages,
-                         const Closures& closures) {
+                         const Closures& closures,
+                         const CompilerAnswer& answer) {
     ScanResult result;
     result.graph.closures = closures;
     for (auto const& p : packages) {
@@ -1621,6 +1578,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages,
                       localIncludeDirsAfter, packageCflags, packageCxxflags,
                       packageAsmflags);
     }
+    answer_from_compiler(result, answer);
     resolve_graph(result);
     return result;
 }
@@ -1628,7 +1586,7 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages,
 ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
                                const mcpp::toolchain::Toolchain&   tc,
                                const std::filesystem::path&        tmpDir,
-                               std::string_view                    cppStandardFlag,
+                               std::span<const std::string>        stdWords,
                                const Closures&                     closures)
 {
     ScanResult result;
@@ -1651,7 +1609,7 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         for (auto const& f : all_files) {
             auto r = mcpp::modgraph::p1689::scan_file(
                 f, p.manifest.package.name, tc, tmpDir,
-                localIncludeDirs, cppStandardFlag, extTable);
+                localIncludeDirs, stdWords, extTable);
             if (!r) {
                 result.errors.push_back(ScanError{ f, 0, r.error() });
                 continue;

@@ -24,6 +24,7 @@ import mcpp.cli.cmd_publish;
 import mcpp.cli.cmd_xpkg;
 import mcpp.cli.cmd_registry;
 import mcpp.cli.cmd_self;
+import mcpp.cli.complete;
 import mcpp.cli.cmd_toolchain;
 import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
@@ -671,6 +672,10 @@ int run(int argc, char** argv) {
     auto app = cl::App("mcpp")
         .version(std::string{mcpp::toolchain::MCPP_VERSION})
         .description("modern C++ build tool")
+        // Completion is the library's (design 2026-11-27 §4.11): `mcpp
+        // __complete <words>` answers from this tree, and `mcpp self
+        // completion` writes the adapter a shell reads.
+        .completion({.command = ""})
         .option(cl::Option("quiet").short_name('q')
             .help("Suppress status output").global())
         .option(cl::Option("verbose").short_name('v')
@@ -728,7 +733,7 @@ int run(int argc, char** argv) {
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("jobs").short_name('j').takes_value().value_name("N")
                 .help("Concurrent compiles: a number, or 'auto' to size from cores + free RAM"))
-            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+            .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one build, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
@@ -738,7 +743,7 @@ int run(int argc, char** argv) {
                 .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
-            .option(cl::Option("target").takes_value().multiple().help(
+            .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().multiple().help(
                 "Build for <triple> (e.g. x86_64-linux-musl), or for a target set (e.g. openkal, "
                 "linux-musl); repeatable: one leg per target"))
             .option(cl::Option("accel").takes_value().value_name("SPEC")
@@ -747,9 +752,9 @@ int run(int argc, char** argv) {
                 .help("Target no accelerator, ignoring [build] accel"))
             .option(cl::Option("static").help(
                 "Force static linking (-static). On Linux, prefer pairing with --target <arch>-linux-musl"))
-            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+            .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Build the named workspace member (namespace.name or package name, then directory); repeat to build several"))
-            .option(cl::Option("profile").takes_value().value_name("NAME")
+            .option(cl::Option("profile").complete(mcpp::cli::complete::profiles).takes_value().value_name("NAME")
                 .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
             .option(cl::Option("release").help("Shorthand for --profile release"))
             .option(cl::Option("dev").help("Shorthand for --profile dev (-O0 -g)"))
@@ -778,21 +783,21 @@ int run(int argc, char** argv) {
                 .help("Then write what the build uses (payloads, index snapshots, git clones) into DIR"))
             .option(cl::Option("from").takes_value().value_name("DIR")
                 .help("First take a directory `mcpp fetch --to` wrote into the home"))
-            .option(cl::Option("target").takes_value().multiple().help(
+            .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().multiple().help(
                 "Fetch for <triple>, or for a target set; repeatable: one leg per target"))
-            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+            .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value().value_name("SPEC")
                 .help("Fetch for this toolchain, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT)"))
             .option(cl::Option("platform").takes_value().value_name("SPEC")
                 .help("The target's platform for this invocation (= MCPP_PLATFORM)"))
-            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+            .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Fetch for the named workspace member; repeat for several"))
             .option(cl::Option("workspace")
                 .help("Fetch for all workspace members"))
             .option(cl::Option("exclude").takes_value().multiple().value_name("NAME")
                 .help("With --workspace, leave the named member out; repeatable"))
-            .option(cl::Option("profile").takes_value().value_name("NAME")
+            .option(cl::Option("profile").complete(mcpp::cli::complete::profiles).takes_value().value_name("NAME")
                 .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features, and a dependency's as <dependency>/<feature>"))
@@ -816,7 +821,7 @@ int run(int argc, char** argv) {
             // lets `run` spell the flag `--target` like every other
             // subcommand, instead of being the one command that cannot.
             .arg(cl::Arg("bin").help("Binary name (optional)"))
-            .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
+            .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().multiple().value_name("TRIPLE")
                 .help("Cross target triple or target set (same axis as `mcpp build --target`); "
                       "of several, the first this host reaches, its own architecture first"))
             .option(cl::Option("accel").takes_value().value_name("SPEC")
@@ -827,7 +832,7 @@ int run(int argc, char** argv) {
             // `run` accepted, and scripts written against it must keep working.
             .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
                 .help("Alias for --target"))
-            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+            .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Run only the named workspace member (namespace.name or package name, then directory; one member: a second -p is refused)"))
             // DECLARED ON THE THREE COMMANDS THAT BUILD BEFORE THEY ACT, AS ON
             // `build`. The value has always reached them: the pre-parse loop
@@ -835,7 +840,7 @@ int run(int argc, char** argv) {
             // `MCPP_TOOLCHAIN=llvm@22.1.8 mcpp test` compiled with clang, while
             // the spelling the help of `build` teaches was refused here as an
             // unknown option (#634 A10).
-            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+            .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
@@ -863,7 +868,7 @@ int run(int argc, char** argv) {
             // actually run.
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate features (comma/space separated), same axis as `mcpp build --features`"))
-            .option(cl::Option("profile").takes_value().value_name("NAME")
+            .option(cl::Option("profile").complete(mcpp::cli::complete::profiles).takes_value().value_name("NAME")
                 .help("Build profile to run (dev | release | <custom>)"))
             .option(cl::Option("release").help("Shorthand for --profile release"))
             .option(cl::Option("dev").help("Shorthand for --profile dev"))
@@ -918,7 +923,7 @@ int run(int argc, char** argv) {
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
             .arg(cl::Arg("pattern")
                 .help("Run only tests whose name contains a PATTERN; several select every test one of them names (optional)"))
-            .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
+            .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().multiple().value_name("TRIPLE")
                 .help("Cross target triple or target set (same axis as `mcpp build --target`); "
                       "repeatable: every leg is built, and run where this host reaches it"))
             .option(cl::Option("accel").takes_value().value_name("SPEC")
@@ -965,7 +970,7 @@ int run(int argc, char** argv) {
                 .help("Kill a compile/link drive still running after SECS seconds (default 0 = no limit; POSIX only)"))
             .option(cl::Option("workspace-timeout").takes_value().value_name("SECS")
                 .help("Start no further member's tests after SECS seconds since the command began, and report what did not run (default 0 = no limit); the build is bounded by --build-timeout"))
-            .option(cl::Option("profile").takes_value().value_name("NAME")
+            .option(cl::Option("profile").complete(mcpp::cli::complete::profiles).takes_value().value_name("NAME")
                 .help("Build profile for the test build: dev (default) | release | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features, and a dependency's as <dependency>/<feature>, for the test build (comma-separated)"))
@@ -973,9 +978,9 @@ int run(int argc, char** argv) {
                 .help("Pin capability providers (e.g. blas=openblas,lapack=mkl)"))
             .option(cl::Option("strict")
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
-            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+            .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Run the tests of the named workspace member (namespace.name or package name, then directory); repeat to test several"))
-            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+            .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value().value_name("SPEC")
                 .help("Build the tests with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
@@ -1015,9 +1020,9 @@ int run(int argc, char** argv) {
             // report on the current directory's default: "what would a build
             // for THIS pair resolve to" is the question the target matrix asks
             // once per cell, and it builds nothing.
-            .option(cl::Option("target").takes_value()
+            .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value()
                 .help("Ask about this target instead of the project's default"))
-            .option(cl::Option("toolchain").takes_value()
+            .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value()
                 .help("Ask about this toolchain, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
@@ -1038,13 +1043,18 @@ int run(int argc, char** argv) {
             .description("Add a dependency to mcpp.toml")
             .arg(cl::Arg("pkg").help(
                 "Exact package spec, e.g. foo@1.0.0 or compat.gtest@1.15.2")
-                .required())
+                .required().complete(mcpp::cli::complete::index_packages))
             .option(cl::Option("dev").help(
                 "Add to [dev-dependencies] (test-only, e.g. compat.gtest)"))
+            .option(cl::Option("build").help(
+                "Add to [build-dependencies] (a build plugin or a tool the build runs)"))
             .action(mcpp::pm::commands::cmd_add))
         .subcommand(cl::App("remove")
             .description("Remove a dependency from mcpp.toml")
-            .arg(cl::Arg("pkg").help("Exact package selector [ns.]name").required())
+            .arg(cl::Arg("pkg").help("Exact package selector [ns.]name").required()
+                .complete(mcpp::cli::complete::dependencies))
+            .option(cl::Option("dev").help("Remove from [dev-dependencies]"))
+            .option(cl::Option("build").help("Remove from [build-dependencies]"))
             .action(mcpp::pm::commands::cmd_remove))
         .subcommand(cl::App("update")
             .description("Re-resolve dependencies and rewrite mcpp.lock")
@@ -1064,7 +1074,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("allow-dirty").help("Allow uncommitted changes"))
             .option(cl::Option("tag").takes_value().value_name("TEMPLATE")
                 .help("The release's tag, of {version}, {name} and {namespace} (default: v{version})"))
-            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+            .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Publish the named workspace member; repeat to publish several under one tag"))
             .option(cl::Option("workspace")
                 .help("Publish every workspace member: one archive and one descriptor each, and SHA256SUMS"))
@@ -1096,7 +1106,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("linkage").takes_value().value_name("static|shared")
                 .help("The program's libraries in it (static) or beside it (shared); rebuilds "
                       "with [build] dependency_linkage (default: as the project builds)"))
-            .option(cl::Option("target").takes_value().multiple()
+            .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().multiple()
                 .help("A target (x86_64-linux-gnu) or a target set (openkal, linux-musl); "
                       "repeatable: the legs"))
             .option(cl::Option("no-universal")
@@ -1126,13 +1136,13 @@ int run(int argc, char** argv) {
             // Packaging builds RELEASE by default — the artifact leaves this
             // machine. `[build] default-profile` still wins when it is set;
             // this only replaces the "dev" fallback every other command uses.
-            .option(cl::Option("profile").takes_value()
+            .option(cl::Option("profile").complete(mcpp::cli::complete::profiles).takes_value()
                 .help("Build profile (default: [build] default-profile, else release)"))
             // The shorthands `build` and `run` take, with their precedence:
             // `--profile` wins over either (#649 E9).
             .option(cl::Option("release").help("Shorthand for --profile release"))
             .option(cl::Option("dev").help("Shorthand for --profile dev"))
-            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+            .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                 .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
@@ -1152,7 +1162,7 @@ int run(int argc, char** argv) {
                 .help("Ship the artifacts as built (default: strip debug info)"))
             .option(cl::Option("all-programs")
                 .help("Ship every program of the package: the one named after it (or the named one) and the others beside it"))
-            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+            .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Pack the named workspace member (namespace.name or package name, then directory), as if run in its directory; repeat to pack several, planned and built once"))
             .option(cl::Option("workspace")
                 .help("Pack every workspace member that has a program target, planned and built once"))
@@ -1201,9 +1211,9 @@ int run(int argc, char** argv) {
                     .help("Machine-readable output (enveloped; see docs/50-machine-output.md)"))
                 .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
                     .help("Write to file instead of stdout"))
-                .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().value_name("TRIPLE")
                     .help("Describe the build for <triple> (same axis as `mcpp build --target`)"))
-                .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .option(cl::Option("toolchain").complete(mcpp::cli::complete::toolchains).takes_value().value_name("SPEC")
                     .help("Describe the build with this toolchain, e.g. llvm@22.1.8"))
                 .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
                     .help("The target's base for this invocation (= MCPP_SYSROOT): a package, glibc@system, path:<dir>, none"))
@@ -1216,9 +1226,9 @@ int run(int argc, char** argv) {
                 .option(cl::Option("no-accel")
                     .help("Describe the variant built for no accelerator"))
                 .option(cl::Option("static").help("Describe the build with --static"))
-                .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+                .option(cl::Option("package").complete(mcpp::cli::complete::members).short_name('p').takes_value().multiple().value_name("NAME")
                     .help("Describe the named workspace member (namespace.name or package name, then directory); repeat to describe several"))
-                .option(cl::Option("profile").takes_value().value_name("NAME")
+                .option(cl::Option("profile").complete(mcpp::cli::complete::profiles).takes_value().value_name("NAME")
                     .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
                 .option(cl::Option("release").help("Shorthand for --profile release"))
                 .option(cl::Option("dev").help("Shorthand for --profile dev"))
@@ -1278,7 +1288,7 @@ int run(int argc, char** argv) {
                 //   mcpp toolchain install --target x86_64-windows-gnu
                 .arg(cl::Arg("compiler").help("gcc | llvm | msvc | emsdk | android-ndk (or gcc@16.1.0; legacy aliases accepted)"))
                 .arg(cl::Arg("version").help("e.g. 16.1.0, 15, 15.1"))
-                .option(cl::Option("target").takes_value().help(
+                .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().help(
                     "Install the toolchain payload for <triple> (e.g. x86_64-windows-gnu)"))
                 .option(cl::Option("platform").takes_value().value_name("SPEC")
                     .help("With --target: the target's platform for this invocation (= MCPP_PLATFORM)")))
@@ -1288,7 +1298,7 @@ int run(int argc, char** argv) {
                 // partial versions allowed.
                 .arg(cl::Arg("spec").help("<family>[@<version>] (version may be partial)").required())
                 .arg(cl::Arg("version").help("(optional, alternative to @-form)"))
-                .option(cl::Option("target").takes_value().help(
+                .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().help(
                     "Default build target <triple> (omit = host)")))
             .subcommand(cl::App("remove")
                 .description("Uninstall a toolchain")
@@ -1300,7 +1310,7 @@ int run(int argc, char** argv) {
                     .help("<family>[@<version>] (exact version)")
                     .required())
                 .arg(cl::Arg("version").help("(optional, alternative to @-form)"))
-                .option(cl::Option("target").takes_value().help(
+                .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().help(
                     "Remove the payload for <triple> instead of the host one")))
             .action(cmd_toolchain_any))
         .subcommand(cl::App("cache")
@@ -1403,7 +1413,7 @@ int run(int argc, char** argv) {
                 .action(cmd_doctor))
             .subcommand(cl::App("env")
                 .description("Print mcpp paths and configuration; with --target, one configuration: toolchain, platform, tools, runner")
-                .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
+                .option(cl::Option("target").complete(mcpp::cli::complete::targets).takes_value().multiple().value_name("TRIPLE")
                     .help("Report this target's configuration (prepared, not built; the project's when run in one); "
                           "a target set or several reports each leg"))
                 .option(cl::Option("host")
@@ -1427,6 +1437,12 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("version")
                 .description("Show mcpp version")
                 .action(cmd_self_version))
+            .subcommand(cl::App("completion")
+                .description("Write the completion script of a shell into the home and say how to load it")
+                .arg(cl::Arg("shell").values({"bash", "zsh", "fish", "powershell"})
+                    .help("bash, zsh, fish or powershell; the shell $SHELL names when absent"))
+                .option(cl::Option("print").help("Print the script instead of writing it"))
+                .action(cmd_self_completion))
             .subcommand(cl::App("explain")
                 .description("Show extended description for an error code")
                 .arg(cl::Arg("code").help("Error code such as E0001, or a refusal's reason token such as platform-version-group").required())
@@ -1542,7 +1558,7 @@ int run(int argc, char** argv) {
             .action(cmd_coff_def))
         // The three edges of the detach-codegen schedule. Internal, and named as
         // such: they are only ever invoked by a generated build.ninja.
-        .subcommand(cl::App("bmi-compile")
+        .subcommand(cl::App("bmi-compile").hidden()
             .description("(internal) Compile a module interface and return when its BMI is published")
             .option(cl::Option("bmi").takes_value().value_name("PATH").help("BMI this unit publishes"))
             .option(cl::Option("object").takes_value().value_name("PATH"))
@@ -1555,7 +1571,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("dep-to").takes_value().value_name("PATH").help("where ninja expects this edge's depfile"))
             .option(cl::Option("relocate").takes_value().value_name("NAMING").help("write below an attempt of its own and publish (design 2026-11-19 §10.6)"))
             .action(cmd_bmi_compile))
-        .subcommand(cl::App("bmi-supervise")
+        .subcommand(cl::App("bmi-supervise").hidden()
             .description("(internal) Run a compiler to completion and record its status")
             .option(cl::Option("slot").takes_value().value_name("PATH"))
             .option(cl::Option("sem").takes_value().value_name("PATH"))
@@ -1564,7 +1580,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("command-file").takes_value().value_name("PATH"))
             .option(cl::Option("relocation").takes_value().value_name("DIR"))
             .action(cmd_bmi_supervise))
-        .subcommand(cl::App("bmi-await")
+        .subcommand(cl::App("bmi-await").hidden()
             .description("(internal) Join a detached compiler and replay its diagnostics")
             .option(cl::Option("slot").takes_value().value_name("PATH"))
             .option(cl::Option("object").takes_value().value_name("PATH"))
@@ -2016,7 +2032,7 @@ int run(int argc, char** argv) {
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "write", "coff-def",
                 "place-dlls", "link-output", "platform-step",
-                "bmi-compile", "bmi-supervise", "bmi-await",
+                "bmi-compile", "bmi-supervise", "bmi-await", "__complete",
             });
             bool ok = false;
             for (auto k : known) if (k == first) { ok = true; break; }

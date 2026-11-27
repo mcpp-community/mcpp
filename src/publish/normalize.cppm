@@ -121,13 +121,14 @@ struct Walk {
     // declares only this dependency, so the key rules (namespace tables,
     // dotted selectors, quoted legacy keys) are not restated here.
     std::expected<std::string, std::string>
-    reader_key(std::string_view section, const std::vector<std::string>& segs,
+    reader_key(const mcpp::manifest::DependencyTable& table, const std::vector<std::string>& segs,
                const t::Value& leaf) const {
+        const auto section = table.section();
         t::Table root;
         root["package"] = t::Value{t::Table{
             {"name", t::Value{std::string("normalize")}},
             {"version", t::Value{std::string("0.0.0")}}}};
-        std::set<std::string, std::less<>> ex{ "package", std::string(section) };
+        std::set<std::string, std::less<>> ex{ "package", section };
         // Build the pruned subtree from the leaf upward.
         t::Value node = leaf;
         for (std::size_t i = segs.size(); i-- > 1;) {
@@ -137,7 +138,10 @@ struct Walk {
         }
         t::Table sectionTable;
         sectionTable[segs[0]] = node;
-        root[std::string(section)] = t::Value{std::move(sectionTable)};
+        if (table.kind == mcpp::manifest::DependencyTableKind::Feature)
+            root["feature-deps"] = t::Value{t::Table{{table.feature, t::Value{std::move(sectionTable)}}}};
+        else
+            root[section] = t::Value{std::move(sectionTable)};
         std::string prefix(section);
         for (std::size_t i = 0; i + 1 < segs.size(); ++i) {
             prefix += "." + segs[i];
@@ -146,9 +150,7 @@ struct Walk {
         auto text = t::serialize(t::Document{std::move(root), std::move(ex)});
         auto m = mcpp::manifest::parse_string(text, manifestPath);
         if (!m) return std::unexpected(m.error().format());
-        const auto& map = section == "dependencies"     ? m->dependencies
-                        : section == "build-dependencies" ? m->buildDependencies
-                                                          : m->devDependencies;
+        const auto& map = family(*m, table);
         if (map.size() != 1)
             return std::unexpected(std::format(
                 "internal error: the dependency at [{}] {} did not read back as "
@@ -156,18 +158,26 @@ struct Walk {
         return map.begin()->first;
     }
 
-    const std::map<std::string, mcpp::manifest::DependencySpec>&
-    effective_map(std::string_view section) const {
-        const auto& m = effective.manifest;
-        return section == "dependencies"       ? m.dependencies
-             : section == "build-dependencies" ? m.buildDependencies
-                                               : m.devDependencies;
+    // The map of a manifest that a table's entries are read into.
+    static const std::map<std::string, mcpp::manifest::DependencySpec>&
+    family(const mcpp::manifest::Manifest& m, const mcpp::manifest::DependencyTable& table) {
+        using K = mcpp::manifest::DependencyTableKind;
+        static const std::map<std::string, mcpp::manifest::DependencySpec> none;
+        if (table.kind == K::Feature) {
+            auto it = m.featureDeps.find(table.feature);
+            return it == m.featureDeps.end() ? none : it->second;
+        }
+        return table.kind == K::Build ? m.buildDependencies
+             : table.kind == K::Dev   ? m.devDependencies
+                                      : m.dependencies;
     }
 
     // Replace `workspace = true` by the source the workspace resolved.
     std::expected<void, std::string>
-    resolve_workspace(t::Table& spec, std::string_view section,
-                      const std::vector<std::string>& segs, bool conditional) {
+    resolve_workspace(t::Table& spec, const mcpp::manifest::DependencyTable& table,
+                      const std::vector<std::string>& segs) {
+        const auto section = table.section();
+        const bool conditional = !table.selector.empty();
         auto it = spec.find("workspace");
         if (it == spec.end() || !it->second.is_bool() || !it->second.as_bool())
             return {};
@@ -179,9 +189,9 @@ struct Walk {
                 "the member's manifest.",
                 manifestPath.string(), section, join(segs)));
         if (!effective.member) return {};
-        auto key = reader_key(section, segs, t::Value{spec});
+        auto key = reader_key(table, segs, t::Value{spec});
         if (!key) return std::unexpected(key.error());
-        const auto& map = effective_map(section);
+        const auto& map = family(effective.manifest, table);
         auto found = map.find(*key);
         if (found == map.end() || found->second.inheritWorkspace)
             return std::unexpected(std::format(
@@ -206,13 +216,24 @@ struct Walk {
 
     // Apply the path rule. Returns true when the entry is to be removed.
     std::expected<bool, std::string>
-    apply_path_rule(t::Table& spec, std::string_view section,
-                    const std::vector<std::string>& segs, bool dev) {
+    apply_path_rule(t::Table& spec, const mcpp::manifest::DependencyTable& table,
+                    const std::vector<std::string>& segs) {
+        const auto section = table.section();
+        const bool dev = table.kind == mcpp::manifest::DependencyTableKind::Dev;
         auto it = spec.find("path");
         if (it == spec.end() || !it->second.is_string()) return false;
         std::filesystem::path p(it->second.as_string());
         auto target = p.is_absolute() ? p : packageDir / p;
-        if (inside(packageDir, target)) {
+        // A workspace member is published under its own version wherever its
+        // directory is, inside this package's included (mcpp#962: package
+        // `hanim` and its member `hanim.core` at `core/`). Kept as a path, the
+        // archive named the member by path while every other consumer named it
+        // by version, and a graph that held both refused the two sources.
+        const bool member = effective.member && effective.workspace
+            && target.lexically_normal() != packageDir.lexically_normal()
+            && mcpp::project::is_workspace_member(*effective.workspace,
+                                                  effective.workspaceRoot, target);
+        if (inside(packageDir, target) && !member) {
             if (p.is_absolute()) {
                 // Only reachable through `workspace = true`: the workspace
                 // anchors the path, and an absolute path cannot be published.
@@ -270,25 +291,24 @@ struct Walk {
 
     // Walk one dependency table. `segs` is the key path below the section.
     std::expected<void, std::string>
-    deps(t::Table& table, std::string_view section, std::vector<std::string> segs,
-         bool conditional, bool dev) {
+    deps(t::Table& node, const mcpp::manifest::DependencyTable& table, std::vector<std::string> segs) {
         std::vector<std::string> remove;
-        for (auto& [k, v] : table) {
+        for (auto& [k, v] : node) {
             auto here = segs;
             here.push_back(k);
             if (!v.is_table()) continue;              // a version string
             auto& sub = v.as_table();
             if (!names_a_source(sub)) {
-                if (auto r = deps(sub, section, here, conditional, dev); !r) return r;
+                if (auto r = deps(sub, table, here); !r) return r;
                 continue;
             }
-            if (auto r = resolve_workspace(sub, section, here, conditional); !r)
+            if (auto r = resolve_workspace(sub, table, here); !r)
                 return std::unexpected(r.error());
-            auto drop = apply_path_rule(sub, section, here, dev);
+            auto drop = apply_path_rule(sub, table, here);
             if (!drop) return std::unexpected(drop.error());
             if (*drop) remove.push_back(k);
         }
-        for (auto const& k : remove) table.erase(k);
+        for (auto const& k : remove) node.erase(k);
         return {};
     }
 };
@@ -493,27 +513,13 @@ normalize_for_publish(const std::filesystem::path&           packageDir,
             }
     }
 
-    // Dependencies: the unconditional sections and every conditional one.
+    // Dependencies: every table that holds them, conditional ones included, in
+    // the enumeration the manifest reader walks (mcpp#962: `[feature-deps.*]`
+    // was not among the tables this walk named).
     Walk walk{ packageDir, effective, *doc, manifestPath };
-    for (auto section : {"dependencies", "build-dependencies", "dev-dependencies"}) {
-        auto it = root.find(section);
-        if (it == root.end() || !it->second.is_table()) continue;
-        if (auto r = walk.deps(it->second.as_table(), section, {}, false,
-                               std::string_view(section) == "dev-dependencies"); !r)
+    for (auto const& table : mcpp::manifest::dependency_tables(root))
+        if (auto r = walk.deps(*table.table, table, {}); !r)
             return std::unexpected(r.error());
-    }
-    if (auto it = root.find("target"); it != root.end() && it->second.is_table()) {
-        for (auto& [selector, row] : it->second.as_table()) {
-            if (!row.is_table()) continue;
-            for (auto section : {"dependencies", "build-dependencies", "dev-dependencies"}) {
-                auto st = row.as_table().find(section);
-                if (st == row.as_table().end() || !st->second.is_table()) continue;
-                if (auto r = walk.deps(st->second.as_table(), section, {}, true,
-                                       std::string_view(section) == "dev-dependencies"); !r)
-                    return std::unexpected(r.error());
-            }
-        }
-    }
     changed = changed || walk.changed;
 
     out.changed = changed;

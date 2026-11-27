@@ -110,6 +110,31 @@ inline constexpr Deprecation kDeprecations[] = {
         "build-program/deprecated", "docs/30-build-mcpp.md",
     },
     {
+        "reopened-dotted-table", "2026.11.27.1", "2027.3",
+        "a table that a `[header]` reopens after dotted keys defined it (`[dependencies.compat]` "
+        "after `compat.libpng = ...` under `[dependencies]`), which TOML 1.0 refuses",
+        "the header's entries as dotted keys of the table they extend, `compat.zlib = ...`; "
+        "the next `mcpp add` to that table writes them so",
+        "manifest/deprecated", "docs/05-dependencies.md",
+    },
+    {
+        "implicit-default-environment", "2026.11.27.1", "2027.3",
+        "for a project that states no environment, the union of what the machine's default environment "
+        "has installed: its libraries on the run-time search path and the link's `--sysroot`, its `bin` "
+        "on a test's PATH outside Windows",
+        "a dependency on the package that provides the library or tool, or `[xlings] subos = \"default\"` "
+        "to state the shared environment",
+        "manifest/deprecated", "docs/23-the-project-environment.md",
+    },
+    {
+        "unmatched-exact-export", "2026.11.27.1", "2027.3",
+        "an `exports` entry without a wildcard that names a symbol the shared image does not define, "
+        "dropped from the published set without a word",
+        "the name the image defines (its mangled form for a C++ name, or the function declared "
+        "`extern \"C\"`), or the entry under the [target.<selector>] that defines it",
+        "manifest/deprecated", "docs/04-mcpp-toml.md",
+    },
+    {
         "no-universal-flag", "2026.10.30.1", kRemovalFloor,
         "`mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a "
         "target set)",

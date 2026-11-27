@@ -226,7 +226,7 @@ self = {{ features = ["alpha", "beta"] }}
         expect(fatal(e2e::succeeded(r))) << "exact acme template failed\n" << out;
         const auto acme = in("app-acme/mcpp.toml");
         expect(fatal(e2e::contains(acme, "fixture-marker=acme-solo"))) << "default sibling stole acme selector\n" << acme;
-        expect(fatal(s::has_line(acme, R"(^\[dependencies\.acme\]$)") && s::has_line(acme, R"(^tpl-demo = "3\.0\.0"$)"))) << "canonical self dependency lost namespace\n" << acme;
+        expect(fatal(s::has_line(acme, R"(^acme\.tpl-demo = "3\.0\.0"$)"))) << "canonical self dependency lost namespace\n" << acme;
         expect(fatal(e2e::contains(out, "namespace=acme name=tpl-demo"))) << "resolved output lost PackageId\n" << out;
         expect(fatal(e2e::contains(out, "payload=digest-tpl-demo"))) << "resolved output lost payload provenance\n" << out;
         expect(fatal(e2e::contains(out, "acme.tpl-demo@3.0.0:solo"))) << "sole template did not become default\n" << out;
@@ -237,7 +237,8 @@ self = {{ features = ["alpha", "beta"] }}
         expect(fatal(e2e::succeeded(r))) << "nested namespace template failed\n" << out;
         const auto lua = in("app-lua/mcpp.toml");
         expect(fatal(e2e::contains(lua, "fixture-marker=nested-lua"))) << "nested template payload missing\n" << lua;
-        expect(fatal(s::has_line(lua, R"(^\[dependencies\.mcpplibs\.capi\]$)") && s::has_line(lua, R"(^lua = "5\.4\.7"$)"))) << "nested PackageId lost during injection\n" << lua;
+        // Written as `mcpp add` writes a key (mcpp#964): dotted, in a table that has no namespace section.
+        expect(fatal(s::has_line(lua, R"(^mcpplibs\.capi\.lua = "5\.4\.7"$)"))) << "nested PackageId lost during injection\n" << lua;
         expect(fatal(e2e::contains(out, "namespace=mcpplibs.capi name=lua"))) << "nested resolved identity missing\n" << out;
 
         // 10. Ambiguous, explicit, several defaults, no templates.
@@ -372,7 +373,7 @@ tx-template = "1.0.0"
         expect(fatal(e2e::contains(m, "provider=acme/tx-template"))) << "provider PackageId was lost";
         expect(fatal(e2e::contains(m, "selector=acme.tx-template version=2.0.0"))) << "resolved selector/version were lost";
         expect(fatal(e2e::contains(m, "template=starter"))) << "implicit single-template selection was not rendered";
-        expect(fatal(s::has_line(m, R"(^\[dependencies\.acme\]$)") && s::has_line(m, R"(^tx-template = \{ version = "2\.0\.0", features = \["gui"\] \}$)"))) << "exact self dependency missing\n" << m;
+        expect(fatal(s::has_line(m, R"(^acme\.tx-template = \{ version = "2\.0\.0", features = \["gui"\] \}$)"))) << "exact self dependency missing\n" << m;
         expect(fatal(s::has_line(m, R"(^tx-template = "1\.0\.0"$)"))) << "same-short compat dependency was overwritten";
         no_stage(work);
 

@@ -76,6 +76,11 @@ struct Row {
     // Read before the system's `interfaces`; unstated: the system's.
     std::span<const std::string_view> interfaces;
     bool             interfacesStated = false;
+    // THE STATIC TLS THE ROW'S LOADER SERVES AN IMAGE LOADED BY `dlopen`
+    // (mcpp#907), in bytes: what is left of the static block for a library
+    // whose objects use the initial-exec model (`DF_STATIC_TLS`). A shared
+    // image above it is reported after the link. 0: unstated, not checked.
+    std::int64_t     dlopenStaticTls = 0;
     bool             defined = false; // stated by a platform package
 };
 

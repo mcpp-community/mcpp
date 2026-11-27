@@ -1233,6 +1233,8 @@ static std::expected<void, std::string> step6_xlings_workspace_from_graph(Prepar
                 return std::unexpected(split.error());
             }
             auto const& fromGraph = split->second;
+            state.statedXlingsSpecs = split->first;
+            state.statedXlingsSpecs.insert(state.statedXlingsSpecs.end(), fromGraph.begin(), fromGraph.end());
             if (!fromGraph.empty()) {
                 if (auto cfg = state.get_cfg(true)) {
                     if (auto pv = provision_xlings_addresses(
@@ -1386,6 +1388,9 @@ struct HostToolCtx {
     BuildOverrides sub;
     std::filesystem::path goal;
     std::filesystem::path subOutputDir;
+    // The shared objects of the graph the tool loads (relative to the
+    // sub-build's output directory), published beside it (mcpp#535).
+    std::vector<std::filesystem::path> sharedObjects;
 };
 
 // The body of the `record` closure the single-function version of this step
@@ -1650,6 +1655,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     if (mcpp::build::tool_store::entry_valid(ctx.entry, ctx.key, ctx.toolName,
                                              exeSuffix)) {
         mcpp::build::tool_store::touch(ctx.entry);
+        mcpp::build::tool_store::add_user(ctx.entry, ctx.key, tool_source_tree(state, ctx.depIdx));
         state.usedCacheRecords.insert((ctx.entry / "entry.json").string());
         step6_record_tool_provision(state, ctx, ctx.binOut);
         return true;
@@ -1834,6 +1840,7 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
     // function derived it the first time in the single-function version.
     ctx.goal = goal;
     ctx.subOutputDir = subCtx->plan.outputDir;
+    ctx.sharedObjects = tool_shared_objects(subCtx->plan, goal);
     return {};
 }
 
@@ -1865,15 +1872,18 @@ step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
         | std::filesystem::perms::group_exec
         | std::filesystem::perms::others_exec,
         std::filesystem::perm_options::add, cpEc);
-    // A path package's tree, so that its superseded entries are collected.
-    std::filesystem::path toolSource;
-    if (ctx.depIdx >= 1 && ctx.depIdx - 1 < state.dep_cache_identities.size()
-        && state.dep_cache_identities[ctx.depIdx - 1].sourceKind == "path") {
-        const auto& id = state.dep_cache_identities[ctx.depIdx - 1];
-        toolSource = id.sourceRef.empty() ? state.packages[ctx.depIdx].root
-                                          : std::filesystem::path(id.sourceRef);
+    std::vector<std::string> published;
+    for (auto const& so : ctx.sharedObjects) {
+        const auto into = ctx.binOut.parent_path() / so.filename();
+        if (auto staged = mcpp::build::stage::stage_file(ctx.subOutputDir / so, into); !staged)
+            return std::unexpected(std::format(
+                "publishing host tool '{}:{}' failed: its shared library '{}': {}",
+                ctx.depName, ctx.toolName, so.filename().string(), staged.error().message));
+        published.push_back(so.filename().string());
     }
-    mcpp::build::tool_store::write_entry(ctx.entry, ctx.key, toolSource);
+    mcpp::build::tool_store::record_shared_objects(ctx.entry, published);
+    // A path package's tree, so that its superseded entries are collected.
+    mcpp::build::tool_store::write_entry(ctx.entry, ctx.key, tool_source_tree(state, ctx.depIdx));
     state.usedCacheRecords.insert((ctx.entry / "entry.json").string());
     // The sub-build tree is large (protoc is several hundred
     // objects) and the key covers every input, so a hit never
@@ -2003,7 +2013,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             // reaches every build program at once — see fill_target_build_env.
             fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr, state.cfg_opt ? &*state.cfg_opt : nullptr);
             apply_graph_cxx_abi(bpEnv, state.packages);
-            bpEnv.toolsBin = state.projectSubosBin;
+            set_build_program_path(bpEnv, state);
             bpEnv.profile      = state.effectiveProfile;
             bpEnv.accel        = state.resolvedAccel();
             // The DECLARING package's setting, not the root project's: a rule

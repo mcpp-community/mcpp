@@ -163,7 +163,7 @@ int main() {
     };
 
     "668 a macho program is staged with its closure"_test[s::macos] = [] {
-        // A program with a shared path dependency: bin/libfw.dylib is staged beside it, the
+        // A program with a shared path dependency: bin/libdemo_fw.dylib is staged beside it, the
         // manifest names the dylib and libSystem as the platform's; the staged program runs with
         // the build tree deleted (exit 7) and stops with "Library not loaded" without the dylib;
         // the archive carries both.
@@ -176,10 +176,10 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "mcpp pack --pkg-format dir failed: " << s::text(r);
         const auto tree = staged(app, "app-0.1.0-");
         expect(fatal(fs::is_regular_file(tree / "bin/app"))) << "the staged tree has no bin/app";
-        expect(fatal(fs::is_regular_file(tree / "bin/libfw.dylib"))) << "the staged tree has no bin/libfw.dylib beside the program";
+        expect(fatal(fs::is_regular_file(tree / "bin/libdemo_fw.dylib"))) << "the staged tree has no bin/libdemo_fw.dylib beside the program";
         const auto m = s::read_file(fs::path(tree.string() + ".stage-manifest"));
         expect(fatal(first_line(m) == "closure = walked")) << "the manifest's first line is not 'closure = walked': " << m;
-        expect(fatal(lines_contain(m, "needs\t@rpath/libfw.dylib\tbin/libfw.dylib"))) << "the manifest does not state the dylib beside the program: " << m;
+        expect(fatal(lines_contain(m, "needs\t@rpath/libdemo_fw.dylib\tbin/libdemo_fw.dylib"))) << "the manifest does not state the dylib beside the program: " << m;
         expect(fatal(lines_contain(m, "needs\t/usr/lib/libSystem.B.dylib\tplatform"))) << "the manifest does not state libSystem as the platform's: " << m;
         const auto installed = tmp / "installed" / tree.filename();
         fs::create_directories(installed.parent_path());
@@ -188,7 +188,7 @@ int main() {
         auto ran = s::run(installed / "bin/app");
         expect(fatal(ran.status == 7)) << "the staged program exited " << ran.status << ", not 7: " << s::text(ran);
         expect(fatal(s::has_line(ran.out, "^1-2-3$"))) << "the staged program did not print 1-2-3: " << s::text(ran);
-        fs::remove(installed / "bin/libfw.dylib");
+        fs::remove(installed / "bin/libdemo_fw.dylib");
         ran = s::run(installed / "bin/app");
         expect(fatal(ran.status != 0 && ran.status != 7)) << "the program still ran without its staged dylib (exit " << ran.status << ")";
         expect(fatal(e2e::contains(s::text(ran), "Library not loaded"))) << "the failure is not a missing library: " << s::text(ran);
@@ -196,7 +196,7 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "mcpp pack (tar) failed: " << s::text(r);
         const auto members = s::tar_list(archive(app, "app-0.1.0-"));
         expect(fatal(lists(members, "/bin/app"))) << "the archive has no bin/app";
-        expect(fatal(lists(members, "/bin/libfw.dylib"))) << "the archive has no bin/libfw.dylib";
+        expect(fatal(lists(members, "/bin/libdemo_fw.dylib"))) << "the archive has no bin/libdemo_fw.dylib";
     };
 
     "721 an android row links on a macos host"_test[s::macos] = [] {

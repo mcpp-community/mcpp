@@ -471,10 +471,11 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << "A: pack failed\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "Packing hostapp v0.1.0 (vendored, stripped)"))) << "A: the Packing line\n" << s::text(r);
         auto xa = unpack("xa");
-        const auto fa = elf_facts(only(xa, "lib/libdep.so"));
+        // The library of `spike.dep` is named by its package (mcpp#975).
+        const auto fa = elf_facts(only(xa, "lib/libspike_dep.so"));
         const auto fp = elf_facts(only(xa, "bin/hostapp"));
-        expect(fatal(fa.symtab == 0 && fa.debug == 0)) << "A: lib/libdep.so is not stripped: symtab=" << fa.symtab << " debug=" << fa.debug;
-        expect(fatal(exports(fa, "dep_answer"))) << "A: lib/libdep.so lost its export";
+        expect(fatal(fa.symtab == 0 && fa.debug == 0)) << "A: lib/libspike_dep.so is not stripped: symtab=" << fa.symtab << " debug=" << fa.debug;
+        expect(fatal(exports(fa, "dep_answer"))) << "A: lib/libspike_dep.so lost its export";
         expect(fatal(fp.symtab == 0 && fp.debug == 0)) << "A: bin/hostapp is not stripped: symtab=" << fp.symtab << " debug=" << fp.debug;
         auto run = s::run(only(xa, "hostapp"));
         expect(fatal(e2e::succeeded(run))) << "A: the unpacked program does not run\n" << s::text(run);
@@ -482,13 +483,13 @@ main = "src/main.cpp"
         r = host.mcpp({"pack", "--pkg-format", "tar", "--no-strip"});
         expect(fatal(e2e::succeeded(r))) << "B: pack failed\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "Packing hostapp v0.1.0 (vendored)"))) << "B: the Packing line\n" << s::text(r);
-        const auto fb = elf_facts(only(unpack("xb"), "lib/libdep.so"));
-        expect(fatal(fb.symtab == 1)) << "B: --no-strip did not reach lib/libdep.so: symtab=" << fb.symtab;
+        const auto fb = elf_facts(only(unpack("xb"), "lib/libspike_dep.so"));
+        expect(fatal(fb.symtab == 1)) << "B: --no-strip did not reach lib/libspike_dep.so: symtab=" << fb.symtab;
 
         r = host.mcpp({"pack", "--pkg-format", "tar", "--debug-symbols", (tmp / "dbg").string()});
         expect(fatal(e2e::succeeded(r))) << "C: pack failed\n" << s::text(r);
-        expect(fatal(fs::exists(tmp / "dbg/libdep.so.debug") && fs::file_size(tmp / "dbg/libdep.so.debug") > 0)) << "C: no libdep.so.debug\n" << s::text(r);
-        expect(fatal(elf_facts(only(unpack("xc"), "lib/libdep.so")).debuglink)) << "C: lib/libdep.so names no debug file";
+        expect(fatal(fs::exists(tmp / "dbg/libspike_dep.so.debug") && fs::file_size(tmp / "dbg/libspike_dep.so.debug") > 0)) << "C: no libspike_dep.so.debug\n" << s::text(r);
+        expect(fatal(elf_facts(only(unpack("xc"), "lib/libspike_dep.so")).debuglink)) << "C: lib/libspike_dep.so names no debug file";
 
         host.write("build.mcpp", R"cpp(import mcpp;
 #include <cstdio>
@@ -544,12 +545,12 @@ int main() { return app_entry() == 43 ? 0 : 1; }
         expect(fatal(e2e::succeeded(r))) << "E: pack failed\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "Packing app v0.1.0 (vendored, stripped)"))) << "E: the Packing line\n" << s::text(r);
         s::tar_extract(app.at("target/dist/app-0.1.0-x86_64-linux-android.tar.gz"), app.at("xe"));
-        for (std::string_view f : {"libapp.so", "libdep.so", "libc++_shared.so"}) {
+        for (std::string_view f : {"libapp.so", "libspike_dep.so", "libc++_shared.so"}) {
             const auto fe = elf_facts(only(app.at("xe"), std::format("lib/{}", f)));
             expect(fatal(fe.symtab == 0 && fe.debug == 0)) << "E: lib/" << f << " is not stripped";
         }
         expect(fatal(exports(elf_facts(only(app.at("xe"), "lib/libapp.so")), "app_entry"))) << "E: libapp.so lost app_entry";
-        expect(exports(elf_facts(only(app.at("xe"), "lib/libdep.so")), "dep_answer")) << "E: libdep.so lost dep_answer";
+        expect(exports(elf_facts(only(app.at("xe"), "lib/libspike_dep.so")), "dep_answer")) << "E: libspike_dep.so lost dep_answer";
     };
     "723 pack reports what it produced"_test[s::pack][s::python3] = [] {
         // `mcpp pack --message-format json` reports what it produced in one envelope on stdout

@@ -111,6 +111,13 @@ inline constexpr std::string_view kStandardEnv = "MCPP_BUILDOPT";
 // The one impure function here: the statement is read in one place.
 bool standard_only();
 
+// What this invocation states of the entries that are decided when the graph
+// is written: a source built as other units, a graph of another shape, and the
+// standard build. Empty when it states none. A graph names it (`request_tag`),
+// so one written under a statement is not replayed without it. An edge entry
+// acts at run time and is read there.
+std::string stated_shape();
+
 // The table as `mcpp explain` and the README print it: one row an entry.
 std::string table();
 
@@ -121,6 +128,15 @@ namespace mcpp::buildopt::registry {
 bool standard_only() {
     const auto stated = mcpp::invocation::get(kStandardEnv);
     return stated && *stated == "off";
+}
+
+std::string stated_shape() {
+    std::string shape;
+    for (auto const& e : kEntries)
+        if (e.seam != Seam::Edge && !e.env.empty())
+            if (auto v = mcpp::invocation::get(e.env)) shape += std::format("{}={};", e.env, *v);
+    if (auto v = mcpp::invocation::get(kStandardEnv)) shape += std::format("{}={};", kStandardEnv, *v);
+    return shape;
 }
 
 std::string table() {

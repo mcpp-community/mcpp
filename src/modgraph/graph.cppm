@@ -114,6 +114,13 @@ struct SourceUnit {
     // Unit built from a manifest scan_overrides declaration instead of a
     // real scan — plan-vs-ddi verification is mandatory for these.
     bool                            scanOverridden     = false;
+    // An `import` or a module declaration of the unit stands inside a
+    // preprocessor condition (mcpp#1026): which of them the unit has depends
+    // on what the condition evaluates to under its compile, which only the
+    // compiler knows. The text scanner records the rest and marks the unit;
+    // its declarations and imports are then the compiler's scan's
+    // (`scan_packages`' `answer`).
+    bool                            importsFromCompiler = false;
     // The source file this unit is built from, when the unit is not that file:
     // a unit the source seam gave for it (a private module fragment as a unit
     // of its own, SPEC-019). Empty: `path` is the source as written. What

@@ -16,6 +16,9 @@
 export module mcpp.build.runtime_validation;
 
 import std;
+import mcpp.build.refusal;
+import mcpp.libs.path_identity;
+import mcpp.pm.compat.registry;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.build.loader_contract;
@@ -51,6 +54,10 @@ struct ValidatedArtifact {
     // The required `dlopen` sonames the program cannot reach from the object
     // that loads them, one sentence each (dlopen_unreachable).
     std::vector<std::string> dlopenUnreachable;
+    // The `DT_NEEDED` sonames only the union view of the default environment
+    // answers, for a project that states no environment
+    // (COMPAT(implicit-default-environment), design 2026-11-27 §4.1).
+    std::vector<std::string> unionOnly;
 };
 
 // THE REQUIRED `dlopen` SONAMES A PROGRAM CANNOT REACH (design 2026-11-21,
@@ -84,9 +91,18 @@ struct StoredRuntimeSummary {
 
 ArtifactSnapshot snapshot_link_artifacts(const mcpp::build::BuildPlan& plan);
 
+// What each link read, by artifact: the linker's own report (`--dependency-file`,
+// SPEC-004 §8.1), as ninja keeps it. Empty for an artifact whose link reports
+// nothing.
+using LinkInputs = std::map<std::filesystem::path, std::vector<std::filesystem::path>>;
+
+// The closure rules, and (design 2026-11-27 §4.1, mcpp#537) the invariant they
+// are forms of: every `DT_NEEDED` of an image resolves at load time to the file
+// its link read for it. `linkInputs` gives the link's side.
 ValidationReport validate_changed_artifacts(
     const mcpp::build::BuildPlan& plan,
-    const ArtifactSnapshot& before);
+    const ArtifactSnapshot& before,
+    const LinkInputs& linkInputs = {});
 
 std::optional<StoredRuntimeSummary>
 latest_stored_verdict(const std::filesystem::path& targetRoot);
@@ -531,9 +547,106 @@ std::optional<ValidatedArtifact> cached_artifact(
             "diagnostics", std::vector<std::string>{});
         out.dlopenUnreachable = it->value(
             "dlopen_unreachable", std::vector<std::string>{});
+        out.unionOnly = it->value("union_only", std::vector<std::string>{});
         return out;
     } catch (...) {
         return std::nullopt;
+    }
+}
+
+// LINKED FROM ONE FILE, LOADED FROM ANOTHER (mcpp#537). The link read a
+// shared object for a `DT_NEEDED` of the image, and the loader, searching the
+// image's run path, finds another file of that name: a host directory on the
+// link line (`-L/usr/lib/x86_64-linux-gnu`) and the environment's union view at
+// load time answered `libgbm.so.1` with two builds of it, and the program
+// crashed in the library it had not been linked against. The two are compared
+// as objects (one file through any spelling) and then by content; a difference
+// after both is the defect. The run-time payload's own libraries are rule B's,
+// and are not compared here.
+std::vector<std::string> linked_and_loaded_apart(const mcpp::build::BuildPlan& plan,
+                                                 const mcpp::runtime::elf::RuntimeResolution& resolution,
+                                                 const std::vector<std::filesystem::path>& linked) {
+    std::vector<std::string> out;
+    auto under_binding = [&](const std::filesystem::path& p) {
+        return std::ranges::any_of(plan.runtimeBinding.libraryDirs, [&](auto const& d) {
+            auto rel = p.lexically_normal().lexically_relative(d.lexically_normal()).generic_string();
+            return !rel.empty() && !rel.starts_with("..");
+        });
+    };
+    auto digest = [](const std::filesystem::path& p) -> std::optional<std::string> {
+        std::ifstream in(p, std::ios::binary);
+        if (!in) return std::nullopt;
+        std::uint64_t h = 1469598103934665603ull;
+        for (std::istreambuf_iterator<char> it(in), end; it != end; ++it) {
+            h ^= static_cast<unsigned char>(*it);
+            h *= 1099511628211ull;
+        }
+        return std::format("{:016x}", h);
+    };
+    const auto& needed = resolution.artifact.needed;
+    for (auto const& file : linked) {
+        // A link input that is a shared object, by the SONAME it carries.
+        auto facts = mcpp::runtime::elf::inspect_elf_runtime(file);
+        if (!facts || facts->soname.empty()) continue;
+        if (std::ranges::find(needed, facts->soname) == needed.end()) continue;
+        auto loaded = std::ranges::find_if(resolution.objects, [&](auto const& o) {
+            return o.soname == facts->soname || o.artifact.filename() == facts->soname;
+        });
+        if (loaded == resolution.objects.end() || under_binding(loaded->artifact) || under_binding(file)) continue;
+        if (mcpp::libs::path_identity::same(file, loaded->artifact).value_or(false)) continue;
+        const auto a = digest(file), b = digest(loaded->artifact);
+        if (a && b && *a == *b) continue;
+        mcpp::build::refusal::record(mcpp::build::refusal::Code::RuntimeClosure);
+        out.push_back(std::format(
+            "{} is linked from one file and loaded from another\n"
+            "         linked  {}\n"
+            "         loaded  {}\n"
+            "       help: state the package that provides it rather than a directory that holds a copy, "
+            "or remove the directory from the link",
+            facts->soname, file.string(), loaded->artifact.string()));
+    }
+    return out;
+}
+
+// THE LIBRARIES ONLY THE DEFAULT ENVIRONMENT ANSWERS (design 2026-11-27 §4.1).
+// The union view of an environment holds whatever was ever installed in it,
+// and for a project that states no environment that is the machine's default
+// one, shared by every project on the machine: a library found there is found
+// on this machine and not on a clean one (#535, #537). The artifact is
+// resolved again without the view; what it then lacks, it had only from there.
+//
+// COMPAT(implicit-default-environment): reported until the row's floor, from
+// which the view is not searched for such a project.
+std::vector<std::string> union_only(const mcpp::build::BuildPlan& plan, const std::filesystem::path& artifact,
+                                    const mcpp::runtime::elf::RuntimeResolution& resolution,
+                                    const std::vector<std::filesystem::path>& searchDirs) {
+    if (plan.statedEnvironment) return {};
+    std::vector<std::filesystem::path> farm;
+    for (auto const& dir : plan.runtimeSearch)
+        if (dir.origin == mcpp::runtime::search::Origin::SubosFarm) farm.push_back(dir.path);
+    if (farm.empty()) return {};
+    std::vector<std::filesystem::path> without;
+    for (auto const& d : searchDirs)
+        if (std::ranges::find(farm, d) == farm.end()) without.push_back(d);
+    auto bare = mcpp::runtime::elf::resolve_runtime_closure(artifact, plan.runtimeBinding, without);
+    std::vector<std::string> out;
+    for (auto const& soname : bare.unresolvedSonames)
+        if (std::ranges::find(resolution.unresolvedSonames, soname) == resolution.unresolvedSonames.end())
+            out.push_back(soname);
+    return out;
+}
+
+void report_union_only(const ValidatedArtifact& v) {
+    auto const* d = mcpp::pm::compat::find_deprecation("implicit-default-environment");
+    if (!d) return;
+    for (auto const& soname : v.unionOnly) {
+        const auto detail = std::format("{} needs {}", v.artifact.filename().string(), soname);
+        mcpp::pm::compat::record_use("implicit-default-environment", "the project", detail, true);
+        mcpp::diag::warning(d->domain, std::format(
+            "{}, which only the default environment's union of installed packages provides; this "
+            "machine has it and a clean one may not. Reading it from there for a project that states "
+            "no environment is {}. Write {} instead.",
+            detail, mcpp::pm::compat::deprecation_clause(*d), d->canonical));
     }
 }
 
@@ -558,6 +671,7 @@ void store_artifact(nlohmann::json& doc,
         {"status", status_name(value.verdict.status)},
         {"diagnostics", value.verdict.diagnostics},
         {"dlopen_unreachable", value.dlopenUnreachable},
+        {"union_only", value.unionOnly},
     };
 }
 
@@ -701,7 +815,8 @@ std::vector<std::string> dlopen_unreachable(const mcpp::build::BuildPlan& plan,
 
 ValidationReport validate_changed_artifacts(
     const mcpp::build::BuildPlan& plan,
-    const ArtifactSnapshot& before) {
+    const ArtifactSnapshot& before,
+    const LinkInputs& linkInputs) {
     ValidationReport report;
     if constexpr (!mcpplibs::os::is_linux) { record_without_rules(plan, before); return report; }
     // Provider dispatch (see mcpp.runtime.binding): what follows is
@@ -819,6 +934,7 @@ ValidationReport validate_changed_artifacts(
         auto fp = fingerprint(artifact, now, plan.runtimeBinding.contractHash);
         if (auto cached = cached_artifact(doc, key, fp, artifact)) {
             report_dlopen_unreachable(*cached);
+            report_union_only(*cached);
             // Same stat before/after and a current stored verdict is the hot
             // no-op: do not parse. Only PASS may also stay silent; a stored
             // mismatch must keep failing and an inconclusive result must keep
@@ -840,8 +956,19 @@ ValidationReport validate_changed_artifacts(
         // run-time resolution, so mcpp reports rather than blocks.
         validated.verdict = mcpp::runtime::elf::validate_runtime_artifact(
             artifact, plan.runtimeBinding, resolution, host_libs_allowed(plan));
+        // A build that states it reaches outside the sandbox on purpose
+        // (`MCPP_ALLOW_HOST_LIBS`) is told, not stopped, as for rule B.
+        if (auto it = linkInputs.find(artifact); it != linkInputs.end())
+            for (auto& apart : linked_and_loaded_apart(plan, resolution, it->second)) {
+                using Status = mcpp::runtime::elf::RuntimeVerdict::Status;
+                if (!host_libs_allowed(plan)) validated.verdict.status = Status::ProvenMismatch;
+                else if (validated.verdict.status == Status::Pass) validated.verdict.status = Status::Inconclusive;
+                validated.verdict.diagnostics.push_back(std::move(apart));
+            }
         validated.dlopenUnreachable = dlopen_unreachable(plan, resolution);
+        validated.unionOnly = union_only(plan, artifact, resolution, searchDirs);
         report_dlopen_unreachable(validated);
+        report_union_only(validated);
         store_artifact(doc, key, fp, validated);
         changedCache = true;
         report.artifacts.push_back(std::move(validated));

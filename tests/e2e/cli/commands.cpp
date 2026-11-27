@@ -69,8 +69,9 @@ E2E commands{"commands", s::home_fixture, [] {
     };
 
     "05 errors"_test = [] {
-        // No manifest, a missing version, a conditional import and a header unit are refused,
-        // each naming its cause; a module named outside the package's prefix builds.
+        // No manifest, a missing version and a header unit are refused, each naming its cause; a
+        // conditional import follows its condition (mcpp#1026); a module named outside the
+        // package's prefix builds.
         // A directory with no manifest above it either: the case's own directory lies inside the
         // repository, whose mcpp.toml mcpp would find.
         const auto empty = s::case_home() / "empty";
@@ -92,11 +93,10 @@ main = "src/main.cpp"
         expect(fatal(failed(r))) << "expected failure";
         expect(fatal(e2e::contains(s::text(r), "package.version"))) << "wrong error: " << s::text(r);
 
-        auto cond = s::project::scaffold("bad-cond");
+        auto cond = s::project::scaffold("cond-import");
         cond.write("src/main.cpp", "import std;\n#ifdef WANT_FOO\nimport foo;\n#endif\nint main() {}\n");
         r = cond.mcpp({"build"});
-        expect(fatal(failed(r))) << "expected failure";
-        expect(fatal(e2e::contains(s::text(r), "conditional preprocessor"))) << "wrong error: " << s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "an import whose condition does not hold failed the build: " << s::text(r);
 
         auto header = s::project::scaffold("bad-header");
         header.write("src/main.cpp", "import std;\nimport \"header.h\";\nint main() {}\n");

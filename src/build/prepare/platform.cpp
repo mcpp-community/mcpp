@@ -220,6 +220,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.interfacesStated = d.interfacesStated;
         r.exceptions = set.keep(d.exceptions);
         r.exeSuffixFixed = d.exeSuffixFixed;
+        r.dlopenStaticTls = d.dlopenStaticTls;
         r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);
         r.defined = true;
         set.rows.push_back(r);

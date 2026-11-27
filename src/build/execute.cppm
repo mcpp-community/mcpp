@@ -36,7 +36,6 @@ import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
 import mcpp.buildopt.keep;
-import mcpp.buildopt.registry;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
@@ -426,20 +425,10 @@ std::string toolchain_request_identity() {
     if (auto s = mcpp::invocation::get("MCPP_PLATFORM")) overrides += std::format("MCPP_PLATFORM={};", *s);
     if (auto s = mcpp::invocation::get("MCPP_HOST_PLATFORM"))
         overrides += std::format("MCPP_HOST_PLATFORM={};", *s);
-    // THE REGISTER'S SWITCHES THAT SHAPE THE GRAPH (SPEC-019). A source built as
-    // other units (`MCPP_PRIVATE_FRAGMENT`), a graph of another shape
-    // (`MCPP_BMI_SCHEDULE`) and the standard build (`MCPP_BUILDOPT=off`) are
-    // decided when the graph is written; replayed, the graph is the one the
-    // other statement wrote, and the first build after a switch is not the one
-    // asked for. An edge entry acts at run time and is read there. Written only
-    // when stated: a request without one is the identity it was before.
-    std::string shape;
-    for (auto const& e : mcpp::buildopt::registry::kEntries)
-        if (e.seam != mcpp::buildopt::registry::Seam::Edge && !e.env.empty())
-            if (auto v = mcpp::invocation::get(e.env)) shape += std::format("{}={};", e.env, *v);
-    if (auto v = mcpp::invocation::get(mcpp::buildopt::registry::kStandardEnv))
-        shape += std::format("{}={};", mcpp::buildopt::registry::kStandardEnv, *v);
-    if (!shape.empty()) targets += std::format("shape={}", shape);
+    // (The register's switches that shape the graph are not here: this record
+    // is written by a build that succeeded, and a switch stated for a build
+    // that failed left its graph under the record of the one before. The graph
+    // names them itself -- `request_tag`.)
     if (overrides.empty() && targets.empty())
         return std::format("cli={};default={}", cli, machineDefault);
     return std::format("cli={};default={};base={}{}", cli, machineDefault, overrides, targets);
@@ -653,6 +642,14 @@ export struct BuildCacheEntry {
     // program includes was edited and the build replayed the old directives.
     std::vector<std::string> programRecords;
     bool                     programRecordsRecorded = false;
+    // THE DIRECTORIES IN FRONT OF THE PATH OF THE PROGRAM `mcpp run` STARTS
+    // (design 2026-11-27 §4.2): the tools the graph states and the declared
+    // environment's `bin`, which the full path composes from the plan and the
+    // fast path has no plan to compose from. Recorded apart from the list
+    // because an empty list is an answer (nothing stated) and an absent one is
+    // an entry that predates the field, which declines once.
+    std::vector<std::string> runPathDirs;
+    bool                     runPathRecorded = false;
 };
 
 // One list of extensions as a line of the record carries it: joined by a unit
@@ -889,6 +886,14 @@ export std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path
             e.programRecordsRecorded = e.programRecords.size() == n;
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        if (haveNextLine && line.starts_with("runPath=")) {
+            std::size_t n = 0;
+            try { n = std::stoul(line.substr(8)); } catch (...) { n = 0; }
+            for (std::size_t i = 0; i < n && std::getline(f, line); ++i)
+                e.runPathDirs.push_back(line);
+            e.runPathRecorded = e.runPathDirs.size() == n;
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -940,7 +945,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        std::vector<std::string> xlingsPayloads = {},
                        const std::string& selection = {},
                        const std::string& group = {},
-                       const std::string& rootCompileDb = {}) {
+                       const std::string& rootCompileDb = {},
+                       std::vector<std::string> runPathDirs = {}) {
     // The configuration groups of one workspace command build at the same
     // time (workspace design 2026-09-29 §6) and record into one file; the
     // read, the edit and the write are one step -- within this process under
@@ -984,6 +990,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.group = group;
     newEntry.rootCompileDb = rootCompileDb;
     newEntry.rootCompileDbRecorded = true;
+    newEntry.runPathDirs = std::move(runPathDirs);
+    newEntry.runPathRecorded = true;
     // The engine that wrote the graph is the one writing the record: both
     // happen in this process, after the graph was emitted.
     newEntry.engine = running_engine();
@@ -1077,6 +1085,13 @@ void write_build_cache_entries(const std::filesystem::path& path,
             f << "programRecords=" << e.programRecords.size() << '\n';
             for (auto& r : e.programRecords) f << r << '\n';
         }
+        // A directory that holds a line break cannot be a line of the record:
+        // the list is then left unrecorded, and the fast path declines.
+        if (e.runPathRecorded && std::ranges::none_of(e.runPathDirs, [](auto const& d) {
+                return d.find_first_of("\r\n") != std::string::npos; })) {
+            f << "runPath=" << e.runPathDirs.size() << '\n';
+            for (auto& d : e.runPathDirs) f << d << '\n';
+        }
     }
 }
 
@@ -1144,6 +1159,38 @@ compute_run_targets(const mcpp::build::BuildPlan& plan) {
         out.emplace_back(lu.targetName, lu.output.generic_string());
     }
     return out;
+}
+
+// THE PATH OF A TEST AND OF A RUN (design 2026-11-27 §4.2, mcpp#926): the
+// directories of the tools the graph states, then the `bin` of the environment
+// the project states, then the PATH mcpp was started with -- the composition a
+// build program's PATH has (launch_env::child_path). A tool a test runs that
+// the graph states (`[xlings.workspace] "xim:esbuild" = { when = "run" }`) is
+// found on every host; before, a test found it only on Linux and only when it
+// sat in the toolchain's environment.
+//
+// COMPAT(implicit-default-environment): a TEST of a project that states no
+// environment keeps, outside Windows, the `bin` of the environment its
+// toolchain is installed in, as before 2026.11.27.1, until the row's floor. A
+// run never had it, and does not gain it. On Windows that directory holds the
+// toolchain's `cl`/`link` stand-ins, which are no tool of the project (#726),
+// and it was never given.
+enum class Child { Test, Run };
+
+std::vector<std::filesystem::path> child_path_dirs(const mcpp::build::BuildContext& ctx, Child child) {
+    auto dirs = ctx.xlingsDepBinDirs;
+    auto environmentBin = ctx.statedEnvironmentBin;
+    if constexpr (!mcpplibs::os::is_windows)
+        if (environmentBin.empty() && child == Child::Test)
+            if (auto environment = mcpp::provider::environment_of(ctx.tc.binaryPath))
+                if (std::error_code ec; std::filesystem::exists(*environment / "bin", ec))
+                    environmentBin = *environment / "bin";
+    if (!environmentBin.empty()) dirs.push_back(environmentBin);
+    return dirs;
+}
+
+std::string child_path_of(const mcpp::build::BuildContext& ctx, Child child) {
+    return mcpp::runtime::launch_env::child_path(child_path_dirs(ctx, child), {});
 }
 
 // mcpp#225 (E2): the process env needed to exec a run-target (e.g.
@@ -2370,7 +2417,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                               return v;
                           }(),
                           ctx.workspaceRequest, ctx.workspaceGroup,
-                          ctx.plan.rootCompileDb);
+                          ctx.plan.rootCompileDb,
+                          // The front of the PATH `mcpp run` gives its program.
+                          [&] {
+                              std::vector<std::string> v;
+                              for (auto const& d : child_path_dirs(ctx, Child::Run))
+                                  v.push_back(d.generic_string());
+                              return v;
+                          }());
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -3475,6 +3529,25 @@ void yield_terminal() {
     mcpp::diag::print_closing();
 }
 
+// A SCRIPT WHOSE `#!` INTERPRETER IS NOT THERE (#621), said before the
+// artefact is executed directly: the refusal is the interpreter's own and
+// comes after mcpp has handed the process over, so nothing of mcpp follows it.
+// The PATH searched is the one the artefact receives -- the last value
+// `childEnv` gives it, else this invocation's -- since that is the one `env`
+// searches.
+void note_missing_interpreter(const mcpp::build::BuildContext& ctx, const std::filesystem::path& exe,
+                              const std::vector<std::pair<std::string, std::string>>& childEnv) {
+    std::string path = mcpp::invocation::get("PATH").value_or("");
+    for (auto const& [key, value] : childEnv)
+        if (key == "PATH") path = value;
+    // The managed spec the build used, which the remedy's commands name.
+    std::string toolchain;
+    for (auto const& s : ctx.sources)
+        if (s.subject == "toolchain.build" && s.cls == mcpp::build::SourceClass::Managed) toolchain = s.value;
+    if (auto note = mcpp::build::runner_lookup::missing_interpreter_note(exe, path, toolchain); !note.empty())
+        mcpp::diag::note("run/missing-interpreter", note);
+}
+
 // mcpp#225 (E2): `mcpp run`'s fast path. Mirrors try_fast_build's
 // fingerprint/freshness gate against the SAME cache entry `mcpp build`
 // wrote (targetTriple == "" — a HOST build; see the precondition below), then
@@ -3618,6 +3691,10 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // installed less than a run needs, so taking it would execute with a
     // declared tool absent. prepare_build provisions the difference.
     if (match->runTierPending) return fast_path_declined("run", "the run tier is not yet decided");
+    // The PATH is composed from what the build recorded (mcpp#926); an entry
+    // that cannot say it would start the program with another PATH than the
+    // full path gives.
+    if (!match->runPathRecorded) return fast_path_declined("run", "the recorded build predates the program's PATH");
 
     // Locate the requested run-target before doing any filesystem freshness
     // work — an unrecognized name falls back to prepare_build, which gives
@@ -3690,6 +3767,12 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                  return mcpp::invocation::get(v);
              }))
         childEnv.push_back(std::move(kv));
+    // ...and the PATH the full path composes, from the directories it recorded.
+    {
+        std::vector<std::filesystem::path> dirs(match->runPathDirs.begin(), match->runPathDirs.end());
+        if (auto value = mcpp::runtime::launch_env::child_path(dirs, {}); !value.empty())
+            childEnv.emplace_back("PATH", value);
+    }
 
     // `--print-launch`: the recorded launch, when it is the one this path executes.
     if (print_launch_flag()) {
@@ -3970,7 +4053,6 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         }
         runClosure = *closure;
     }
-    run_separator();
 
     std::vector<std::pair<std::string, std::string>> childEnv;
     auto [runEnvKey, runEnvValue] = compute_run_env(ctx.plan);
@@ -3983,6 +4065,11 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (runClosure)
         for (auto& kv : run_contract_env(ctx, exe, "run", choice.tripleKey, *runClosure))
             childEnv.push_back(std::move(kv));
+    // The child's PATH, as a build program's and a test's (mcpp#926).
+    if (auto pathVal = child_path_of(ctx, Child::Run); !pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
+    if (choice.tmpl.empty() && host.prefix.empty() && !print_launch_flag())
+        note_missing_interpreter(ctx, exe, childEnv);
+    run_separator();
 
     // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
@@ -5244,6 +5331,9 @@ struct TestBuild {
     // and each such result is NotRun, not RunFail. The reason is printed once.
     std::atomic<bool>                        hostCannotRun{false};
     std::string                              hostCannotRunReason;
+    // The first test executed directly was read for a missing `#!`
+    // interpreter (#621); the note, if any, is printed once per build.
+    bool                                     interpreterNoted = false;
 };
 
 // Phase A goal set: every shared prerequisite — all package/dep compile
@@ -6357,18 +6447,17 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 invocationNotRunReason = handoff.error();
         }
 
-        // Prepend the toolchain's environment's bin to the CHILD PATH so test
-        // binaries that shell out to bootstrapped tools (patchelf, ninja) find
-        // them — applied to the child only, not via a leaky shell prefix.
-        if constexpr (!mcpplibs::os::is_windows) {
-            if (auto environment = mcpp::provider::environment_of(ctx->tc.binaryPath)) {
-                auto sandboxBin  = *environment / "bin";
-                if (std::filesystem::exists(sandboxBin)) {
-                    std::array<std::filesystem::path, 1> extra{sandboxBin};
-                    auto pathVal = mcpp::runtime::launch_env::prepend_path_list("PATH", extra);
-                    if (!pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
-                }
-            }
+        // The child's PATH, as a build program's and a run's (mcpp#926).
+        if (auto pathVal = child_path_of(*ctx, Child::Test); !pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
+
+        // Said once for the build, before any test runs: every test of one
+        // build is executed the same way, so one script's missing interpreter
+        // is every script's.
+        if (runnerTmpl.empty() && tb.runUnderPrefix.empty() && !tb.interpreterNoted && !json
+            && !print_launch_flag() && !testOpts.noRun && !tb.builtNotRunHere
+            && invocationNotRunReason.empty()) {
+            tb.interpreterNoted = true;
+            note_missing_interpreter(*ctx, exe, childEnv);
         }
 
         runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),
@@ -7311,9 +7400,7 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
     json runtimeDirs = json::array();
     for (auto const& d : ctx.plan.runtimeLibraryDirs) runtimeDirs.push_back(d.generic_string());
     json pathDirs = json::array();
-    if constexpr (!mcpplibs::os::is_windows)
-        if (auto environment = mcpp::provider::environment_of(ctx.tc.binaryPath))
-            if (std::error_code ec; fs::exists(*environment / "bin", ec)) pathDirs.push_back((*environment / "bin").generic_string());
+    for (auto const& d : child_path_dirs(ctx, Child::Test)) pathDirs.push_back(d.generic_string());
     const json record{{"schema", "mcpp.test-plan/1"}, {"graph", ctx.plan.graphFile},
                       {"graph_stamp", test_graph_stamp(graph)}, {"tests", tests}, {"frameworks", frameworks},
                       {"runtime_dirs", runtimeDirs}, {"path_dirs", pathDirs},
@@ -7463,9 +7550,8 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     {
         std::vector<fs::path> dirs;
         for (auto const& d : record["path_dirs"]) dirs.emplace_back(d.get<std::string>());
-        if (!dirs.empty())
-            if (auto value = mcpp::runtime::launch_env::prepend_path_list("PATH", dirs); !value.empty())
-                env.emplace_back("PATH", value);
+        if (auto value = mcpp::runtime::launch_env::child_path(dirs, {}); !value.empty())
+            env.emplace_back("PATH", value);
     }
     for (auto& r : runs) r.env = env;
 

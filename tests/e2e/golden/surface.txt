@@ -1,7 +1,4 @@
 command add
-command bmi-await
-command bmi-compile
-command bmi-supervise
 command build
 command cache
 command cache clean
@@ -40,6 +37,7 @@ command resolve
 command run
 command search
 command self
+command self completion
 command self config
 command self doctor
 command self env
@@ -71,25 +69,8 @@ flag --protocol-version
 flag --quiet
 flag --system
 flag --verbose
+flag add --build
 flag add --dev
-flag bmi-await --object
-flag bmi-await --slot
-flag bmi-compile --bmi
-flag bmi-compile --cap
-flag bmi-compile --command-file
-flag bmi-compile --dep-from
-flag bmi-compile --dep-to
-flag bmi-compile --object
-flag bmi-compile --relocate
-flag bmi-compile --self
-flag bmi-compile --sem
-flag bmi-compile --slot
-flag bmi-supervise --cap
-flag bmi-supervise --command-file
-flag bmi-supervise --object
-flag bmi-supervise --relocation
-flag bmi-supervise --sem
-flag bmi-supervise --slot
 flag build --accel
 flag build --cache
 flag build --cap
@@ -230,6 +211,8 @@ flag publish --exclude
 flag publish --package
 flag publish --tag
 flag publish --workspace
+flag remove --build
+flag remove --dev
 flag resolve --explain
 flag run --accel
 flag run --cache
@@ -257,6 +240,7 @@ flag run --target-triple
 flag run --toolchain
 flag search --all-versions
 flag search --format
+flag self completion --print
 flag self config --cache-unused-days
 flag self config --keep-days
 flag self config --mirror
@@ -439,8 +423,11 @@ reason platform-target-unserved
 reason platform-tool-absent
 reason platform-version-group
 reason program-cxx-runtime-split
+reason runtime-closure
 reason shared-library-cxx-runtime
+reason soname-collision
 reason static-package-in-two-images
+reason static-tls-image
 reason std-module-precompile
 reason target-base
 reason tier-planned

@@ -577,6 +577,10 @@ export struct BuildContext {
     // declared but not installed contributes nothing, and the lookup then
     // continues to PATH.
     std::vector<std::filesystem::path> xlingsDepBinDirs;
+    // The `bin` of the environment the project states (`[xlings] subos`);
+    // empty when it states none. The second segment of a child's PATH
+    // (launch_env::child_path, design 2026-11-27 §4.2).
+    std::filesystem::path statedEnvironmentBin;
     // THE EXECUTION HOST'S WRAPPER (`run_under`, design 2026-10-23 §3.7):
     // decided once by prepare from the override, the project and this
     // machine's defaults, and composed in front of the runner by every verb

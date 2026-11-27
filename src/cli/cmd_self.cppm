@@ -22,6 +22,7 @@ import mcpp.wire;
 import nlohmann.json;
 import mcpp.toolchain.platform;
 import mcpp.invocation;
+import mcpp.ui;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -156,6 +157,59 @@ export int cmd_explain(std::string_view code) {
 
 export int cmd_self_version(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
     std::println("mcpp {}", mcpp::toolchain::MCPP_VERSION);
+    return 0;
+}
+
+// `mcpp self completion [shell]` (design 2026-11-27 §4.11): the adapter a shell
+// reads to complete mcpp, written to `<home>/config/shell/`, and the line that
+// loads it. The adapter asks `mcpp __complete`, so it is written once: a
+// release that adds a command completes it with the same file. The shell's own
+// configuration is the user's, and is not edited.
+export int cmd_self_completion(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    namespace cmp = mcpplibs::cmdline::completions;
+    std::string name = parsed.positional(0);
+    if (name.empty())
+        if (auto sh = mcpp::invocation::get("SHELL"); sh && !sh->empty())
+            name = std::filesystem::path(*sh).filename().string();
+    // Without `SHELL`, PowerShell is known by its module path: every session it
+    // starts states one, and Windows states one in every process.
+    if (name.empty())
+        if (auto ps = mcpp::invocation::get("PSModulePath"); ps && !ps->empty()) name = "powershell";
+    if (name == "pwsh") name = "powershell";
+    auto shell = mcpplibs::cmdline::shell_from_string(name);
+    if (!shell) {
+        mcpp::ui::error(std::format(
+            "no completion for the shell '{}'\n  help: name one: mcpp self completion bash|zsh|fish|powershell",
+            name.empty() ? std::string("(none)") : name));
+        return 2;
+    }
+    const auto script = cmp::adapter(*shell, "mcpp", "__complete");
+    if (parsed.is_flag_set("print")) {
+        std::print("{}", script);
+        return 0;
+    }
+    const auto ext = *shell == mcpplibs::cmdline::Shell::powershell ? std::string("ps1") : name;
+    const auto file = mcpp::home::root() / "config" / "shell" / std::format("mcpp.{}", ext);
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    {
+        std::ofstream os(file, std::ios::binary | std::ios::trunc);
+        os << script;
+        if (!os) {
+            mcpp::ui::error(std::format("cannot write '{}'", mcpp::home::spelling(file)));
+            return 1;
+        }
+    }
+    // One spelling for every shell, forward slashes and UTF-8: the POSIX shells
+    // of a Windows machine (Git Bash, MSYS2) read `C:/...` and not `C:\...`, and
+    // PowerShell reads both.
+    const auto at = mcpp::home::spelling(file);
+    mcpp::ui::status("Wrote", at);
+    const auto load = *shell == mcpplibs::cmdline::Shell::bash ? std::format("source '{}'   # in ~/.bashrc", at)
+                    : *shell == mcpplibs::cmdline::Shell::zsh  ? std::format("source '{}'   # in ~/.zshrc, after compinit", at)
+                    : *shell == mcpplibs::cmdline::Shell::fish ? std::format("source '{}'   # in ~/.config/fish/config.fish", at)
+                                                               : std::format(". '{}'   # in $PROFILE", at);
+    std::println("{}", load);
     return 0;
 }
 

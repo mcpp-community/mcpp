@@ -723,6 +723,10 @@ struct PrepareState {
     // feature declares serve this build in either instance.
     std::vector<std::vector<std::string>> buildProgramFeaturesByPackage;
     std::map<std::string, std::string> xlingsWinner;
+    // The `[xlings.workspace]` addresses the early pass provisioned, the
+    // root's then the graph's: the payloads a build program's PATH states
+    // (set_build_program_path).
+    std::vector<std::string> statedXlingsSpecs;
 
     // ── Sources (mcpp#755): see sources.cpp ─────────────────────────────────
     // The decision record, one entry per subject, and the subjects whose
@@ -1103,6 +1107,9 @@ struct PrepareState {
     std::filesystem::path stdCompatObjectPath;
     std::optional<mcpp::toolchain::StdModuleDescription> describedStdModule;
     std::string stdFlagAndDialect;
+    // The same words, one argument each and unquoted: what a program mcpp starts
+    // with an argument vector is given (the planning scan of a unit, mcpp#1026).
+    std::vector<std::string> stdWords;
     // The entry of package `i`; with `requesters`, only the requests made by
     // the packages it marks (a build program's closure).
     std::function<nlohmann::json(std::size_t, bool, const std::vector<bool>*)> graph_package_entry;
@@ -1359,6 +1366,24 @@ bool names_a_file_path(std::string_view v);
 // The override for a package key, resolved and cached; nullptr when none.
 std::expected<const PrepareState::PayloadOverride*, std::string>
 payload_override(PrepareState& state, std::string_view key);
+
+// THE DIRECTORIES OF THE TOOLS THE GRAPH STATES (design 2026-11-27 §4.2): the
+// programs its packages' `tools` built for this machine, then each overridden
+// payload's, then each provisioned `[xlings.workspace]` payload's `bin/` and
+// root, root package first. The first segment of a child's PATH
+// (launch_env::child_path) and the runner lookup's directories; one list.
+std::vector<std::filesystem::path> stated_tool_dirs(PrepareState& state,
+                                                    const std::vector<std::string>& xlingsSpecs);
+// The tree a `path` tool package is read from, a user of its store entry
+// (mcpp#1025); empty for any other package.
+std::filesystem::path tool_source_tree(const PrepareState& state, std::size_t depIdx);
+// The shared objects of the graph a tool sub-build's `goal` loads, relative to
+// its output directory: published beside the tool (mcpp#535).
+std::vector<std::filesystem::path> tool_shared_objects(const mcpp::build::BuildPlan& plan,
+                                                       const std::filesystem::path& goal);
+// A build program's PATH: the stated tool directories, then the project's
+// stated environment's `bin` (launch_env::child_path).
+void set_build_program_path(mcpp::build::BuildProgramEnv& env, PrepareState& state);
 // The winners of one unification that this build installs from the registry
 // now: overridden and deferred (`on-request`, not asked for) packages are left
 // out, recorded, and announced. `onRequest[i]` says whether claim `i` was

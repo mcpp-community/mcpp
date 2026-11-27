@@ -425,6 +425,28 @@ The file lists one symbol pattern per line, `#` starts a comment, and `*` is the
 only wildcard. The inline array says the same thing and is for the two or three
 entry points where a separate file would be ceremony.
 
+**An entry without a wildcard is an exact name (2026.11.27.1+).** It states that a
+host enters the image by that name (`JNI_OnLoad`, `PyInit_<name>`, a plugin
+host's entry point), so the image must define it; a pattern only narrows the
+set and may match nothing. The name is the linker's: a C++ function is written
+in its mangled form or defined `extern "C"`. On ELF the shared image's dynamic
+symbol table is read after the link, and an exact name it does not define is
+reported as the deprecation `unmatched-exact-export`
+([docs/51](51-supported-versions.md)), a build error from its removal month;
+ld64 already refuses such a name on Mach-O. A name only some targets define is
+written under the `[target.<selector>]` that defines it.
+
+**A shared image that asks for the static TLS block is reported (2026.11.27.1+).**
+An object compiled for the initial-exec TLS model marks the library
+`DF_STATIC_TLS`. Loaded with the program at start-up it runs; loaded by
+`dlopen`, the loader serves its thread-local storage from what is left of the
+static block, which the target row states (`dlopen-static-tls`, [35](35-platforms.md);
+512 bytes on the glibc rows, glibc's `glibc.rtld.optional_static_tls`). A
+library above it is reported with its size; one whose exact `exports` say a
+host loads it by name is refused (`static-tls-image`). A row that states no
+bound is not checked. Code of a shared library is compiled with
+`-ftls-model=global-dynamic`, the compilers' default for `-fPIC`.
+
 One statement, three renderings:
 
 | Platform | Rendered as |
@@ -842,6 +864,24 @@ relinked, whether something else in the process already provides that library.
   artifact and links against it, with `$ORIGIN` (ELF) / `@loader_path` (Mach-O)
   / the executable's own directory (PE) finding it again after the build
   directory moves.
+
+**A dependency's shared library is named by its package** *(2026.11.27.1+)*.
+Its file and its SONAME take the package's qualified name, made a file name by
+the function that names the package's object directory: `compat.sdl3`'s target
+`sdl3` builds `libcompat_sdl3.so` (`libcompat_sdl3.dylib`, `compat_sdl3.dll`),
+and a target named otherwise than its package follows the package's name
+(`libcompat_sdl3_extra.so`); the prefix and suffix are the target row's data. A
+package of the default namespace is spelled by its name, its spelling as a bare
+key: a target named as its package keeps the name its library had
+(`libdepShared.so`), and a target named otherwise follows the package's name
+(`libdep_depshared.so`).
+The root package and a selected member keep their target's name, and a target
+that states `soname` is loaded by what it states. Two packages whose libraries
+would be loaded by one name are refused at planning with `[soname-collision]`,
+naming both. Before, a dependency's shared library took its target's name
+alone, and `compat.sdl3` and `mcpplibs.mwrap.sdl3` both made `libsdl3.so`
+(mcpp#975). mcpp links and finds the library by the new name; a script outside
+mcpp that names a dependency's library by its file name follows the change.
 
 **This is not `[target.<triple>].linkage`** (§2.7.1). That key answers the
 same-sounding question about the **C library** (a musl `-static` link, MSVC's
@@ -1713,11 +1753,12 @@ with `provides` / `requires` and `[feature-deps.<name>]`.
 
 ### 2.8.3 `[scan_overrides."<glob>"]` — Author-Asserted Scan Results
 
-The default module scanner is a text-level pass that (deliberately) rejects
-`import` statements inside conditional preprocessor blocks. Some legitimate
-module units carry them — e.g. fmt's official `src/fmt.cc` guards
-`import std;` behind `#ifdef FMT_IMPORT_STD`. When the file's import set is
-known and stable, declare it instead of scanning:
+The default module scanner reads text. A unit whose `import` or module
+declaration stands inside a preprocessor condition — fmt's official
+`src/fmt.cc` guards `import std;` behind `#ifdef FMT_IMPORT_STD` — takes its
+imports from the compiler's dependency scan, run while the graph is planned
+with the unit's compile words (2026.11.27.1+; see §2.8.4). When the file's
+import set is known and stable, it may still be declared instead of scanned:
 
 ```toml
 [modules]
@@ -1758,6 +1799,23 @@ set `MCPP_VERIFY_MODGRAPH=1` when generating the build.
 The default scanner reads each source file without expanding `#include`. Imports
 that it discovers belong in the scanned source file itself. A header containing
 `import` does not add an edge to this default module graph.
+
+**What is code is read once.** Comments and the contents of string and character
+literals, raw strings included, are not code, and a digit separator (`1'000`)
+is part of a number; one reader decides it for the scanner, for the build's
+source seam and for the functions that read module names from a package's
+sources (2026.11.27.1+). `export module x;` inside a raw string declares nothing.
+
+**An import inside a condition is the compiler's to answer (2026.11.27.1+).**
+Which branch of `#if`, `#ifdef` or `#ifndef` a unit takes depends on the
+toolchain's predefined macros, the target, the defines and the headers it
+includes. Where an `import` or a module declaration stands inside one, the unit
+is scanned by the compiler while the graph is planned (GCC's `-fdeps-format=p1689r5`,
+`clang-scan-deps` with Clang), with the standard, the graph's `dialect_cxxflags`,
+the target's compile side and the package's include directories and words, by
+the command the build's own scan edge runs. MSVC is not asked for such a scan
+while planning, and such a unit is refused there with that reason; a header unit
+(`import <vector>;`) is refused wherever it stands.
 
 The scanner answers two questions per file — what does this unit provide, and
 what does it require — and nothing else decides them.
@@ -1811,7 +1869,24 @@ dependency_debug = "lines" # the store's and git's dependencies: true | false | 
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
+dialect_cxxflags = ["-fsanitize=address"]   # every C++ unit of the graph and the std module (2026.11.27.1+)
 ```
+
+**Which units the lists reach (2026.11.27.1+).** `cflags` and `cxxflags` are
+root-position words, as `[build] cflags` and `cxxflags` are: they reach the units
+of the build's roots — the root package and the selected members. A member or a
+`path` dependency compiled as a dependency of the selection does not get them,
+so `mcpp build -p app --profile small` compiles a library `app` depends on
+without them, and `--workspace` compiles it with them. `opt`, `debug`, `ndebug`
+and `ldflags` reach the whole graph. Words that must be the same for every unit —
+a sanitizer, `-fno-asynchronous-unwind-tables` for a size profile — belong in
+`dialect_cxxflags`, which means what `[build] dialect_cxxflags` means (the
+standard library module, the scan and every C++ unit) and is appended after it;
+a workspace's profile accepts it too. A manifest that writes it states
+`mcpp = ">=2026.11.27.1"`: an earlier mcpp reports the key and ignores it. C
+units have no such key: a C++ graph must agree on its dialect because of BMIs
+and the standard library module, and C units are not bound that way. A key a
+profile does not have is reported and ignored.
 
 **Debug information on cl.exe (2026.11.7.1+).** `debug = true` compiles with
 `/Z7`: each object carries its own debug information. `/Zi` and `/ZI` write
@@ -1952,6 +2027,9 @@ cache = "global"   # "global" (default) | "local" | "off"
 
 `local` builds every dependency inside this project's `target/` — useful to rule
 the cache out while diagnosing something, and to give CI a no-sharing baseline.
+A host tool stays in the shared store under every mode: a tool is addressed by
+its sources and the host, and one entry serves every project that builds it;
+`local` applies to the dependencies its build compiles.
 `off` additionally clears this build's `target/<triple>/<fp>/` for a cold
 rebuild; `--no-cache` is a deprecated alias for it.
 
@@ -1968,8 +2046,13 @@ relative path and content below the dependency's root, except `target/`,
 `mcpp.toml`. Two projects that reach one library through `path`, a clean build,
 and a CI run that restores `$MCPP_HOME/build-cache` reuse one entry while the
 library's sources are the same, wherever its tree is checked out; an edit is a
-new key, and the entry built from the same tree under the previous digest is
-removed as the new one is written. A `path` dependency's tree is read again
+new key. An entry records the trees that use it *(2026.11.27.1+)*: a tree that
+writes the entry or hits it is added. When an edited tree writes or hits the
+entry of its new digest, it is withdrawn from the entries of the same package
+under the previous digests, and an entry left with no user is removed; an entry another
+tree still uses is kept. Before 2026.11.27.1 the entry recorded only the tree
+that wrote it, and an edit in one checkout removed an entry another checkout's
+plan still named (mcpp#1025). A `path` dependency's tree is read again
 before its entry is written, and a tree that changed while it compiled is not
 stored. An entry holds its own package's units *(2026.11.20.1+)*: a unit below
 a package nested in the dependency's tree belongs to that package -- a
@@ -2106,6 +2189,30 @@ Link intent keeps discovery stages separate:
 | `frameworks` | no flag | `-framework` | no flag |
 | `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
 | `deploy` *(2026.9.12.2+)* | copy edge into `bin/<to>/` | copy edge into `bin/<to>/` | copy edge into `bin/<to>/`; never a linker flag |
+
+**The file a link reads is the file the loader loads** *(2026.11.27.1+)*. After
+an ELF image is linked, mcpp resolves each `DT_NEEDED` it names over the
+image's search path, as the loader will, and compares the result with the
+shared object the link read for that name, which the link records
+(`--dependency-file`, kept by ninja). The two are compared as objects, one file
+under any spelling, and then by content. A name the loader answers with another
+file is refused with `[runtime-closure]`:
+
+```
+error: libz.so.1 is linked from one file and loaded from another
+         linked  /usr/lib/x86_64-linux-gnu/libz.so.1
+         loaded  ~/.mcpp/registry/data/xpkgs/xim-x-zlib/1.3.1/lib/libz.so.1
+       help: state the package that provides it rather than a directory that holds a copy, or remove the directory from the link
+```
+
+A name nothing answers is refused with the same token. The check applies to
+every image the build validates -- programs, shared libraries, tests and host
+tools -- except the libraries of the C library the build is bound to, and its
+verdict is kept with the image's, so an image that did not change is not
+compared again. Under `MCPP_ALLOW_HOST_LIBS` the link reads host directories by
+consent, and a difference is reported as inconclusive rather than refused.
+Before, an image linked against a host copy of a library ran against the
+store's copy without a diagnostic (mcpp#537).
 
 `deploy` lists the runtime files of a package: the files a program reads from
 its own directory when it runs. A loader that reads a fixed subdirectory needs

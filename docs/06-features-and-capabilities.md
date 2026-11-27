@@ -128,7 +128,8 @@ simd       = { sources = ["src/simd/**"], flags = [
 - `description` (mcpp 2026.11.21.1+) is one line for a reader of the package's
   features, as `[package] description` is for the package. It changes nothing
   in a build; an index descriptor's `features.<f>` accepts it too. The array
-  shorthand has none.
+  shorthand has none. Every feature of
+  [`examples/11-features`](../examples/11-features/) states one.
 
 ### Reading a package's features (mcpp 2026.11.21.1+)
 

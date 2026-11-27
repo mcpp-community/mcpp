@@ -221,15 +221,47 @@ static std::expected<void, std::string> step13_source_packages(PrepareState& sta
     return {};
 }
 
-static std::expected<void, std::string> step13_runner_and_xlings(PrepareState& state, BuildContext& ctx) {
+std::vector<std::filesystem::path> stated_tool_dirs(PrepareState& state,
+                                                    const std::vector<std::string>& xlingsSpecs) {
+    std::vector<std::filesystem::path> dirs;
+    auto add = [&](std::filesystem::path d) {
+        if (std::ranges::find(dirs, d) == dirs.end()) dirs.push_back(std::move(d));
+    };
     // THE PROGRAMS THE GRAPH BUILT FOR THIS MACHINE COME FIRST. A runner a
     // dependency's `tools` built (`okrun` from `openkal-tools`) is the one the
     // project asked for by depending on it, ahead of a payload's and of PATH.
-    for (auto const& [name, path] : state.rootTools) {
-        auto dir = path.parent_path();
-        if (std::ranges::find(ctx.xlingsDepBinDirs, dir) == ctx.xlingsDepBinDirs.end())
-            ctx.xlingsDepBinDirs.push_back(std::move(dir));
+    for (auto const& [name, path] : state.rootTools) add(path.parent_path());
+    // An overridden payload's programs are looked up where the override
+    // put them (mcpp#755), first: the project said that is where they are.
+    for (auto const& key : state.xlingsOverridden)
+        if (auto ov = payload_override(state, key); ov && *ov)
+            for (auto& d : mcpp::build::runner_lookup::payload_search_dirs((*ov)->root)) add(std::move(d));
+    if (xlingsSpecs.empty()) return dirs;
+    auto cfg = state.get_cfg(true);
+    if (!cfg) return dirs;
+    auto xlEnv = mcpp::config::make_xlings_env(**cfg);
+    for (auto const& spec : xlingsSpecs) {
+        auto ref = mcpp::provider::parse_ref(spec);
+        if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xlEnv), ref))
+            // `bin/`, then the payload root. The measurement that added the
+            // second entry is recorded with the rule, in
+            // runner_lookup::payload_search_dirs.
+            for (auto& d : mcpp::build::runner_lookup::payload_search_dirs(*dir)) add(std::move(d));
     }
+    return dirs;
+}
+
+void set_build_program_path(mcpp::build::BuildProgramEnv& env, PrepareState& state) {
+    env.toolsBin = state.projectSubosBin;
+    // Before the early pass (a toolchain's build program) no address is
+    // provisioned, and the stated directories are the tools already built.
+    env.statedToolDirs = stated_tool_dirs(state, state.statedXlingsSpecs);
+}
+
+static std::expected<void, std::string> step13_runner_and_xlings(PrepareState& state, BuildContext& ctx) {
+    ctx.statedEnvironmentBin = state.projectSubosBin;
+    ctx.plan.statedEnvironment = state.runtimeBindingSnapshot.selection.mode
+        == mcpp::provider::runtime::RuntimeSelection::Mode::NamedSubos;
     // Where a runner may find the programs this project declared (#544). The
     // same resolution `fillXpkgDirs` hands to build programs, kept as
     // directories rather than env vars because the reader is mcpp's own
@@ -305,27 +337,16 @@ static std::expected<void, std::string> step13_runner_and_xlings(PrepareState& s
                         { ctx.runTierPending = true; break; }
             }
         }
-        // An overridden payload's programs are looked up where the override
-        // put them (mcpp#755), first: the project said that is where they are.
-        for (auto const& key : state.xlingsOverridden)
-            if (auto ov = payload_override(state, key); ov && *ov)
-                for (auto& d : mcpp::build::runner_lookup::payload_search_dirs((*ov)->root))
-                    ctx.xlingsDepBinDirs.push_back(std::move(d));
+        for (auto& d : stated_tool_dirs(state, xlingsSpecs))
+            if (std::ranges::find(ctx.xlingsDepBinDirs, d) == ctx.xlingsDepBinDirs.end())
+                ctx.xlingsDepBinDirs.push_back(std::move(d));
         if (!xlingsSpecs.empty()) {
             if (auto cfg = state.get_cfg(true)) {
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg);
-                for (auto const& spec : xlingsSpecs) {
-                    auto ref = mcpp::provider::parse_ref(spec);
-                    if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xlEnv), ref)) {
+                for (auto const& spec : xlingsSpecs)
+                    if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xlEnv),
+                                                           mcpp::provider::parse_ref(spec)))
                         ctx.xlingsPayloads.push_back(*dir);
-                        // `bin/`, then the payload root. The measurement that
-                        // added the second entry is recorded with the rule, in
-                        // runner_lookup::payload_search_dirs.
-                        for (auto& d :
-                             mcpp::build::runner_lookup::payload_search_dirs(*dir))
-                            ctx.xlingsDepBinDirs.push_back(std::move(d));
-                    }
-                }
             }
         }
     }

@@ -18,7 +18,7 @@ constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
     "link-emulation", "clang-triple", "gcc-triple", "family", "object-format", "data-model", "exe-suffix",
     "shared-suffix", "loader", "execution", "companions", "exceptions", "exe-suffix-fixed",
-    "link-without-main", "interfaces",
+    "link-without-main", "interfaces", "dlopen-static-tls",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
@@ -141,13 +141,19 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         if (!it->second.is_bool()) throw Failure{std::format("{}: `exe-suffix-fixed` is not a boolean", where)};
         suffixFixed = it->second.as_bool();
     }
+    std::int64_t dlopenStaticTls = 0;
+    if (auto it = t.find("dlopen-static-tls"); it != t.end()) {
+        if (!it->second.is_int() || it->second.as_int() <= 0)
+            throw Failure{std::format("{}: `dlopen-static-tls` is a positive number of bytes", where)};
+        dlopenStaticTls = it->second.as_int();
+    }
     return std::format(
         "    {{ .triple = {}, .arch = {}, .os = {}, .env = {}, .tier = {}, .note = {}, .standard = {}, "
         ".exact = {}, .march = {}, .mabi = {}, "
         ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, "
         ".gccTriple = {}, .objectFormat = {}, .family = {}, .dataModel = {}, .exeSuffix = {}, .sharedSuffix = {}, "
         ".loader = {}, .execution = {}, .companions = {}, .linkWithoutMain = {}, .exceptions = {}, "
-        ".exeSuffixFixed = {}, .interfaces = {}, .interfacesStated = {} }},\n",
+        ".exeSuffixFixed = {}, .interfaces = {}, .interfacesStated = {}, .dlopenStaticTls = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
@@ -159,7 +165,8 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         lit(text(t, "execution", where)), arrays.add(words(t, "companions", where)),
         arrays.add(words(t, "link-without-main", where)),
         lit(text(t, "exceptions", where)), suffixFixed ? "true" : "false",
-        arrays.add(words(t, "interfaces", where)), t.find("interfaces") != t.end() ? "true" : "false");
+        arrays.add(words(t, "interfaces", where)), t.find("interfaces") != t.end() ? "true" : "false",
+        dlopenStaticTls);
 }
 
 std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {

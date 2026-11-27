@@ -12,6 +12,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+void write(const fs::path& file, std::string_view content) {
+    fs::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary) << content;
+}
+
 E2E surface{"surface", s::home_fixture, [] {
     "1125 the maintenance commands answer"_test = [] {
         s::own_home();
@@ -184,6 +189,57 @@ archives = ["{}"]
         r = ws.mcpp({"publish", "--workspace", "--exclude", "b", "--dry-run"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(e2e::contains(r.out, "name = \"a\"") && s::lacks(r.out, "name = \"b\"")) << "the excluded member was published\n" << r.out;
+    };
+
+    "1175 completion answers from the command tree and makes no home"_test = [] {
+        // mcpp#794 (docs/01): `mcpp __complete` answers from the command tree and from what is on
+        // disk, and a home that does not exist is not made by it; `mcpp self completion` writes the
+        // adapter into the home, or prints it.
+        const auto dir = s::case_dir();
+        const auto absent = dir / "no-home";
+        const s::options nohome{.where = s::home::fresh, .env = {{"MCPP_HOME", absent.string()}}};
+        auto r = s::mcpp({"__complete", "self", "comp"}, dir, nohome);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::has_line(r.out, "^completion\t")) << "the subcommand was not offered\n" << r.out;
+        expect(s::has_line(r.out, "^:0$")) << "the answer has no directive line\n" << r.out;
+        r = s::mcpp({"__complete", "build", "--profile", ""}, dir, nohome);
+        expect(e2e::contains(r.out, "release")) << "the profiles were not offered\n" << r.out;
+        r = s::mcpp({"__complete", "bmi"}, dir, nohome);
+        expect(s::lacks(r.out, "bmi-compile")) << "a hidden command was offered\n" << r.out;
+        r = s::mcpp({"__complete", "build", "--toolchain", ""}, dir, nohome);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(!fs::exists(absent)) << "a completion made a home";
+
+        // The installed toolchains and the index copies' packages, where the home's configuration
+        // places them: a store entry a request may name, and none it may not; a package named as a
+        // dependency key spells it, the default namespace's qualified once the word names it.
+        const auto home = s::another_home(s::home::fresh);
+        const s::options own{.where = s::home::fresh, .env = {{"MCPP_HOME", home.string()}}};
+        fs::create_directories(home / "registry" / "data" / "xpkgs" / "xim-x-gcc" / "16.1.0");
+        fs::create_directories(home / "registry" / "data" / "xpkgs" / "xim-x-ninja" / "1.12.1");
+        write(home / "indices" / "mcpplibs" / "pkgs" / "w" / "widget.lua",
+                        "package = {\n    spec = \"1\",\n    name = \"widget\",\n}\n");
+        write(home / "indices" / "mcpplibs" / "pkgs" / "d" / "demo.lua",
+                        "package = {\n    spec = \"1\",\n    namespace = \"acme\",\n    name = \"demo\",\n}\n");
+        r = s::mcpp({"__complete", "build", "--toolchain", ""}, dir, own);
+        expect(s::has_line(r.out, "^gcc@16\\.1\\.0$")) << "the installed toolchain was not offered\n" << r.out;
+        expect(s::lacks(r.out, "ninja@")) << "a store entry no request names was offered\n" << r.out;
+        r = s::mcpp({"__complete", "add", ""}, dir, own);
+        expect(s::has_line(r.out, "^widget$") && s::has_line(r.out, "^acme\\.demo$"))
+            << "the index copy's packages were not offered as keys spell them\n" << r.out;
+        r = s::mcpp({"__complete", "add", "mcpplibs."}, dir, own);
+        expect(s::has_line(r.out, "^mcpplibs\\.widget$")) << "the qualified spelling was not offered\n" << r.out;
+        expect(!fs::exists(home / "config.toml")) << "a completion wrote the home's configuration";
+        s::own_home();
+        r = s::mcpp({"self", "completion", "bash", "--print"}, dir);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(r.out, "__complete")) << "the adapter does not ask the program\n" << r.out;
+        r = s::mcpp({"self", "completion", "fish"}, dir);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "config/shell/mcpp.fish")) << "the adapter's file is not named\n" << s::text(r);
+        r = s::mcpp({"self", "completion", "tcsh"}, dir);
+        expect(!e2e::succeeded(r)) << "an unknown shell was accepted";
+        expect(e2e::contains(s::text(r), "takes one of bash, zsh, fish, powershell")) << s::text(r);
     };
 }};
 

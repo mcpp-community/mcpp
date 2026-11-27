@@ -50,24 +50,47 @@ which one is a fact about the project rather than about the machine. Chapter 8
 covers the binding, the degradation rules, and what a SubOS that does not
 describe itself does to them.
 
-**The tools a build program sees** (mcpp 2026.8.25.1+). The declared
-environment's `bin` goes to the front of the `PATH` that `build.mcpp` runs
-with:
+**The tools a child process sees** (mcpp 2026.8.25.1+; one composition for
+every child 2026.11.27.1+). mcpp starts three kinds of child process -- a build
+program, a test, the program of `mcpp run` -- and each receives a `PATH`
+composed by one function, the same on every host:
 
 ```
-PATH=<the declared environment's bin>:<the PATH mcpp itself was started with>
+PATH=<the tools the graph states>:<the declared environment's bin>:<the PATH mcpp itself was started with>
 ```
 
-A build program that spells `qemu-system-riscv64` as a bare name therefore gets
-the copy inside the declared environment. Chapter 7 covers the contract this
-rides on.
+The first part is the `bin` of each payload the graph's `[xlings.workspace]`
+entries install, the project's and its dependencies'; the second is present
+only when the project declares an environment. A build program that spells
+`qemu-system-riscv64` as a bare name therefore gets the copy the graph or the
+declared environment states, and a test that runs a tool stated with
+`when = "run"` finds it on every host. Before 2026.11.27.1 a build program's
+`PATH` had the last two parts only, and a test's had the toolchain's
+environment `bin` in front, on Linux only (mcpp#926). Chapter 7 covers the
+contract this rides on.
 
 **Only for projects that declare one.** A project with no `[xlings].subos`
-gets the `PATH` mcpp was started with, byte for byte. Putting a shared
-directory in front of every project would make what a build sees depend on what
-else had been installed on that machine — two projects on one machine would
-agree with each other, and the same project on two machines would not.
-Declaring it is what puts it there.
+gets no environment `bin`: what its children see is what its graph states, then
+the `PATH` mcpp was started with. Putting a shared directory in front of every
+project would make what a build sees depend on what else had been installed on
+that machine -- two projects on one machine would agree with each other, and
+the same project on two machines would not. Declaring it is what puts it there.
+Outside Windows, a test of such a project keeps the `bin` of the environment
+the toolchain is installed in behind the stated tools, as before 2026.11.27.1,
+under the compatibility reading `implicit-default-environment`
+([51](51-supported-versions.md)) until that row's floor; on Windows that
+directory holds the toolchain's `cl` and `link` stand-ins, which are no tool of
+the project, and it is never given (mcpp#726).
+
+**The libraries follow the same rule.** The union view of an environment
+(`subos/<name>/lib`) holds whatever was ever installed in it; for a project that
+declares no environment that is the machine's default one. A library an
+artifact finds there and nowhere the plan states -- a payload, a package's
+`[runtime]` directory, the build's own output -- is reported once per build as
+`implicit-default-environment`, naming the artifact and the library, because
+this machine has it and a clean one may not. The remedy is to state the package
+that provides it, or to declare `subos = "default"`, after which the view is the
+project's own and nothing is reported.
 
 **Prefixed, not replaced.** A build program legitimately calls `git`,
 `python3` or a shell, and none of those live in a SubOS. Front position makes

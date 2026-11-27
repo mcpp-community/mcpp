@@ -316,7 +316,7 @@ int main() {
     };
 
     "667 an android pack stages its closure"_test[s::elf][s::gcc][s::android_ndk] = [] {
-        // An app with a shared path dependency: lib/ holds the object, libfw.so and
+        // An app with a shared path dependency: lib/ holds the object, libdemo_fw.so and
         // libc++_shared.so, the stubs are the platform's (the stage manifest says so); the
         // libraries carry their file names as SONAME; a prebuilt library from [runtime] is
         // staged. A library the link read and that is gone is an input of the link that is gone
@@ -334,16 +334,16 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "mcpp pack --pkg-format dir failed: " << s::text(r);
         const auto tree = app.at("target/dist/app-0.1.0-x86_64-linux-android");
         expect(fatal(fs::is_directory(tree))) << "no staged tree at " << tree.string();
-        const std::vector<std::string> three{"libapp.so", "libc++_shared.so", "libfw.so"};
+        const std::vector<std::string> three{"libapp.so", "libc++_shared.so", "libdemo_fw.so"};
         expect(fatal(files_in(tree / "lib") == three)) << "lib/ does not hold the object and its two libraries" << files_in(tree / "lib");
         const auto stage_manifest = fs::path(tree.string() + ".stage-manifest");
         auto m = s::read_file(stage_manifest);
         expect(fatal(first_line(m) == "closure = walked")) << "the manifest's first line is not 'closure = walked': " << m;
-        for (std::string_view line : {"needs\tlibfw.so\tlib/libfw.so", "needs\tlibc++_shared.so\tlib/libc++_shared.so", "needs\tlibc.so\tplatform", "needs\tlibm.so\tplatform", "needs\tlibdl.so\tplatform"})
+        for (std::string_view line : {"needs\tlibdemo_fw.so\tlib/libdemo_fw.so", "needs\tlibc++_shared.so\tlib/libc++_shared.so", "needs\tlibc.so\tplatform", "needs\tlibm.so\tplatform", "needs\tlibdl.so\tplatform"})
             expect(fatal(lines_contain(m, line))) << "the manifest lacks the line '" << line << "': " << m;
-        for (std::string_view so : {"libapp.so", "libfw.so"})
+        for (std::string_view so : {"libapp.so", "libdemo_fw.so"})
             expect(fatal(s::read_header(tree / "lib" / std::string(so)).soname == so)) << "lib/" << so << " carries SONAME '" << s::read_header(tree / "lib" / std::string(so)).soname << "'";
-        expect(fatal(std::ranges::contains(s::read_header(tree / "lib/libapp.so").needed, std::string("libfw.so")))) << "libapp.so no longer needs libfw.so by its file name";
+        expect(fatal(std::ranges::contains(s::read_header(tree / "lib/libapp.so").needed, std::string("libdemo_fw.so")))) << "libapp.so no longer needs libdemo_fw.so by its file name";
         // A prebuilt library from [runtime] link_library_dirs.
         const auto cc = ndk_tool("clang");
         app.write("ext/ext.c", "int ext_value(void) { return 1; }\n");
@@ -404,7 +404,7 @@ int main() {
         m = s::read_file(*seen);
         expect(fatal(first_line(m) == "closure = not-walked")) << "the provider did not receive 'closure = not-walked': " << m;
         expect(fatal(lines_contain(m, "needs\tlibext.so\tunresolved"))) << "the provider did not receive libext.so as unresolved: " << m;
-        expect(fatal(lines_contain(m, "needs\tlibfw.so\tlib/libfw.so"))) << "the provider lost the members that did resolve: " << m;
+        expect(fatal(lines_contain(m, "needs\tlibdemo_fw.so\tlib/libdemo_fw.so"))) << "the provider lost the members that did resolve: " << m;
         // Two triples: a closure each.
         app.remove("build.mcpp");
         app.remove("dist.sh");
@@ -416,7 +416,7 @@ int main() {
         const auto tree2 = staged(app, "");
         for (std::string_view abi : {"x86_64", "arm64-v8a"}) {
             expect(fatal(files_in(tree2 / "lib" / std::string(abi)) == three)) << "lib/" << abi << " does not hold the closure" << files_in(tree2 / "lib" / std::string(abi));
-            expect(fatal(lines_contain(s::read_file(fs::path(tree2.string() + ".stage-manifest")), std::format("needs\tlibfw.so\tlib/{}/libfw.so", abi)))) << "the manifest lacks lib/" << abi << "/libfw.so";
+            expect(fatal(lines_contain(s::read_file(fs::path(tree2.string() + ".stage-manifest")), std::format("needs\tlibdemo_fw.so\tlib/{}/libdemo_fw.so", abi)))) << "the manifest lacks lib/" << abi << "/libdemo_fw.so";
         }
         expect(fatal(s::read_header(tree2 / "lib/arm64-v8a/libc++_shared.so").machine == s::elf_machine::aarch64)) << "lib/arm64-v8a/libc++_shared.so is not the aarch64 run-time";
     };

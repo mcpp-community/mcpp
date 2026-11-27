@@ -1002,7 +1002,10 @@ give such a payload a descriptor, refresh the index first and then reinstall:
 again, because the index is refreshed when a resolution misses and not because a
 recipe changed; measured in the sandbox verification of 2026.9.12.2. Until then
 the failure is the interpreter's own (`/usr/bin/env: 'node': No such file or
-directory`), which mcpp does not yet explain (#621).
+directory`). Before `mcpp run` and `mcpp test` execute an artefact directly,
+they read its `#!` line, and when the program it names is not there (`node` on
+no directory of the artefact's PATH) a note names that program and gives these
+three steps as a `help:` line, with the spec of the toolchain the build used.
 
 For a target whose artifact runs elsewhere, the `runner` key is an argv prefix
 and the session belongs to a package rather than to the engine:
@@ -1946,19 +1949,17 @@ toolchain's libraries first.
 both the C and C++ compile channels. It reaches every TU in the package — module
 interface units included — so it also reaches the compiler's own P1689 module scan.
 
-> **It does not make a macro-guarded `import` acceptable.** mcpp runs its own
-> lexical pre-scan before the compiler ever sees the file, and that scanner
-> rejects an `import` inside **any** `#if` / `#ifdef` block without evaluating the
-> condition:
->
-> ```
-> error: import statement inside conditional preprocessor block (forbidden in M1)
-> ```
->
-> So a `#ifdef FOO` / `import bar;` pair fails even when `FOO` is in `defines`.
-> Put the conditional around an `#include` in the global module fragment instead.
-> Tracked as mcpp-community/mcpp#421. Assembly units pick it up too. It is a
-build input like any other, so `[target.'cfg(...)'.build]` can carry it:
+> **A macro-guarded `import` follows its condition (2026.11.27.1+).** mcpp's
+> lexical pre-scan marks a unit whose `import` stands inside an `#if` / `#ifdef`
+> block, and that unit's imports are taken from the compiler's dependency scan,
+> run with the unit's own compile words, `defines` included. A
+> `#ifdef FOO` / `import bar;` pair therefore imports `bar` exactly when `FOO`
+> is defined (on GCC, and on Clang through `clang-scan-deps`; refused under
+> MSVC, which has no scan at planning). Header units are still refused. Before
+> 2026.11.27.1 the pre-scan refused every such unit (mcpp#421, mcpp#1026).
+
+Assembly units pick `defines` up too. It is a build input like any other, so
+`[target.'cfg(...)'.build]` can carry it:
 
 ```toml
 [build]

@@ -91,3 +91,20 @@ UTest prepend_path_list_with_no_inherited_value_is_just_the_dirs{"PlatformEnv/Pr
     std::vector<std::filesystem::path> dirs{"/a", "/b"};
     expect(eq(mcpp::runtime::launch_env::prepend_path_list("LD_LIBRARY_PATH", dirs), join({host("/a"), host("/b")})));
 }};
+
+// THE PATH OF EVERY CHILD (mcpp#926, design 2026-11-27 §4.2): the tools the
+// graph states, then the stated environment's `bin`, then the PATH this
+// invocation was started with; a directory named twice is named once, and with
+// nothing stated the child inherits the PATH as it is.
+UTest child_path_puts_the_stated_tools_first{"PlatformEnv/ChildPathPutsTheStatedToolsFirst", [] {
+    const auto& inherited = mcpp::runtime::launch_env::inherited_path();
+    std::vector<std::filesystem::path> tools{"/tools/a/bin", "/tools/b/bin", "/tools/a/bin"};
+    const auto value = mcpp::runtime::launch_env::child_path(tools, "/env/bin");
+    const auto stated = join({host("/tools/a/bin"), host("/tools/b/bin"), host("/env/bin")});
+    expect(eq(value, inherited.empty() ? stated : stated + sep() + inherited));
+    // The environment's `bin` is not named twice when a stated tool is there.
+    std::vector<std::filesystem::path> withEnv{"/env/bin"};
+    const auto once = mcpp::runtime::launch_env::child_path(withEnv, "/env/bin");
+    expect(eq(once, inherited.empty() ? host("/env/bin") : host("/env/bin") + sep() + inherited));
+    expect(eq(mcpp::runtime::launch_env::child_path({}, {}), std::string()));
+}};

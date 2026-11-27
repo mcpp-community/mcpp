@@ -204,7 +204,9 @@ void own_resources(const fs::path& root) {
     std::set<std::string> seen;
     for (auto it = fs::recursive_directory_iterator(root / "target"); it != fs::recursive_directory_iterator{}; ++it) {
         const auto name = it->path().filename().string();
-        if (!it->is_regular_file() || (name != "image.exe" && name != "image.dll" && name != "libimage.dll" && name != "updater.exe")) continue;
+        // The library's DLL keeps its target's name where it is a selected member, and is named
+        // after its package where it is a dependency (`fixture_library_image.dll`, mcpp#975).
+        if (!it->is_regular_file() || (name != "image.exe" && !name.ends_with("image.dll") && name != "updater.exe")) continue;
         if (bytes_of(it->path()).substr(0, 2) != "MZ") continue;
         const auto data = rsrc_of(it->path());
         const auto path = it->path().generic_string();

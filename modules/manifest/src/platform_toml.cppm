@@ -706,6 +706,11 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
             if (!it->second.is_bool()) return std::unexpected(std::format("{}.{} must be true or false", where, key));
             *to = it->second.as_bool();
         }
+    if (auto it = t.find("dlopen-static-tls"); it != t.end()) {
+        if (!it->second.is_int() || it->second.as_int() <= 0)
+            return std::unexpected(std::format("{}.dlopen-static-tls is a positive number of bytes", where));
+        r.dlopenStaticTls = it->second.as_int();
+    }
     // `arch-os` or `arch-os-env`, each segment of letters, digits, `_` and `.`.
     std::size_t segments = 1;
     for (char c : r.triple) segments += c == '-';

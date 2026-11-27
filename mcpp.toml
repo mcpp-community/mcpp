@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.11.26.1"
+version     = "2026.11.27.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -106,11 +106,11 @@ linkage = "static"
 
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
 # TOML-native namespaced form: `mcpplibs.cmdline` is the dotted subtable
-# `[dependencies.mcpplibs] cmdline = "0.0.5"` ⇒ identity (mcpplibs, cmdline).
+# `[dependencies.mcpplibs] cmdline = "0.0.6"` ⇒ identity (mcpplibs, cmdline).
 # The bootstrap mcpp used by the self-host build (xlings install mcpp, well
 # past 0.0.6) understands this, so the legacy quoted form is no longer needed.
 [dependencies]
-mcpplibs.cmdline = "0.0.5"
+mcpplibs.cmdline = "0.0.6"
 # JSON for Modern C++, as the index's module package (no copied header).
 nlohmann.json = "3.12.0"
 # The C library's macros (`stdout`, `stderr`, `EOF`, `errno` …) as C++ names:
@@ -166,6 +166,18 @@ sources = ["!src/native/windows/**"]
 
 [target.windows.build]
 sources = ["!src/native/posix/**"]
+
+# THE MAIN THREAD'S STACK ON WINDOWS. A command nests whole builds in one process: `mcpp pack`
+# prepares the program, a host tool its platform names, and that tool's build programs, and each
+# pass holds a few hundred KiB of frames. A PE image's main thread has the 1 MiB its header
+# reserves by default, where Linux and macOS give 8 MiB. Measured with 2026.11.27.1 on the
+# openkal canary's `mcpp pack`: 1,046 KiB at the deepest manifest read, and an
+# EXCEPTION_STACK_OVERFLOW on windows-x86_64. The image reserves what the other hosts give.
+[target.'cfg(all(os = "windows", env = "msvc"))'.build]
+ldflags = ["-Wl,/STACK:8388608"]
+
+[target.'cfg(all(os = "windows", env = "gnu"))'.build]
+ldflags = ["-Wl,--stack,8388608"]
 
 [workspace]
 members = [

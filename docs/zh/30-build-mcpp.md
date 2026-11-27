@@ -1555,8 +1555,16 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 store 命中、不重建，检出或复制改变了全部修改时间之后也是。在
 [`examples/12-a-new-device-language`](../../examples/12-a-new-device-language/)
 上实测；此前这个键只有版本，改动 emitter 之后 `mcpp run` 打印的是上一次的答案，直到
-版本被抬高。新条目写出时，同一棵树在先前摘要下的条目被删除；`mcpp cache clean` 清空
-store，路径是 `<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`。
+版本被抬高。条目记录使用它的每一棵树，与 `path` 依赖的条目相同（[09](09-commands-by-scenario.md)）：一棵被编辑的
+树写入或命中新摘要的条目时，从先前摘要下的条目中撤下自己，记录为空的条目被删除 *（2026.11.27.1 起；此前同一棵树在先前
+摘要下的条目不论谁在使用都被删除）*。`mcpp cache clean` 清空 store，路径是
+`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`。store 在每种 `--cache` 模式下都是共享的：`local` 与
+`off` 作用于工具的构建所编译的依赖，不改变工具存放的位置。
+
+**条目包含工具与它加载的共享对象（2026.11.27.1+）。** 工具的链接读取了它自己的构建产出的共享库——它的图中以
+`shared` 链接的包——时，它从自己所在的目录加载该库，RPATH 以 `$ORIGIN` 指名这个目录。条目包含可执行文件与每个这样的
+库及其别名，由同一个发布步骤写入，并在条目的 `shared-objects` 中列出；缺少其中之一的条目无效，重新构建。此前 store
+只发布可执行文件，这样的工具从 store 启动时失败（mcpp#535）。
 
 **工具构建写出的路径长度有界（2026.9.15.2+）。** 子构建在
 `<mcpp cache dir>/tool/.build/<hash>/` 中进行，这个目录由条目与消费工程命名，不嵌套在

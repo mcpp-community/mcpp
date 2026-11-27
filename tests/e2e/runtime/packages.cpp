@@ -373,7 +373,8 @@ int main() {
             return r;
         };
         auto log = [&](std::string_view dir) { return s::read_file(tmp / dir / "build.log"); };
-        auto libfw = [&](std::string_view dir) { return !s::find_files(tmp / dir / "target", R"(libfw\.so)").empty(); };
+        // `demo.fw`'s library is named by its package (mcpp#975): `libdemo_fw.so`.
+        auto libfw = [&](std::string_view dir) { return !s::find_files(tmp / dir / "target", R"(libdemo_fw\.so)").empty(); };
         auto record_of = [&](std::string_view dir) {
             std::string out;
             for (const auto& res : s::find_files(tmp / dir / "target", R"(resolution\.json)")) {
@@ -392,10 +393,10 @@ int main() {
         // A
         make_app("a", "fwdefault");
         expect(fatal(e2e::succeeded(build("a", {"--strict"})))) << "A: build --strict failed: " << log("a");
-        expect(fatal(libfw("a"))) << "A: no libfw.so for a silent consumer: " << log("a");
+        expect(fatal(libfw("a"))) << "A: no libdemo_fw.so for a silent consumer: " << log("a");
         const auto bin_a = named_within(tmp / "a/target", "a", "/bin/");
         expect(fatal(bin_a.has_value())) << "A: no program";
-        expect(fatal(needs_library(*bin_a, "libfw.so"))) << "A: the program does not NEED libfw.so";
+        expect(fatal(needs_library(*bin_a, "libdemo_fw.so"))) << "A: the program does not NEED libdemo_fw.so";
         auto r = record_of("a");
         expect(fatal(r == "shared package-default")) << "A: link record is '" << r << "'";
         expect(fatal(e2e::succeeded(s::run(*bin_a)))) << "A: the program did not run";
@@ -721,6 +722,96 @@ int main() {
         dep.write("mcpp.toml", dep_manifest);
         r = app.mcpp({"build"}, o);
         expect(fatal(e2e::succeeded(r))) << "C: the dependency's own search path did not fix the link: " << s::text(r);
+    };
+
+    "1167 a dependency's shared library is named by its package"_test[s::elf] = [] {
+        // mcpp#975 (SPEC-004 §11 item 8, docs/04): two packages whose targets share a name, linked
+        // shared, make two libraries named by their packages, and the program loads both; two
+        // libraries stated with one soname are refused at planning, naming both packages.
+        const auto tmp = s::case_dir();
+        auto library = [&](std::string_view ns, int value, std::string_view extra) {
+            s::project(tmp / ns, {{"mcpp.toml", std::format("[package]\nnamespace = \"{0}\"\nname      = \"util\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n[targets.util]\nkind = \"shared\"\n{1}", ns, extra)},
+                                  {"src/util.cpp", std::format("extern \"C\" int {}_value() {{ return {}; }}\n", ns, value)}});
+        };
+        library("acme", 40, "");
+        library("beta", 2, "");
+        s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[dependencies]\nacme.util = { path = \"../acme\" }\nbeta.util = { path = \"../beta\" }\n"},
+                                     {"src/main.cpp", "extern \"C\" int acme_value();\nextern \"C\" int beta_value();\nint main() { return acme_value() + beta_value() == 42 ? 0 : 1; }\n"}});
+        auto r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build failed\n" << s::text(r);
+        expect(s::find_file(app.at("target"), "libacme_util.so").has_value()) << "no libacme_util.so";
+        expect(s::find_file(app.at("target"), "libbeta_util.so").has_value()) << "no libbeta_util.so";
+        expect(!s::find_file(app.at("target"), "libutil.so").has_value()) << "a dependency's library took its target's name";
+        r = app.mcpp({"run"});
+        expect(e2e::succeeded(r)) << "the program did not load both libraries\n" << s::text(r);
+        library("acme", 40, "soname = \"libsame.so\"\n");
+        library("beta", 2, "soname = \"libsame.so\"\n");
+        r = app.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "two libraries loaded by one name were accepted";
+        expect(e2e::contains(s::text(r), "both make a shared library loaded as 'libsame.so'")) << s::text(r);
+    };
+
+    "1168 a library linked from one file and loaded from another is refused"_test[s::elf][s::gcc] = [] {
+        // mcpp#537 (docs/04 §2.11): the link reads libfoo.so from one directory, and the image's
+        // run path finds another libfoo.so; the build is refused naming both files. With one
+        // directory for both, the build runs.
+        const auto gcc = s::host_cc();
+        expect(fatal(gcc.has_value())) << "no host C compiler links a shared object";
+        s::project app({{"a/foo.c", "int foo_answer(void) { return 1; }\n"},
+                        {"b/foo.c", "int foo_answer(void) { return 2; }\n"},
+                        {"src/main.cpp", "extern \"C\" int foo_answer();\nint main() { return foo_answer() > 0 ? 0 : 1; }\n"},
+                        {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
+        for (auto dir : {"a", "b"})
+            expect(fatal(e2e::succeeded(s::run(*gcc, {"-shared", "-fPIC", "-Wl,-soname,libfoo.so", app.at(std::format("{}/foo.c", dir)).string(),
+                                                      "-o", app.at(std::format("{}/libfoo.so", dir)).string()}))));
+        auto program = [&](std::string_view linked, std::string_view loaded) {
+            app.write("build.mcpp", std::format("import mcpp;\n#include <string>\nint main() {{\n    const std::string root = mcpp::manifest_dir();\n    mcpp::link_lib(\"foo\");\n"
+                                                "    mcpp::link_search((root + \"/{}\").c_str());\n    mcpp::runtime_search_dir((root + \"/{}\").c_str());\n    return 0;\n}}\n", linked, loaded));
+        };
+        program("a", "b");
+        auto r = app.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "a library linked from a/ and loaded from b/ was accepted\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "libfoo.so is linked from one file and loaded from another")) << s::text(r);
+        expect(e2e::contains(s::text(r), "/a/libfoo.so") && e2e::contains(s::text(r), "/b/libfoo.so")) << "the refusal does not name both files\n" << s::text(r);
+        program("a", "a");
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build that links and loads one file failed\n" << s::text(r);
+        expect(e2e::succeeded(app.mcpp({"run"}))) << "the program did not run";
+    };
+
+    "1169 a shared image over the static TLS dlopen serves is reported"_test[s::elf][s::gcc] = [] {
+        // mcpp#907 (SPEC-016 §2.1 `dlopen-static-tls`, docs/04): a shared library whose objects use
+        // the initial-exec model for 4096 bytes is reported against the row's bound; with an exact
+        // `exports` name, which says a host loads it by name, it is refused.
+        s::project p({{"src/lib.cpp", "thread_local char big[4096];\nextern \"C\" int plugin_entry() { big[0] = 1; return big[0]; }\n"}});
+        auto manifest = [&](std::string_view extra) {
+            p.write("mcpp.toml", std::format("[package]\nname    = \"tlsimg\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\ncxxflags = [\"-ftls-model=initial-exec\"]\n\n"
+                                             "[targets.tlsimg]\nkind = \"shared\"\n{}", extra));
+        };
+        manifest("");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "a library a program loads at start-up was refused\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "bytes of thread-local storage (DF_STATIC_TLS)")) << "the image was not reported\n" << s::text(r);
+        manifest("exports = [\"plugin_entry\"]\n");
+        r = p.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "an image a host loads by name was not refused\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "its `exports` name the symbols a host loads it to call")) << s::text(r);
+        expect(e2e::contains(s::text(r), "-ftls-model=global-dynamic")) << "the refusal gives no remedy\n" << s::text(r);
+    };
+
+    "1170 an exact export the image does not define is reported"_test[s::elf][s::gcc] = [] {
+        // mcpp#982 (SPEC-004 §11 item 7): an `exports` entry without a wildcard names a symbol a
+        // host looks up; one the image does not define is reported as `unmatched-exact-export`,
+        // and neither a defined name nor a pattern that matches nothing is.
+        s::project p({{"src/lib.cpp", "extern \"C\" int defined_entry() { return 1; }\n"},
+                      {"mcpp.toml", "[package]\nname    = \"exactexp\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n"
+                                    "[targets.exactexp]\nkind    = \"shared\"\nexports = [\"defined_entry\", \"missing_entry\", \"nomatch_*\"]\n"}});
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "[targets.exactexp] exports \"missing_entry\" names a symbol the image does not define")) << s::text(r);
+        expect(e2e::contains(s::text(r), "unmatched-exact-export") || e2e::contains(s::text(r), "2027.3")) << "the report names no deprecation\n" << s::text(r);
+        expect(s::lacks(s::text(r), "\"defined_entry\" names a symbol")) << "a defined name was reported";
+        expect(s::lacks(s::text(r), "nomatch_")) << "a pattern was reported";
     };
 }};
 

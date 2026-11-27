@@ -395,6 +395,19 @@ loader 以及进程中的其它 ICD 相撞。
 这个文件每行列一个符号模式，`#` 起一行注释，`*` 是唯一的通配符。内联
 数组说的是同一件事，用于只有两三个入口点、单独开一个文件显得多余的场合。
 
+**不含通配符的条目是精确名（2026.11.27.1+）。** 它表示宿主按这个名字进入镜像（`JNI_OnLoad`、`PyInit_<名>`、
+插件宿主的入口），因此镜像必须定义它；模式只收窄集合，可以不匹配任何符号。名字是链接器层面的符号名：
+C++ 函数写修饰后的形式，或以 `extern "C"` 定义。ELF 上，链接之后读取共享镜像的动态符号表，镜像未定义的
+精确名以弃用项 `unmatched-exact-export` 报告（[docs/51](51-supported-versions.md)），到移除月份后是构建错误；
+Mach-O 上 ld64 本身拒绝这种名字。只在部分目标上有定义的名字写在定义它的 `[target.<selector>]` 下。
+
+**要求静态 TLS 块的共享镜像被报告（2026.11.27.1+）。** 以 initial-exec TLS 模型编译的对象使库带上
+`DF_STATIC_TLS`。随程序在启动时加载可以运行；以 `dlopen` 加载时，加载器从静态块的剩余部分为它分配线程局部存储，
+剩余的大小由目标行陈述（`dlopen-static-tls`，[35](35-platforms.md)；glibc 行为 512 字节，即 glibc 的
+`glibc.rtld.optional_static_tls`）。超过它的库连同其大小被报告；精确 `exports` 表明宿主按名字加载它的库被拒绝
+（`static-tls-image`）。未陈述界限的行不检查。共享库的代码以 `-ftls-model=global-dynamic` 编译，
+这是编译器在 `-fPIC` 下的缺省。
+
 一句陈述，三种渲染：
 
 | 平台 | 渲染为 |
@@ -767,6 +780,15 @@ dependency_linkage = "shared"        # per profile
 - **`shared`**——mcpp 把这个依赖构建成产物旁边的一个共享库并链接到它，
   通过 `$ORIGIN`（ELF）/ `@loader_path`（Mach-O）/ 可执行文件自己所在
   的目录（PE）在构建目录被移动之后仍能重新找到它。
+
+**依赖包的共享库以包命名** *(2026.11.27.1+)*。它的文件名与 SONAME 取包的限定名，由命名包的对象目录的同一个函数
+变成文件名：`compat.sdl3` 的目标 `sdl3` 构建出 `libcompat_sdl3.so`（`libcompat_sdl3.dylib`、`compat_sdl3.dll`），
+与包不同名的目标接在包名之后（`libcompat_sdl3_extra.so`）；前缀与后缀是目标行的数据。缺省命名空间的包以包名拼写，即它
+作为裸键的写法：与包同名的目标保持其库原来的名字（`libdepShared.so`），与包不同名的目标接在包名之后
+（`libdep_depshared.so`）。根包与被选中的成员保持目标名，
+陈述了 `soname` 的目标按陈述加载。两个包的库会以同一个名字加载时，规划以 `[soname-collision]` 拒绝并指出两个包。
+此前依赖包的共享库只取目标名，`compat.sdl3` 与 `mcpplibs.mwrap.sdl3` 都产出 `libsdl3.so`（mcpp#975）。mcpp 按新名字
+链接与查找该库；mcpp 之外按文件名引用依赖共享库的脚本随之改变。
 
 **这不是 `[target.<triple>].linkage`**（§2.7.1）。那个键回答的是一个
 听起来相似、但关于 **C 库**的问题（musl 的 `-static` 链接、MSVC
@@ -1539,10 +1561,10 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 
 ### 2.8.3 `[scan_overrides."<glob>"]` —— 作者断言的扫描结果
 
-默认的模块扫描器是一趟文本层面的处理，它（刻意）拒绝条件预处理块内的
-`import` 语句。有些合法的模块单元里确实有这种写法——例如 fmt 官方的
-`src/fmt.cc` 把 `import std;` 保护在 `#ifdef FMT_IMPORT_STD` 之内。
-当一个文件的 import 集合已知且稳定时，声明它，而不是去扫描它：
+默认的模块扫描器读取文本。一个单元的 `import` 或模块声明处于预处理条件之内时——例如 fmt 官方的
+`src/fmt.cc` 把 `import std;` 保护在 `#ifdef FMT_IMPORT_STD` 之内——它的导入取自编译器的依赖扫描，在规划依赖图
+时以该单元的编译词运行（2026.11.27.1+，见 §2.8.4）。当一个文件的 import 集合已知且稳定时，仍可以声明它，
+而不是去扫描它：
 
 ```toml
 [modules]
@@ -1580,6 +1602,16 @@ override），在生成构建时设置 `MCPP_VERIFY_MODGRAPH=1`。
 
 默认扫描器逐个读取源文件，不展开 `#include`。需要由它发现的 import 写在被扫描的
 源文件本身；头文件中的 `import` 不为默认模块图增加导入边。
+
+**什么是代码只读一次。** 注释与字符串、字符字面量（含原始字符串）的内容不是代码，数字分隔符（`1'000`）属于
+数字；扫描器、构建的源文件接缝与从包的源文件读取模块名的函数由同一个读者判定（2026.11.27.1+）。原始字符串中的
+`export module x;` 不声明任何模块。
+
+**条件之内的 import 由编译器回答（2026.11.27.1+）。** 一个单元走 `#if`、`#ifdef` 或 `#ifndef` 的哪一个分支，
+取决于工具链的预定义宏、目标、宏定义与它包含的头文件。`import` 或模块声明处于这样的条件之内时，该单元在规划
+依赖图时由编译器扫描（GCC 的 `-fdeps-format=p1689r5`，Clang 的 `clang-scan-deps`），传入标准、整图的
+`dialect_cxxflags`、目标的编译侧以及包的包含目录与编译词，命令与构建期扫描边所运行的相同。规划时不向 MSVC 请求
+这种扫描，这样的单元在 MSVC 上以此原因被拒绝；头单元（`import <vector>;`）在任何位置都被拒绝。
 
 扫描器为每个文件回答两个问题——这个单元提供什么、这个单元需要
 什么——没有别的东西决定这两个答案。
@@ -1632,7 +1664,17 @@ dependency_debug = "lines" # 来自存储与 git 的依赖:true | false | "lines
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
+dialect_cxxflags = ["-fsanitize=address"]   # every C++ unit of the graph and the std module (2026.11.27.1+)
 ```
+
+**这些列表到达哪些单元（2026.11.27.1+）。** `cflags` 与 `cxxflags` 是根位置的词，与 `[build] cflags`、`cxxflags`
+相同：它们到达构建的根——根包与被选中的成员——的单元。作为所选内容的依赖被编译的成员或 `path` 依赖不收到它们，
+因此 `mcpp build -p app --profile small` 编译 `app` 所依赖的库时不带它们，`--workspace` 时带上。`opt`、`debug`、
+`ndebug` 与 `ldflags` 到达整张图。必须对每个单元一致的词——检测器、体积 profile 的
+`-fno-asynchronous-unwind-tables`——写进 `dialect_cxxflags`：它与 `[build] dialect_cxxflags` 含义相同（标准库模块、
+扫描与每个 C++ 单元），追加在其后；工作空间的 profile 同样接受。写它的清单陈述 `mcpp = ">=2026.11.27.1"`：更早的
+mcpp 报告这个键并忽略它。C 单元没有这样的键：C++ 图因 BMI 与标准库模块而必须方言一致，C 单元之间没有这种约束。
+profile 中不存在的键被报告并忽略。
 
 **标志列表的顺序。** `cflags`、`cxxflags` 与 `ldflags` 各自按 `[build]` 的、profile 的、`[target.<selector>.build]` 的
 顺序进入命令：编译器或链接器取两个词中后者时，目标块的生效（2026.11.16.1 实测）。
@@ -1731,7 +1773,8 @@ cache = "global"   # "global" (default) | "local" | "off"
 | `off` | 否 | 否 | 是 |
 
 `local` 让每个依赖都在这个工程自己的 `target/` 里构建——用于在排查
-某个问题时排除缓存因素，也用于给 CI 一条不共享的基线。`off` 还会额外
+某个问题时排除缓存因素，也用于给 CI 一条不共享的基线。宿主工具在每种模式下都留在共享存储中：工具按它的源码与宿主
+寻址，一个条目服务构建它的每个工程；`local` 作用于工具的构建所编译的依赖。`off` 还会额外
 清空这次构建的 `target/<triple>/<fp>/` 以获得一次冷构建；
 `--no-cache` 是它的一个已废弃别名。
 
@@ -1743,8 +1786,10 @@ cache = "global"   # "global" (default) | "local" | "off"
 `path` 依赖以其源码树内容的摘要，在 `mcpp cache list` 中写作 `<version>+path.<摘要>`。摘要覆盖依赖根目录下
 每个文件的相对路径与内容，不含 `target/`、`.git/`、`.mcpp/`、`compile_commands.json` 与含自己 `mcpp.toml`
 的子目录。两个经 `path` 使用同一个库的工程、一次 clean 之后的构建、以及恢复 `$MCPP_HOME/build-cache` 的
-CI 运行，只要库的源码相同就复用同一个条目，与源码树检出在哪里无关；一次修改是一个新键，同一棵树在先前摘要下
-的条目在写入新条目时移除。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。条目只含它的包
+CI 运行，只要库的源码相同就复用同一个条目，与源码树检出在哪里无关；一次修改是一个新键。条目记录使用它的每一棵树
+*(2026.11.27.1+)*：写入或命中条目的树被加入记录。一棵被编辑的树写入或命中新摘要的条目时，从同一个包在先前摘要下的条目中
+撤下自己，记录为空的条目被删除；另一棵树仍在使用的条目保留。2026.11.27.1 之前条目只记录写入它的那一棵树，一个检出中的
+编辑会删除另一个检出的计划仍然指向的条目（mcpp#1025）。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。条目只含它的包
 自己的单元 *(2026.11.20.1+)*：位于依赖树中嵌套的另一个包之下的单元属于那个包——位于仓库之下、成员的构建程序
 导入仓库自身包的 workspace，其成员的单元仍属于成员，在原处构建。2026.11.19.1 下依赖的条目收入了这些单元，
 自干净的 target 目录构建时把一个成员的目标文件链接进了另一个成员（mcpp#979）。
@@ -1866,6 +1911,23 @@ Link intent 把各个发现阶段分开处理：
 | `frameworks` | 无旗标 | `-framework` | 无旗标 |
 | `deploy_files` | 拷贝边 | 拷贝边 | 拷贝到输出旁边；从不是链接器旗标 |
 | `deploy` *（2026.9.12.2+）* | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/`；从不是链接器旗标 |
+
+**链接读取的文件就是加载器加载的文件** *（2026.11.27.1+）*。ELF 镜像链接之后，mcpp 按加载器的方式在镜像的搜索路径上
+解析它指名的每个 `DT_NEEDED`，并与链接为该名字读取的共享对象比较；后者由链接记录（`--dependency-file`，由 ninja
+保存）。两者先按对象比较（任何拼写下的同一个文件），再按内容比较。加载器以另一个文件回答的名字以 `[runtime-closure]`
+拒绝：
+
+```
+error: libz.so.1 is linked from one file and loaded from another
+         linked  /usr/lib/x86_64-linux-gnu/libz.so.1
+         loaded  ~/.mcpp/registry/data/xpkgs/xim-x-zlib/1.3.1/lib/libz.so.1
+       help: state the package that provides it rather than a directory that holds a copy, or remove the directory from the link
+```
+
+没有任何文件回答的名字以同一个标记拒绝。这项核对适用于构建所校验的每个镜像——程序、共享库、测试与宿主工具——构建
+所绑定的 C 库自己的库除外；判定随镜像的判定一起保存，没有变化的镜像不再比较。在 `MCPP_ALLOW_HOST_LIBS` 下，链接
+经同意读取宿主目录，差异报告为无法判定而不是拒绝。此前一个以宿主的库副本链接的镜像，在运行时加载的是 store 中的
+副本，没有任何诊断（mcpp#537）。
 
 `deploy` 列出包的运行时文件：程序运行时从自己所在目录读取的文件。读取固定子目录的加载器需要它们在那里：
 macOS 上的 Vulkan loader 从 `<可执行文件目录>/vulkan/icd.d` 读取驱动 manifest。条目是一个字符串或一张表

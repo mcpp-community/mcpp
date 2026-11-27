@@ -56,6 +56,12 @@ void fragment_tip(const std::vector<std::string>& toolchain, std::string_view ch
         expect(fatal(e2e::succeeded(r))) << "D: " << s::text(r);
         expect(s::lacks(s::text(r), "c.private")) << "D: the check left the fragment a unit of its own: " << s::text(r);
     }
+    // The check is one invocation: the build after it, with no edit, is the one before it,
+    // whether the check built or failed. (A graph written by a build that failed was replayed
+    // under the record of the build before it, and failed the same way.)
+    r = p.mcpp(args({"build", "--verbose"}));
+    expect(fatal(e2e::succeeded(r))) << "D: the build after the check is not the one before it: " << s::text(r);
+    expect(e2e::contains(s::text(r), "c.private")) << "D: the build after the check left the source as the check built it: " << s::text(r);
 
     // An error of a file the entry did not act on says nothing of it.
     p.write("src/c.cppm", unit("int c_val() { return 1; }"));
