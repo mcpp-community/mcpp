@@ -81,17 +81,18 @@ C 库、平台接口与 C++ 运行时是互斥的选择，不是可叠加的贡�
 `__udivti3` 的方式，会与同一程序中其它每一次链接不同。
 
 依赖图提供 C 库而没有提供 C++ ABI 时，规划拒绝（2026.11.27.1+）。`c-abi` 的供给者来自依赖图、没有包提供
-`c++-abi`、有单元导入标准库模块、清单又没有陈述 `[build] cxx_runtime` 时，计划在任何编译之前以
+`c++-abi`、有单元导入标准库模块、工具链有这个模块、清单又没有陈述 `[build] cxx_runtime` 时，计划在任何编译之前以
 `[layer-requirement]` 停止：
 
 ```
-error: the graph supplies the C library (musl, openkal-musl) and no package supplies the C++ ABI.
+error: the graph supplies the C library (musl, acme.musl@1.2.5) and no package supplies the C++ ABI.
        The standard library module is compiled with the toolchain's C++ library, which is
        built against another C library.
        help: add a dependency that provides `mcpp:c++-abi`, or state [build] cxx_runtime = "host-coupled"
 ```
 
-补救指名能力而不指名包：哪个包提供它是索引的事实。此前标准库模块的预编译在工具链的头文件中失败（GCC 16.1 下
+补救指名能力而不指名包：哪个包提供它是索引的事实。工具链没有该目标的标准库模块时，改由目标自己的理由拒绝
+（操作系统由加载器提供的行：程序内需要一个 C++ 运行时）。此前标准库模块的预编译在工具链的头文件中失败（GCC 16.1 下
 找不到 `features.h`，LLVM 23.1 下找不到 `__config`），没有任何信息指出是哪个决定造成的（mcpp#898）。
 
 ### 跨来源接线

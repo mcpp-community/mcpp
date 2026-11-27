@@ -94,21 +94,24 @@ compiler's own family, since a build in which the two disagree resolves
 
 A graph that supplies the C library and no C++ ABI is refused at planning
 (2026.11.27.1+). When the `c-abi` supplier comes from the graph, no package
-supplies `c++-abi`, a unit imports the standard library module and the
-manifest states no `[build] cxx_runtime`, the plan stops with
+supplies `c++-abi`, a unit imports the standard library module, the toolchain
+has one, and the manifest states no `[build] cxx_runtime`, the plan stops with
 `[layer-requirement]` before anything is compiled:
 
 ```
-error: the graph supplies the C library (musl, openkal-musl) and no package supplies the C++ ABI.
+error: the graph supplies the C library (musl, acme.musl@1.2.5) and no package supplies the C++ ABI.
        The standard library module is compiled with the toolchain's C++ library, which is
        built against another C library.
        help: add a dependency that provides `mcpp:c++-abi`, or state [build] cxx_runtime = "host-coupled"
 ```
 
 The remedy names the capability rather than a package: which package provides
-it is a fact of the index. Before, the standard library module's precompile
-failed inside the toolchain's headers (`features.h` not found under GCC 16.1,
-`__config` under LLVM 23.1), and nothing named the decision (mcpp#898).
+it is a fact of the index. A toolchain with no standard library module for the
+target is refused by the target's own reason instead (on a row whose loader
+supplies the operating system: a C++ run-time inside the program). Before, the
+standard library module's precompile failed inside the toolchain's headers
+(`features.h` not found under GCC 16.1, `__config` under LLVM 23.1), and nothing
+named the decision (mcpp#898).
 
 ### Cross-Origin Wiring
 
