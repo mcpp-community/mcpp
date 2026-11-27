@@ -40,9 +40,11 @@ std::string host_graph(const fs::path& dir) {
     expect(fatal(!all.empty())) << "no build programs' graph under " << dir.string();
     return s::read_file(all.front());
 }
-// The graph compiles `obj` (a pattern) with the module rule.
+// The graph compiles `obj` (a pattern) with the module rule. Its implicit outputs are the
+// unit's BMI and, under clang, the BMI's absolute spelling (`C$:/...` on Windows, an escaped
+// colon), so they are read up to the rule's ` : `.
 bool compiles(const fs::path& dir, std::string_view obj) {
-    return static_cast<bool>(s::has_line(host_graph(dir), std::format(R"(^build obj/[^ ]*/{}( [|] [^:]*)? : cxx_module )", obj)));
+    return static_cast<bool>(s::has_line(host_graph(dir), std::format(R"(^build obj/[^ ]*/{}( [|] .*)? : cxx_module )", obj)));
 }
 // The graph stages `obj` from the build cache's `pkg/<entry>`.
 bool places(const fs::path& dir, std::string_view obj, std::string_view entry) {

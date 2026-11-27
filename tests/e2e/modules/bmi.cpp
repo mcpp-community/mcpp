@@ -64,11 +64,13 @@ std::vector<std::string> words(std::string_view line) {
     return out;
 }
 
-// The first `build <dst> : stage_file ... <src>` edge of a graph: (dst, src), unescaped.
+// The first `build <dst> : stage_file ... <src>` edge of a graph: (dst, src), unescaped. A staged
+// BMI also names its absolute spelling under clang (`build <dst> | <absolute> : stage_file`,
+// SPEC-018 §1 item 6); `dst` is the first output either way.
 std::pair<std::string, std::string> first_stage(const std::string& graph) {
     const auto lines = s::lines_with(graph, " : stage_file ");
     for (const auto& l : lines)
-        if (std::regex_search(l, std::regex{R"(^build [^ ]+ : stage_file )"})) {
+        if (std::regex_search(l, std::regex{R"(^build [^ ]+( [|] .*)? : stage_file )"})) {
             const auto w = words(l);
             return {unescape_ninja(w[1]), unescape_ninja(w.back())};
         }
@@ -364,7 +366,7 @@ int main() {
         const auto graph = s::read_file(*n);
         std::string stage;
         for (const auto& l : s::lines_with(graph, " : stage_file "))
-            if (std::regex_search(l, std::regex{R"(^build [a-z]+\.cache/[^ ]*gen\.dep\.[a-z]+ : stage_file )"})) stage = l;
+            if (std::regex_search(l, std::regex{R"(^build [a-z]+\.cache/[^ ]*gen\.dep\.[a-z]+( [|] .*)? : stage_file )"})) stage = l;
         expect(fatal(!stage.empty())) << "B: the cached BMI has no stage edge";
         const auto bmi = words(stage)[1];
         const auto ext = bmi.substr(bmi.rfind('.') + 1);

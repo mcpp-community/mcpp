@@ -54,6 +54,10 @@
   (mcpp#962).
 - The `host-module-in-dependencies` warning names the two commands that move the entry:
   `mcpp remove <package>`, then `mcpp add --build <package>@<version>` (mcpp#993).
+- mcpp's Windows images reserve 8 MiB of stack for the main thread, the size Linux and macOS give
+  it. A command nests whole builds in one process: `mcpp pack` prepares the program, a host tool
+  its platform names and that tool's build programs. Measured on the openkal canary, this held
+  about 1 MiB of frames, the whole of a PE image's default reserve.
 
 ### Added
 

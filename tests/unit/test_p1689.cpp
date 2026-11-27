@@ -149,3 +149,35 @@ UTest rejects_missing_rules{"P1689Parse/RejectsMissingRules", [] {
     expect(!r);
     expect(ne(r.error().find("rules"), std::string::npos));
 }};
+
+// The scan's words are constructed once (mcpp#1026). The build's scan edge joins them, and its
+// command is the text it was before the words became a list; the plan's scan of a unit hands
+// them to the program as arguments, a path with a space one argument, no shell quoting in them.
+UTest the_edge_joins_the_scan_words{"P1689Scan/TheEdgeJoinsTheScanWords", [] {
+    const auto gcc = scan_command({.prefix = "$launcher ", .driver = "$cxx_driver @$out.rsp",
+                                   .flags = {"$cxxflags", "$unit_cxxflags"}, .lang = {"$unit_lang"},
+                                   .in = "$in", .out = "$out", .depsTarget = "$deps_target",
+                                   .depFile = "$out.dep", .scratch = "$out.scan"});
+    expect(eq(gcc, std::string("$launcher $cxx_driver @$out.rsp $cxxflags $unit_cxxflags -fmodules "
+                               "-fdeps-format=p1689r5 -fdeps-file=$out -fdeps-target=$deps_target "
+                               "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan")));
+    const auto clang = scan_command({.driver = "$cxx_driver", .scanDeps = "$scan_deps",
+                                     .flags = {"$cxxflags", "$unit_cxxflags"}, .lang = {"$unit_lang"},
+                                     .in = "$in", .out = "$out", .compileTarget = "$compile_target"});
+    expect(eq(clang, std::string("$scan_deps -format=p1689 -o $out -- $cxx_driver $cxxflags "
+                                 "$unit_cxxflags $unit_lang -c $in -o $compile_target")));
+}};
+
+UTest the_plan_passes_the_scan_words_as_arguments{"P1689Scan/ThePlanPassesTheScanWordsAsArguments", [] {
+    const auto argv = scan_words({.driver = "C:/llvm/bin/clang++.exe", .scanDeps = "C:/llvm/bin/clang-scan-deps.exe",
+                                  .flags = {"-std=c++23", "-IC:/My Project/include"}, .lang = {"-x", "c++-module"},
+                                  .in = "C:/My Project/src/m.cppm", .out = "C:/t/m.ddi", .compileTarget = "C:/t/m.o"});
+    const std::vector<std::string> expected{
+        "C:/llvm/bin/clang-scan-deps.exe", "-format=p1689", "-o", "C:/t/m.ddi", "--",
+        "C:/llvm/bin/clang++.exe", "-std=c++23", "-IC:/My Project/include", "-x", "c++-module",
+        "-c", "C:/My Project/src/m.cppm", "-o", "C:/t/m.o"};
+    std::string joined;
+    for (auto const& word : argv) joined += "[" + word + "]";
+    expect(argv == expected) << joined;
+    for (auto const& word : argv) expect(eq(word.find('\''), std::string::npos)) << word;
+}};
